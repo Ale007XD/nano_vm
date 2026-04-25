@@ -19,7 +19,6 @@ from __future__ import annotations
 from typing import Any
 
 try:
-    import litellm
     from litellm import acompletion
 except ImportError:
     raise ImportError("litellm не установлен. Выполни: pip install nano-vm[litellm]")
