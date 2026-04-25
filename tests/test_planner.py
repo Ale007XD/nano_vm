@@ -1,5 +1,7 @@
 """Тесты Planner с mock-адаптером."""
+
 import pytest
+
 from nano_vm import Planner, PlannerError, Program
 
 

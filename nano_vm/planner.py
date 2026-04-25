@@ -16,7 +16,6 @@ from typing import Any
 from .adapters.base import LLMAdapter
 from .models import Program
 
-
 SYSTEM_PROMPT = """\
 Ты — планировщик задач. Твоя цель: преобразовать запрос пользователя в JSON-программу.
 
@@ -100,9 +99,7 @@ class Planner:
         Raises:
             PlannerError: если LLM вернул невалидный JSON или невалидную программу.
         """
-        system = SYSTEM_PROMPT.format(
-            tools=", ".join(self._tools) if self._tools else "нет"
-        )
+        system = SYSTEM_PROMPT.format(tools=", ".join(self._tools) if self._tools else "нет")
 
         user_msg = user_input
         if context:
@@ -125,9 +122,7 @@ class Planner:
         """Извлечь JSON из ответа LLM и валидировать как Program."""
         json_str = self._extract_json(raw)
         if not json_str:
-            raise PlannerError(
-                f"LLM не вернул валидный JSON. Ответ:\n{raw[:500]}"
-            )
+            raise PlannerError(f"LLM не вернул валидный JSON. Ответ:\n{raw[:500]}")
 
         try:
             data = json.loads(json_str)

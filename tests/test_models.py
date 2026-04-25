@@ -1,8 +1,18 @@
 """Tests for models — no IO, no LLM."""
+
 import pytest
+
 from nano_vm.models import (
-    LLMUsage, OnError, Program, StateContext, Step, StepResult,
-    StepStatus, StepType, Trace, TraceStatus,
+    LLMUsage,
+    OnError,
+    Program,
+    StateContext,
+    Step,
+    StepResult,
+    StepStatus,
+    StepType,
+    Trace,
+    TraceStatus,
 )
 
 
@@ -44,10 +54,7 @@ def test_state_context_with_output():
 
 
 def test_program_from_dict():
-    data = {
-        "name": "test",
-        "steps": [{"id": "s1", "type": "llm", "prompt": "Hi"}]
-    }
+    data = {"name": "test", "steps": [{"id": "s1", "type": "llm", "prompt": "Hi"}]}
     p = Program.from_dict(data)
     assert p.name == "test"
     assert len(p.steps) == 1

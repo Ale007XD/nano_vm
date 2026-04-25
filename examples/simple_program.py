@@ -4,30 +4,33 @@
 """
 
 import asyncio
+
 from nano_vm import ExecutionVM, Program
 from nano_vm.adapters import LiteLLMAdapter
 
 
 async def main():
     # 1. Описать программу
-    program = Program.from_dict({
-        "name": "summarize_and_translate",
-        "description": "Суммаризировать текст и перевести на английский",
-        "steps": [
-            {
-                "id": "summarize",
-                "type": "llm",
-                "prompt": "Суммаризируй этот текст в 2 предложения: $text",
-                "output_key": "summary",
-            },
-            {
-                "id": "translate",
-                "type": "llm",
-                "prompt": "Translate to English: $summary",
-                "output_key": "translation",
-            },
-        ],
-    })
+    program = Program.from_dict(
+        {
+            "name": "summarize_and_translate",
+            "description": "Суммаризировать текст и перевести на английский",
+            "steps": [
+                {
+                    "id": "summarize",
+                    "type": "llm",
+                    "prompt": "Суммаризируй этот текст в 2 предложения: $text",
+                    "output_key": "summary",
+                },
+                {
+                    "id": "translate",
+                    "type": "llm",
+                    "prompt": "Translate to English: $summary",
+                    "output_key": "translation",
+                },
+            ],
+        }
+    )
 
     # 2. Создать VM с адаптером
     vm = ExecutionVM(

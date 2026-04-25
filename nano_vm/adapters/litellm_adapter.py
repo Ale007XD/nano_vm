@@ -22,9 +22,7 @@ try:
     import litellm
     from litellm import acompletion
 except ImportError:
-    raise ImportError(
-        "litellm не установлен. Выполни: pip install nano-vm[litellm]"
-    )
+    raise ImportError("litellm не установлен. Выполни: pip install nano-vm[litellm]")
 
 
 class LiteLLMAdapter:

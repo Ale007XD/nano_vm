@@ -7,12 +7,11 @@ Everything that enters and exits the VM.
 
 from __future__ import annotations
 
-from enum import Enum
-from typing import Any, Literal
 from datetime import datetime, timezone
+from enum import Enum
+from typing import Any
 
 from pydantic import BaseModel, Field, model_validator
-
 
 # ---------------------------------------------------------------------------
 # Enums
@@ -69,7 +68,7 @@ class Step(BaseModel):
     max_retries: int = 1
 
     @model_validator(mode="after")
-    def _validate_by_type(self) -> "Step":
+    def _validate_by_type(self) -> Step:
         if self.type == StepType.LLM and not self.prompt:
             raise ValueError(f"Step '{self.id}': llm step requires prompt")
         if self.type == StepType.TOOL and not self.tool:
@@ -93,11 +92,11 @@ class Program(BaseModel):
     steps: list[Step] = Field(..., min_length=1)
 
     @classmethod
-    def from_dict(cls, data: dict) -> "Program":
+    def from_dict(cls, data: dict) -> Program:
         return cls.model_validate(data)
 
     @classmethod
-    def from_yaml(cls, yaml_str: str) -> "Program":
+    def from_yaml(cls, yaml_str: str) -> Program:
         try:
             import yaml
         except ImportError:
@@ -122,15 +121,11 @@ class StateContext(BaseModel, frozen=True):
     data: dict[str, Any] = Field(default_factory=dict)
     step_outputs: dict[str, Any] = Field(default_factory=dict)
 
-    def with_output(self, step_id: str, output: Any) -> "StateContext":
-        return self.model_copy(
-            update={"step_outputs": {**self.step_outputs, step_id: output}}
-        )
+    def with_output(self, step_id: str, output: Any) -> StateContext:
+        return self.model_copy(update={"step_outputs": {**self.step_outputs, step_id: output}})
 
-    def with_data(self, key: str, value: Any) -> "StateContext":
-        return self.model_copy(
-            update={"data": {**self.data, key: value}}
-        )
+    def with_data(self, key: str, value: Any) -> StateContext:
+        return self.model_copy(update={"data": {**self.data, key: value}})
 
     def get(self, key: str, default: Any = None) -> Any:
         return self.data.get(key, default)
@@ -169,19 +164,21 @@ class StepResult(BaseModel):
         self,
         output: Any = None,
         error: str | None = None,
-        usage: "LLMUsage | None" = None,
-    ) -> "StepResult":
+        usage: LLMUsage | None = None,
+    ) -> StepResult:
         finished = datetime.now(timezone.utc)
         duration = (finished - self.started_at).total_seconds() * 1000
         status = StepStatus.FAILED if error else StepStatus.SUCCESS
-        return self.model_copy(update={
-            "status": status,
-            "output": output,
-            "error": error,
-            "usage": usage,
-            "finished_at": finished,
-            "duration_ms": round(duration, 2),
-        })
+        return self.model_copy(
+            update={
+                "status": status,
+                "output": output,
+                "error": error,
+                "usage": usage,
+                "finished_at": finished,
+                "duration_ms": round(duration, 2),
+            }
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -210,18 +207,20 @@ class Trace(BaseModel):
         status: TraceStatus,
         final_output: Any = None,
         error: str | None = None,
-    ) -> "Trace":
+    ) -> Trace:
         finished = datetime.now(timezone.utc)
         duration = (finished - self.started_at).total_seconds() * 1000
-        return self.model_copy(update={
-            "status": status,
-            "final_output": final_output,
-            "error": error,
-            "finished_at": finished,
-            "duration_ms": round(duration, 2),
-        })
+        return self.model_copy(
+            update={
+                "status": status,
+                "final_output": final_output,
+                "error": error,
+                "finished_at": finished,
+                "duration_ms": round(duration, 2),
+            }
+        )
 
-    def add_step(self, result: StepResult) -> "Trace":
+    def add_step(self, result: StepResult) -> Trace:
         return self.model_copy(update={"steps": [*self.steps, result]})
 
     def last_output(self) -> Any:

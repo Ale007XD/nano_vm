@@ -15,7 +15,8 @@ from __future__ import annotations
 
 import asyncio
 import re
-from typing import Any, Callable
+from collections.abc import Callable
+from typing import Any
 
 from .adapters.base import LLMAdapter
 from .models import (
@@ -156,10 +157,12 @@ class ExecutionVM:
                 error_msg = f"{type(exc).__name__}: {exc}"
 
                 if step.on_error == OnError.SKIP:
-                    result = result.model_copy(update={
-                        "status": StepStatus.SKIPPED,
-                        "error": error_msg,
-                    })
+                    result = result.model_copy(
+                        update={
+                            "status": StepStatus.SKIPPED,
+                            "error": error_msg,
+                        }
+                    )
                     return result, state
 
                 result = result.finish(error=error_msg)
@@ -216,8 +219,7 @@ class ExecutionVM:
     async def _execute_tool(self, step: Step, state: StateContext) -> Any:
         if step.tool not in self._tools:
             raise VMError(
-                f"Tool '{step.tool}' not registered. "
-                f"Available: {list(self._tools.keys())}"
+                f"Tool '{step.tool}' not registered. Available: {list(self._tools.keys())}"
             )
         fn = self._tools[step.tool]
         resolved_args = {k: self._resolve(v, state) for k, v in step.args.items()}
