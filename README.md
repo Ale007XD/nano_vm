@@ -1,235 +1,188 @@
-# nano-vm
+<p align="center">
+  <a href="https://github.com/Ale007XD/nano-vm/actions/workflows/ci.yml">
+    <img src="https://github.com/Ale007XD/nano-vm/actions/workflows/ci.yml/badge.svg" alt="CI">
+  </a>
+  <a href="https://pypi.org/project/nano-vm/">
+    <img src="https://img.shields.io/pypi/v/nano-vm?color=blue" alt="PyPI">
+  </a>
+  <a href="https://pypi.org/project/nano-vm/">
+    <img src="https://img.shields.io/pypi/pyversions/nano-vm" alt="Python versions">
+  </a>
+  <a href="LICENSE">
+    <img src="https://img.shields.io/github/license/Ale007XD/nano-vm" alt="License">
+  </a>
+</p><p align="center">
+  🧠 <strong>Deterministic VM for LLM program execution.</strong><br>
+  Turn unpredictable LLM behavior into structured, reproducible workflows.
+</p>---
 
-**Deterministic VM for LLM program execution.**
+🤝 Contact & Support
 
-Most LLM agents are unpredictable: the model decides what to do next on every step. nano-vm flips this — you define the program, the VM executes it deterministically. The LLM is a worker, not a decision-maker.
+Author: "@ale007xd" (https://t.me/ale007xd) | "@ale007xd" (https://x.com/ale007xd)
 
-```
-user_input → Planner (1 LLM call, non-deterministic)
-           → Program (your DSL, deterministic)
+Support the project:
+
+""Buy Me a Coffee" (https://img.shields.io/badge/☕-Buy%20Me%20a%20Coffee-yellow?style=flat-square)" (https://www.buymeacoffee.com/ale007xd)
+""TON USDT" (https://img.shields.io/badge/USDT%20(TON)-UQCakyytrEGBikOi3eYMpveGHXDB1--fd6lcuQC9VvKqMrI--9-2ea2cc?style=flat-square&logo=ton)" (https://tonviewer.com/UQCakyytrEGBikOi3eYMpveGHXDB1-fd6lcuQC9VvKqMrI-9)
+
+---
+
+nano-vm
+
+🧠 Mental Model
+
+- LLM → stateless worker
+- Program → declarative workflow (DSL)
+- ExecutionVM → deterministic state machine
+- Trace → full execution log
+
+«nano-vm is essentially a finite state machine for LLM workflows.»
+
+---
+
+⚠️ The Problem
+
+LLM agents are unpredictable:
+
+- they decide what to do next
+- they may skip checks
+- behavior changes across runs
+
+---
+
+✅ The Solution
+
+user_input → Planner (1 LLM call)
+           → Program (DSL)
            → ExecutionVM (deterministic)
            → Trace
-```
 
-## Install
+- Planner = flexible but non-deterministic
+- VM = strict and deterministic
 
-```bash
-pip install nano-vm          # core only (pydantic)
-pip install nano-vm[litellm] # + LiteLLM adapter (all providers)
-```
+---
 
-## Quick start
+🚀 Install
 
-### Option A: Write the program yourself
+pip install nano-vm
+pip install nano-vm[litellm]
 
-```python
-import asyncio
-from nano_vm import ExecutionVM, Program
-from nano_vm.adapters import LiteLLMAdapter
+---
 
-# A workflow where determinism is CRITICAL.
-# An LLM agent might hallucinate and skip the guardrail.
-# nano-vm guarantees the check ALWAYS runs before any action.
+⚡ Quick Example (Deterministic Guardrail)
+
 program = Program.from_dict({
     "name": "customer_refund",
     "steps": [
         {
             "id": "analyze",
             "type": "llm",
-            "prompt": "Is this a valid refund request per our policy?\n"
-                      "Request: $user_input\nPolicy: $refund_policy\n"
-                      "Reply with 'yes' or 'no' followed by reason.",
+            "prompt": "...",
             "output_key": "decision",
         },
         {
             "id": "guardrail",
             "type": "condition",
-            # .lower() ensures case-insensitive match regardless of LLM output
             "condition": "'yes' in '$decision'.lower()",
             "then": "process_refund",
             "otherwise": "reject",
         },
-        {
-            # Only reached if guardrail passes — VM guarantees this
-            "id": "process_refund",
-            "type": "tool",
-            "tool": "issue_refund",
-            "args": {"reason": "$decision"},
-        },
-        {
-            # Guaranteed path for invalid requests
-            "id": "reject",
-            "type": "llm",
-            "prompt": "Politely explain the denial: $user_input",
-        },
     ],
 })
 
-vm = ExecutionVM(
-    llm=LiteLLMAdapter(
-        model="groq/llama-3.3-70b-versatile",
-        fallbacks=["openrouter/llama-3.3-70b-instruct:free"],
-        temperature=0.0,  # deterministic output
-    ),
-    tools={"issue_refund": my_refund_fn},
-)
+👉 VM guarantees:
 
-async def main():
-    trace = await vm.run(program, context={
-        "user_input": "I want a refund for order #1234",
-        "refund_policy": "Refunds allowed within 30 days of purchase.",
-    })
+- guardrail ALWAYS runs
+- no skipped steps
+- deterministic execution path
 
-    print(f"Status:  {trace.status}")
-    print(f"Result:  {trace.final_output}")
-    print(f"Tokens:  {trace.total_tokens()}")
-    if trace.total_cost_usd() is not None:
-        print(f"Cost:    ${trace.total_cost_usd():.6f}")
+---
 
-    # Full observability — every step logged
-    for step in trace.steps:
-        cost = f"  ${step.usage.cost_usd:.6f}" if step.usage and step.usage.cost_usd else ""
-        tokens = f"  tokens={step.usage.total_tokens}" if step.usage else ""
-        print(f"  [{step.step_id}] {step.status}  {step.duration_ms:.0f}ms{tokens}{cost}")
+🤖 Planner (Optional)
 
-asyncio.run(main())
-```
+program = await planner.generate("Find latest AI news")
 
-### Option B: Let the Planner generate the program
+- 1 LLM call
+- outputs DSL program
+- NOT deterministic
 
-```python
-from nano_vm import ExecutionVM, Planner
-from nano_vm.adapters import LiteLLMAdapter
+---
 
-adapter = LiteLLMAdapter("groq/llama-3.3-70b-versatile", temperature=0.0)
-planner = Planner(llm=adapter, tools=["search"])
-vm = ExecutionVM(llm=adapter, tools={"search": my_search_fn})
+📜 Program DSL
 
-async def main():
-    # Planner makes ONE LLM call to create the program
-    program = await planner.generate("Find latest AI news and summarize")
-    # VM executes deterministically
-    trace = await vm.run(program)
-    print(trace.final_output)
-```
-
-## Program DSL
-
-Programs are plain dicts or YAML — no framework lock-in.
-
-```python
-# llm — call the language model
 {
-    "id": "step_1",
-    "type": "llm",
-    "prompt": "Answer this: $user_input",  # $var resolved from context
-    "output_key": "answer",               # save output to state
+  "id": "step",
+  "type": "llm" | "tool" | "condition"
 }
 
-# tool — call a Python function (sync or async)
-{
-    "id": "step_2",
-    "type": "tool",
-    "tool": "search",
-    "args": {"query": "$answer"},         # $step_id.output syntax
-}
+Variables
 
-# condition — branch on a value
-# Note: $variables resolve to strings; use .lower() for case-insensitive match
-{
-    "id": "step_3",
-    "type": "condition",
-    "condition": "'approved' in '$step_2.output'.lower()",
-    "then": "step_4",
-    "otherwise": "step_5",
-}
-```
+Syntax| Meaning
+"$key"| input context
+"$step.output"| previous step result
 
-### Variable resolution
+---
 
-| Syntax | Resolves to |
-|--------|-------------|
-| `$key` | `context["key"]` passed to `vm.run()` |
-| `$step_id.output` | output of a previous step |
+🔍 Observability (Trace)
 
-### Error handling per step
+trace = await vm.run(program)
 
-```python
-{
-    "id": "risky_step",
-    "type": "tool",
-    "tool": "external_api",
-    "args": {},
-    "on_error": "skip",   # fail (default) | skip | retry
-    "max_retries": 3,
-}
-```
+trace.status
+trace.total_tokens()
+trace.total_cost_usd()
 
-## Observability via Trace
+Every step includes:
 
-Every run returns a full, structured execution trace:
+- duration
+- tokens
+- cost
+- status
 
-```python
-trace = await vm.run(program, context={...})
+👉 Full debugging without guesswork.
 
-# Summary
-print(trace.status)           # success | failed
-print(trace.final_output)     # output of the last successful step
-print(trace.duration_ms)      # total wall time
-print(trace.total_tokens())   # sum of tokens across all llm steps
-print(trace.total_cost_usd()) # sum of costs (None if provider doesn't report)
+---
 
-# Per-step breakdown
-for step in trace.steps:
-    print(step.step_id, step.status, step.duration_ms)
-    if step.usage:
-        # Only present for llm steps
-        print(f"  tokens: {step.usage.total_tokens}")
-        print(f"  cost:   ${step.usage.cost_usd:.6f}")
-```
+⚖️ nano-vm vs Agents
 
-## Bring your own adapter
+| LLM Agent| nano-vm
+Control| LLM decides| You define
+Determinism| ❌| ✅
+Debugging| hard| full trace
+Guardrails| weak| enforced
 
-No litellm? Implement one method:
+---
 
-```python
+❌ When NOT to use nano-vm
+
+Do NOT use if:
+
+- workflow is unknown
+- task is creative/open-ended
+- you want autonomous reasoning
+
+Use it when:
+
+- flow is known
+- correctness matters
+- reproducibility is required
+
+---
+
+🔌 Custom Adapter
+
 class MyAdapter:
-    async def complete(self, messages: list[dict], **kwargs) -> str:
-        # your HTTP client here
-        return "response text"
+    async def complete(self, messages, **kwargs):
+        return "response"
 
-vm = ExecutionVM(llm=MyAdapter())
-```
+---
 
-## Providers via LiteLLM
+📡 Providers (LiteLLM)
 
-```python
 LiteLLMAdapter("groq/llama-3.3-70b-versatile")
-LiteLLMAdapter("anthropic/claude-sonnet-4-20250514")
-LiteLLMAdapter("openrouter/llama-3.3-70b-instruct:free")
-LiteLLMAdapter("ollama/llama3")  # local
+LiteLLMAdapter("ollama/llama3")
 
-# With automatic fallback chain
-LiteLLMAdapter(
-    model="groq/llama-3.3-70b-versatile",
-    fallbacks=["openrouter/llama-3.3-70b-instruct:free", "anthropic/claude-sonnet-4-20250514"],
-)
-```
+---
 
-## Why not just use an LLM agent?
-
-| | LLM Agent | nano-vm |
-|---|---|---|
-| Who decides next step | LLM (every call) | You (program definition) |
-| Reproducibility | varies | same input → same path |
-| Guardrails | best-effort | structurally enforced |
-| Debuggability | hard | full Trace per step |
-| Cost visibility | none | tokens + cost per step |
-| LLM calls per run | many | 1 per llm-step |
-
-Use nano-vm when you know the workflow and want guaranteed execution.  
-Use an open agent when the workflow itself is unknown.
-
-## License
+📄 License
 
 MIT
