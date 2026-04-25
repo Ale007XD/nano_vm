@@ -1,7 +1,7 @@
 """
-nano-vm — детерминированная VM для исполнения LLM-программ.
+nano-vm: deterministic VM for LLM program execution.
 
-Быстрый старт:
+Quick start:
     from nano_vm import ExecutionVM, Program
     from nano_vm.adapters import LiteLLMAdapter
 
@@ -12,9 +12,11 @@ nano-vm — детерминированная VM для исполнения LL
     program = Program.from_yaml(open("program.yaml").read())
     trace = await vm.run(program, context={"user_input": "..."})
     print(trace.final_output)
+    print(f"Tokens used: {trace.total_tokens()}")
 """
 
 from .models import (
+    LLMUsage,
     OnError,
     Program,
     StateContext,
@@ -29,22 +31,10 @@ from .vm import ExecutionVM, VMError
 from .planner import Planner, PlannerError
 
 __all__ = [
-    # VM
-    "ExecutionVM",
-    "VMError",
-    # Planner
-    "Planner",
-    "PlannerError",
-    # Models
-    "Program",
-    "Step",
-    "StepType",
-    "StepStatus",
-    "OnError",
-    "StateContext",
-    "StepResult",
-    "Trace",
-    "TraceStatus",
+    "ExecutionVM", "VMError",
+    "Planner", "PlannerError",
+    "Program", "Step", "StepType", "StepStatus", "OnError",
+    "StateContext", "StepResult", "LLMUsage", "Trace", "TraceStatus",
 ]
 
 __version__ = "0.1.0"

@@ -67,7 +67,7 @@ async def test_tool_not_registered():
     })
     trace = await vm.run(program)
     assert trace.status == TraceStatus.FAILED
-    assert "не зарегистрирован" in trace.error
+    assert "not registered" in trace.error
 
 
 @pytest.mark.asyncio

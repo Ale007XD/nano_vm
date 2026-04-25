@@ -1,8 +1,8 @@
 """
 nano_vm.models
 ==============
-Чистые Pydantic-модели. Никаких IO, никаких LLM-вызовов.
-Всё, что входит в VM и выходит из неё.
+Pure Pydantic models. No IO, no LLM calls.
+Everything that enters and exits the VM.
 """
 
 from __future__ import annotations
@@ -20,9 +20,9 @@ from pydantic import BaseModel, Field, model_validator
 
 
 class StepType(str, Enum):
-    LLM = "llm"          # вызов языковой модели
-    TOOL = "tool"         # вызов Python-callable
-    CONDITION = "condition"  # ветвление по значению из state
+    LLM = "llm"
+    TOOL = "tool"
+    CONDITION = "condition"
 
 
 class StepStatus(str, Enum):
@@ -34,58 +34,58 @@ class StepStatus(str, Enum):
 
 
 class OnError(str, Enum):
-    FAIL = "fail"      # остановить программу (default)
-    SKIP = "skip"      # пропустить шаг, продолжить
-    RETRY = "retry"    # повторить (см. Step.max_retries)
+    FAIL = "fail"
+    SKIP = "skip"
+    RETRY = "retry"
 
 
 # ---------------------------------------------------------------------------
-# Step — один шаг программы
+# Step
 # ---------------------------------------------------------------------------
 
 
 class Step(BaseModel):
-    """Описание одного шага программы."""
+    """One step in a program."""
 
-    id: str = Field(..., description="Уникальный идентификатор шага внутри программы")
+    id: str
     type: StepType
 
-    # --- llm-шаг ---
+    # llm step
     prompt: str | None = None
     system: str | None = None
-    output_key: str | None = None   # куда писать ответ в state
+    output_key: str | None = None
 
-    # --- tool-шаг ---
-    tool: str | None = None          # имя инструмента из реестра VM
+    # tool step
+    tool: str | None = None
     args: dict[str, Any] = Field(default_factory=dict)
 
-    # --- condition-шаг ---
-    condition: str | None = None     # выражение: "$step_a.output == 'yes'"
-    then: str | None = None          # id шага если True
-    otherwise: str | None = None     # id шага если False
+    # condition step
+    condition: str | None = None
+    then: str | None = None
+    otherwise: str | None = None
 
-    # --- управление ошибками ---
+    # error handling
     on_error: OnError = OnError.FAIL
     max_retries: int = 1
 
     @model_validator(mode="after")
     def _validate_by_type(self) -> "Step":
         if self.type == StepType.LLM and not self.prompt:
-            raise ValueError(f"Step '{self.id}': llm-шаг требует prompt")
+            raise ValueError(f"Step '{self.id}': llm step requires prompt")
         if self.type == StepType.TOOL and not self.tool:
-            raise ValueError(f"Step '{self.id}': tool-шаг требует tool")
+            raise ValueError(f"Step '{self.id}': tool step requires tool")
         if self.type == StepType.CONDITION and not self.condition:
-            raise ValueError(f"Step '{self.id}': condition-шаг требует condition")
+            raise ValueError(f"Step '{self.id}': condition step requires condition")
         return self
 
 
 # ---------------------------------------------------------------------------
-# Program — список шагов + метаданные
+# Program
 # ---------------------------------------------------------------------------
 
 
 class Program(BaseModel):
-    """Полная программа для исполнения в ExecutionVM."""
+    """Full program for execution in ExecutionVM."""
 
     name: str = "unnamed"
     description: str = ""
@@ -99,9 +99,9 @@ class Program(BaseModel):
     @classmethod
     def from_yaml(cls, yaml_str: str) -> "Program":
         try:
-            import yaml  # опциональная зависимость
+            import yaml
         except ImportError:
-            raise ImportError("pip install pyyaml для загрузки программ из YAML")
+            raise ImportError("pip install pyyaml to load programs from YAML")
         return cls.model_validate(yaml.safe_load(yaml_str))
 
     def get_step(self, step_id: str) -> Step | None:
@@ -109,29 +109,25 @@ class Program(BaseModel):
 
 
 # ---------------------------------------------------------------------------
-# StateContext — состояние исполнения (immutable снимок)
+# StateContext
 # ---------------------------------------------------------------------------
 
 
 class StateContext(BaseModel, frozen=True):
     """
-    Снимок состояния на момент исполнения шага.
-    frozen=True — нельзя мутировать, только создавать новый через model_copy.
+    Immutable snapshot of execution state.
+    frozen=True: no mutation, only create new via model_copy.
     """
 
     data: dict[str, Any] = Field(default_factory=dict)
-    step_outputs: dict[str, Any] = Field(default_factory=dict)  # step_id → output
+    step_outputs: dict[str, Any] = Field(default_factory=dict)
 
     def with_output(self, step_id: str, output: Any) -> "StateContext":
-        """Вернуть новый StateContext с добавленным output шага."""
         return self.model_copy(
-            update={
-                "step_outputs": {**self.step_outputs, step_id: output}
-            }
+            update={"step_outputs": {**self.step_outputs, step_id: output}}
         )
 
     def with_data(self, key: str, value: Any) -> "StateContext":
-        """Вернуть новый StateContext с добавленным ключом в data."""
         return self.model_copy(
             update={"data": {**self.data, key: value}}
         )
@@ -141,8 +137,21 @@ class StateContext(BaseModel, frozen=True):
 
 
 # ---------------------------------------------------------------------------
-# StepResult — результат одного шага
+# LLMUsage + StepResult
 # ---------------------------------------------------------------------------
+
+
+class LLMUsage(BaseModel):
+    """LLM token usage and cost for a single step."""
+
+    prompt_tokens: int = 0
+    completion_tokens: int = 0
+    total_tokens: int = 0
+    cost_usd: float | None = None  # None if provider did not return cost
+
+    def __str__(self) -> str:
+        cost = f", cost=${self.cost_usd:.6f}" if self.cost_usd is not None else ""
+        return f"tokens={self.total_tokens}{cost}"
 
 
 class StepResult(BaseModel):
@@ -151,11 +160,17 @@ class StepResult(BaseModel):
     output: Any = None
     error: str | None = None
     retries: int = 0
+    usage: LLMUsage | None = None  # filled only for llm steps
     started_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     finished_at: datetime | None = None
     duration_ms: float | None = None
 
-    def finish(self, output: Any = None, error: str | None = None) -> "StepResult":
+    def finish(
+        self,
+        output: Any = None,
+        error: str | None = None,
+        usage: "LLMUsage | None" = None,
+    ) -> "StepResult":
         finished = datetime.now(timezone.utc)
         duration = (finished - self.started_at).total_seconds() * 1000
         status = StepStatus.FAILED if error else StepStatus.SUCCESS
@@ -163,13 +178,14 @@ class StepResult(BaseModel):
             "status": status,
             "output": output,
             "error": error,
+            "usage": usage,
             "finished_at": finished,
             "duration_ms": round(duration, 2),
         })
 
 
 # ---------------------------------------------------------------------------
-# Trace — полная история прогона
+# Trace
 # ---------------------------------------------------------------------------
 
 
@@ -209,8 +225,14 @@ class Trace(BaseModel):
         return self.model_copy(update={"steps": [*self.steps, result]})
 
     def last_output(self) -> Any:
-        """Вернуть output последнего успешного шага."""
         for result in reversed(self.steps):
             if result.status == StepStatus.SUCCESS:
                 return result.output
         return None
+
+    def total_tokens(self) -> int:
+        return sum(s.usage.total_tokens for s in self.steps if s.usage)
+
+    def total_cost_usd(self) -> float | None:
+        costs = [s.usage.cost_usd for s in self.steps if s.usage and s.usage.cost_usd is not None]
+        return round(sum(costs), 8) if costs else None

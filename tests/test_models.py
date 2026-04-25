@@ -1,7 +1,7 @@
-"""Тесты моделей — без IO, без LLM."""
+"""Tests for models — no IO, no LLM."""
 import pytest
 from nano_vm.models import (
-    OnError, Program, StateContext, Step, StepResult,
+    LLMUsage, OnError, Program, StateContext, Step, StepResult,
     StepStatus, StepType, Trace, TraceStatus,
 )
 
@@ -29,10 +29,8 @@ def test_valid_llm_step():
 
 def test_state_context_immutable():
     ctx = StateContext(data={"x": 1})
-    # frozen=True запрещает переприсвоение атрибута модели
     with pytest.raises(Exception):
         ctx.data = {"y": 2}
-    # with_data возвращает новый объект, оригинал не тронут
     ctx2 = ctx.with_data("y", 2)
     assert ctx2.data["y"] == 2
     assert "y" not in ctx.data
@@ -73,6 +71,15 @@ def test_step_result_finish_success():
     assert r2.status == StepStatus.SUCCESS
     assert r2.output == "hello"
     assert r2.duration_ms is not None
+    assert r2.usage is None
+
+
+def test_step_result_finish_with_usage():
+    r = StepResult(step_id="s1", status=StepStatus.RUNNING)
+    usage = LLMUsage(prompt_tokens=100, completion_tokens=50, total_tokens=150, cost_usd=0.000015)
+    r2 = r.finish(output="hello", usage=usage)
+    assert r2.usage.total_tokens == 150
+    assert r2.usage.cost_usd == 0.000015
 
 
 def test_step_result_finish_error():
@@ -96,3 +103,33 @@ def test_trace_finish():
     assert t2.status == TraceStatus.SUCCESS
     assert t2.final_output == "done"
     assert t2.duration_ms is not None
+
+
+def test_trace_total_tokens():
+    t = Trace(program_name="test")
+    r1 = StepResult(step_id="s1", status=StepStatus.RUNNING).finish(
+        output="a", usage=LLMUsage(total_tokens=100)
+    )
+    r2 = StepResult(step_id="s2", status=StepStatus.RUNNING).finish(
+        output="b", usage=LLMUsage(total_tokens=200)
+    )
+    t = t.add_step(r1).add_step(r2)
+    assert t.total_tokens() == 300
+
+
+def test_trace_total_cost():
+    t = Trace(program_name="test")
+    r1 = StepResult(step_id="s1", status=StepStatus.RUNNING).finish(
+        output="a", usage=LLMUsage(total_tokens=100, cost_usd=0.0001)
+    )
+    r2 = StepResult(step_id="s2", status=StepStatus.RUNNING).finish(
+        output="b", usage=LLMUsage(total_tokens=200, cost_usd=0.0002)
+    )
+    t = t.add_step(r1).add_step(r2)
+    assert abs(t.total_cost_usd() - 0.0003) < 1e-9
+
+
+def test_llm_usage_str():
+    u = LLMUsage(total_tokens=150, cost_usd=0.000015)
+    assert "150" in str(u)
+    assert "0.000015" in str(u)
