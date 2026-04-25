@@ -1,6 +1,6 @@
 <p align="center">
-  <a href="https://github.com/Ale007XD/nano-vm/actions/workflows/ci.yml">
-    <img src="https://github.com/Ale007XD/nano-vm/actions/workflows/ci.yml/badge.svg" alt="CI">
+  <a href="https://github.com/Ale007XD/nano_vm/actions">
+    <img src="https://github.com/Ale007XD/nano_vm/workflows/CI/badge.svg" alt="CI">
   </a>
   <img src="https://img.shields.io/badge/pypi-coming--soon-lightgrey" alt="PyPI">
   <img src="https://img.shields.io/badge/python-3.10+-blue" alt="Python">
@@ -14,10 +14,16 @@
 
 Author: "@ale007xd" (https://t.me/ale007xd) | "@ale007xd" (https://x.com/ale007xd)
 
-Support the project:
+☕ Support the project
 
 ""Buy Me a Coffee" (https://img.shields.io/badge/☕-Buy%20Me%20a%20Coffee-yellow?style=flat-square)" (https://www.buymeacoffee.com/ale007xd)
-""TON USDT" (https://img.shields.io/badge/USDT%20(TON)-UQCakyytrEGBikOi3eYMpveGHXDB1--fd6lcuQC9VvKqMrI--9-2ea2cc?style=flat-square&logo=ton)" (https://tonviewer.com/UQCakyytrEGBikOi3eYMpveGHXDB1-fd6lcuQC9VvKqMrI-9)
+
+""USDT (TON)" (https://img.shields.io/badge/USDT%20(TON)-UQCakyytrEGBikOi3eYMpveGHXDB1--fd6lcuQC9VvKqMrI--9-2ea2cc?style=flat-square&logo=ton)" (https://tonviewer.com/UQCakyytrEGBikOi3eYMpveGHXDB1-fd6lcuQC9VvKqMrI-9)
+
+Direct wallet:
+
+USDT (TON):
+UQCakyytrEGBikOi3eYMpveGHXDB1-fd6lcuQC9VvKqMrI-9
 
 ---
 
