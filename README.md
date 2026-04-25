@@ -2,15 +2,9 @@
   <a href="https://github.com/Ale007XD/nano-vm/actions/workflows/ci.yml">
     <img src="https://github.com/Ale007XD/nano-vm/actions/workflows/ci.yml/badge.svg" alt="CI">
   </a>
-  <a href="https://pypi.org/project/nano-vm/">
-    <img src="https://img.shields.io/pypi/v/nano-vm?color=blue" alt="PyPI">
-  </a>
-  <a href="https://pypi.org/project/nano-vm/">
-    <img src="https://img.shields.io/pypi/pyversions/nano-vm" alt="Python versions">
-  </a>
-  <a href="LICENSE">
-    <img src="https://img.shields.io/github/license/Ale007XD/nano-vm" alt="License">
-  </a>
+  <img src="https://img.shields.io/badge/pypi-coming--soon-lightgrey" alt="PyPI">
+  <img src="https://img.shields.io/badge/python-3.10+-blue" alt="Python">
+  <img src="https://img.shields.io/badge/license-MIT-green" alt="License">
 </p><p align="center">
   🧠 <strong>Deterministic VM for LLM program execution.</strong><br>
   Turn unpredictable LLM behavior into structured, reproducible workflows.
@@ -36,7 +30,7 @@ nano-vm
 - ExecutionVM → deterministic state machine
 - Trace → full execution log
 
-«nano-vm is essentially a finite state machine for LLM workflows.»
+«nano-vm is a finite state machine (FSM) for LLM workflows.»
 
 ---
 
@@ -44,21 +38,21 @@ nano-vm
 
 LLM agents are unpredictable:
 
-- they decide what to do next
-- they may skip checks
-- behavior changes across runs
+- decide next steps dynamically
+- may skip critical checks
+- behavior varies between runs
 
 ---
 
 ✅ The Solution
 
-user_input → Planner (1 LLM call)
+user_input → Planner (1 LLM call, optional)
            → Program (DSL)
            → ExecutionVM (deterministic)
            → Trace
 
-- Planner = flexible but non-deterministic
-- VM = strict and deterministic
+- Planner = flexible, non-deterministic
+- VM = strict, deterministic
 
 ---
 
@@ -77,7 +71,7 @@ program = Program.from_dict({
         {
             "id": "analyze",
             "type": "llm",
-            "prompt": "...",
+            "prompt": "Is this a valid refund request?\nRequest: $user_input",
             "output_key": "decision",
         },
         {
@@ -90,7 +84,7 @@ program = Program.from_dict({
     ],
 })
 
-👉 VM guarantees:
+👉 Guarantees:
 
 - guardrail ALWAYS runs
 - no skipped steps
@@ -100,18 +94,18 @@ program = Program.from_dict({
 
 🤖 Planner (Optional)
 
-program = await planner.generate("Find latest AI news")
+program = await planner.generate("Find latest AI news and summarize")
 
-- 1 LLM call
+- exactly 1 LLM call
 - outputs DSL program
-- NOT deterministic
+- not deterministic
 
 ---
 
 📜 Program DSL
 
 {
-  "id": "step",
+  "id": "step_1",
   "type": "llm" | "tool" | "condition"
 }
 
@@ -128,10 +122,11 @@ Syntax| Meaning
 trace = await vm.run(program)
 
 trace.status
+trace.final_output
 trace.total_tokens()
 trace.total_cost_usd()
 
-Every step includes:
+Each step includes:
 
 - duration
 - tokens
@@ -157,8 +152,8 @@ Guardrails| weak| enforced
 Do NOT use if:
 
 - workflow is unknown
-- task is creative/open-ended
-- you want autonomous reasoning
+- task is creative / open-ended
+- you need autonomous reasoning
 
 Use it when:
 
@@ -179,6 +174,7 @@ class MyAdapter:
 📡 Providers (LiteLLM)
 
 LiteLLMAdapter("groq/llama-3.3-70b-versatile")
+LiteLLMAdapter("openrouter/llama-3.3-70b-instruct:free")
 LiteLLMAdapter("ollama/llama3")
 
 ---
