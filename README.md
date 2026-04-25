@@ -185,6 +185,25 @@ LiteLLMAdapter("ollama/llama3")
 
 ---
 
+💼 nano-vm Pro
+
+nano-vm follows an open-core model:
+
+- 🆓 Core (this repo) — MIT, fully open-source
+- 💼 Pro layer — commercial extensions
+
+Planned Pro features:
+
+- 📊 Advanced Trace UI (visual execution graph)
+- 🌐 Distributed execution (multi-node VM)
+- 🔄 Provider pools & smart routing
+- 🔐 Access control & multi-user support
+- 📈 Observability (metrics, logs, cost analytics)
+
+If you're interested in early access or enterprise use — reach out.
+
+---
+
 📄 License
 
-MIT
+This project is licensed under the MIT License.
