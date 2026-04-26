@@ -2,8 +2,8 @@
   <a href="https://github.com/Ale007XD/nano_vm/actions">
     <img src="https://github.com/Ale007XD/nano_vm/actions/workflows/ci.yml/badge.svg" alt="CI">
   </a>
-  <a href="https://pypi.org/project/nano-vm/">
-    <img src="https://img.shields.io/pypi/v/nano-vm" alt="PyPI">
+  <a href="https://pypi.org/project/llm-nano-vm/">
+    <img src="https://img.shields.io/pypi/v/llm-nano-vm" alt="PyPI">
   </a>
   <img src="https://img.shields.io/badge/python-3.10+-blue" alt="Python">
   <img src="https://img.shields.io/badge/license-MIT-green" alt="License">
@@ -23,7 +23,7 @@
 - ExecutionVM → deterministic state machine
 - Trace → full execution log
 
-> «nano-vm is a finite state machine (FSM) for LLM workflows.»
+> «llm-nano-vm is a finite state machine (FSM) for LLM workflows.»
 
 ---
 
@@ -54,8 +54,8 @@ user_input → Planner (1 LLM call, optional)
 ## 🚀 Install
 
 ```bash
-pip install nano-vm
-pip install nano-vm[litellm]
+pip install llm-nano-vm
+pip install llm-nano-vm[litellm]
 ```
 
 ---
@@ -93,11 +93,9 @@ program = Program.from_dict({
 
 ## ⚡ Performance
 
-`nano-vm` is designed for high-throughput AI agent ecosystems. By leveraging **Pydantic v2** and an immutable state architecture, the core execution engine introduces near-zero overhead.
+`llm-nano-vm` is designed for high-throughput AI agent ecosystems. By leveraging **Pydantic v2** and an immutable state architecture, the core execution engine introduces near-zero overhead.
 
 ### Benchmark Results (Android 15 / Termux)
-
-The following results were achieved on a mobile device (8 cores) running Python 3.13.13 inside Termux:
 
 | Metric | Value |
 | :--- | :--- |
@@ -105,14 +103,10 @@ The following results were achieved on a mobile device (8 cores) running Python 
 | **Avg. Latency** | **1.80 ms** per program |
 | **Complexity** | 20 steps (Mix of Tools & Conditions) |
 
-**Proof (Terminal Output):**
-
-![nano-vm performance benchmark inside Termux on Android 15](assets/benchmark_termux.jpg)
+![llm-nano-vm performance benchmark inside Termux on Android 15](assets/benchmark_termux.jpg)
 
 > [!TIP]
-> This means you can run hundreds of deterministic agent sessions concurrently on a single CPU core without noticing any lag from the VM itself.
-
-To run benchmarks on your own hardware:
+> The VM overhead is near-zero. Your bottleneck is the LLM API, not the runtime.
 
 ```bash
 python benchmarks/stress_test.py
@@ -155,21 +149,19 @@ program = await planner.generate("Find latest AI news and summarize")
 ```python
 trace = await vm.run(program)
 
-trace.status          # SUCCESS / FAILED
-trace.final_output    # last step output
-trace.total_tokens()  # across all steps
+trace.status           # SUCCESS / FAILED
+trace.final_output     # last step output
+trace.total_tokens()   # across all steps
 trace.total_cost_usd() # cost in USD
 ```
 
 Each step includes: duration · tokens · cost · status
 
-👉 Full debugging without guesswork.
-
 ---
 
-## ⚖️ nano-vm vs Agents
+## ⚖️ llm-nano-vm vs Agents
 
-| | LLM Agent | nano-vm |
+| | LLM Agent | llm-nano-vm |
 | :--- | :--- | :--- |
 | Control | LLM decides | You define |
 | Determinism | ❌ | ✅ |
@@ -178,7 +170,7 @@ Each step includes: duration · tokens · cost · status
 
 ---
 
-## ❌ When NOT to use nano-vm
+## ❌ When NOT to use llm-nano-vm
 
 **Do NOT use if:**
 
@@ -214,9 +206,7 @@ LiteLLMAdapter("ollama/llama3")
 
 ---
 
-## 💼 nano-vm Pro
-
-nano-vm follows an open-core model:
+## 💼 llm-nano-vm Pro
 
 - 🆓 **Core** (this repo) — MIT, fully open-source
 - 💼 **Pro layer** — commercial extensions
@@ -228,8 +218,6 @@ Planned Pro features:
 - 🔄 Provider pools & smart routing
 - 🔐 Access control & multi-user support
 - 📈 Observability (metrics, logs, cost analytics)
-
-If you're interested in early access or enterprise use — reach out.
 
 ---
 
