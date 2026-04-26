@@ -4,8 +4,11 @@ build-backend = "hatchling.build"
 
 [project]
 name = "nano-vm"
-version = "0.1.0"
+version = "0.1.1"
 description = "Deterministic VM for LLM program execution"
+authors = [
+    {name = "Ale007XD", email = "alex.deloverov@gmail.com"}
+]
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "MIT" }
@@ -35,6 +38,8 @@ dev    = [
 
 [project.urls]
 Repository = "https://github.com/Ale007XD/nano-vm"
+Homepage = "https://github.com/Ale007XD/nano-vm"
+Issues = "https://github.com/Ale007XD/nano-vm/issues"
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
