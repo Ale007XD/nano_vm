@@ -1,0 +1,6 @@
+include LICENSE
+include README.md
+recursive-exclude assets *
+recursive-exclude tests *
+recursive-exclude benchmarks *
+exclude .github/workflows/*
