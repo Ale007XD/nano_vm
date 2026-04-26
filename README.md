@@ -90,6 +90,31 @@ program = Program.from_dict({
     ],
 })
 
+## ⚡ Performance
+
+`nano-vm` is designed for high-throughput AI agent ecosystems. By leveraging **Pydantic v2** and an immutable state architecture, the core execution engine introduces near-zero overhead.
+
+### Benchmark Results (Android 15 / Termux)
+The following results were achieved on a mobile device (8 cores) running Python 3.13.13 inside Termux:
+
+| Metric | Value |
+| :--- | :--- |
+| **Throughput (RPS)** | **~535 programs/sec** |
+| **Avg. Latency** | **1.80 ms** per program |
+| **Complexity** | 20 steps (Mix of Tools & Conditions) |
+
+**Proof (Terminal Output):**
+
+![nano-vm performance benchmark inside Termux on Android 15](assets/benchmark_termux.jpg)
+
+> [!TIP]
+> This means you can run hundreds of deterministic agent sessions concurrently on a single CPU core without noticing any lag from the VM itself.
+
+To run benchmarks on your own hardware:
+```bash
+python scripts/stress_test.py
+
+
 👉 Guarantees:
 
 - guardrail ALWAYS runs
