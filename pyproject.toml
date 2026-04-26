@@ -58,3 +58,7 @@ select = ["E", "F", "I", "UP"]
 
 [tool.ruff.lint.isort]
 known-first-party = ["nano_vm"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["nano_vm"]
+
