@@ -31,6 +31,12 @@ def test_step_condition_requires_condition():
         Step(id="s1", type=StepType.CONDITION)
 
 
+def test_step_condition_requires_branch():
+    """BUG-4 fix: condition без then и otherwise должна падать при создании."""
+    with pytest.raises(Exception, match="then, otherwise"):
+        Step(id="s1", type=StepType.CONDITION, condition="True")
+
+
 def test_valid_llm_step():
     s = Step(id="s1", type=StepType.LLM, prompt="Hello")
     assert s.on_error == OnError.FAIL

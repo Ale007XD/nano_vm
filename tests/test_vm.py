@@ -105,6 +105,54 @@ async def test_condition_then_branch():
 
 
 @pytest.mark.asyncio
+async def test_condition_otherwise_branch():
+    vm = ExecutionVM(llm=MockLLM(["no answer", "otherwise branch"]))
+    program = Program.from_dict(
+        {
+            "steps": [
+                {"id": "s1", "type": "llm", "prompt": "Q?", "output_key": "ans"},
+                {
+                    "id": "check",
+                    "type": "condition",
+                    "condition": "'yes' in '$ans'",
+                    "then": "s3",
+                    "otherwise": "s4",
+                },
+                {"id": "s3", "type": "llm", "prompt": "Then path"},
+                {"id": "s4", "type": "llm", "prompt": "Otherwise path"},
+            ]
+        }
+    )
+    trace = await vm.run(program)
+    step_ids = [r.step_id for r in trace.steps]
+    assert "s4" in step_ids
+    assert "s3" not in step_ids
+
+
+@pytest.mark.asyncio
+async def test_condition_unknown_target_fails():
+    """BUG-2 fix: condition target, которого нет в программе → FAILED."""
+    vm = ExecutionVM(llm=MockLLM(["yes"]))
+    program = Program.from_dict(
+        {
+            "steps": [
+                {"id": "s1", "type": "llm", "prompt": "Q?", "output_key": "ans"},
+                {
+                    "id": "check",
+                    "type": "condition",
+                    "condition": "'yes' in '$ans'",
+                    "then": "nonexistent",
+                    "otherwise": "also_nonexistent",
+                },
+            ]
+        }
+    )
+    trace = await vm.run(program)
+    assert trace.status == TraceStatus.FAILED
+    assert "nonexistent" in trace.error
+
+
+@pytest.mark.asyncio
 async def test_on_error_skip():
     async def fail_tool():
         raise RuntimeError("oops")
@@ -122,6 +170,38 @@ async def test_on_error_skip():
     assert trace.status == TraceStatus.SUCCESS
     assert trace.steps[0].status == StepStatus.SKIPPED
     assert trace.steps[1].status == StepStatus.SUCCESS
+
+
+@pytest.mark.asyncio
+async def test_on_error_retry_increments_counter():
+    """A4 fix: retries счётчик инкрементируется в StepResult."""
+    call_count = 0
+
+    async def flaky_tool():
+        nonlocal call_count
+        call_count += 1
+        if call_count < 3:
+            raise RuntimeError("not yet")
+        return "ok"
+
+    vm = ExecutionVM(llm=MockLLM([]), tools={"flaky": flaky_tool})
+    program = Program.from_dict(
+        {
+            "steps": [
+                {
+                    "id": "s1",
+                    "type": "tool",
+                    "tool": "flaky",
+                    "args": {},
+                    "on_error": "retry",
+                    "max_retries": 3,
+                }
+            ]
+        }
+    )
+    trace = await vm.run(program)
+    assert trace.status == TraceStatus.SUCCESS
+    assert trace.steps[0].retries == 2  # 2 неудачи до успеха
 
 
 @pytest.mark.asyncio
