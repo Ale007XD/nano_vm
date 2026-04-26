@@ -27,8 +27,8 @@ dependencies = [
 
 [project.optional-dependencies]
 litellm = ["litellm>=1.40"]
-yaml   = ["pyyaml>=6.0"]
-dev    = [
+yaml    = ["pyyaml>=6.0"]
+dev     = [
     "pytest>=8.0",
     "pytest-asyncio>=0.23",
     "ruff>=0.4",
@@ -38,16 +38,19 @@ dev    = [
 
 [project.urls]
 Repository = "https://github.com/Ale007XD/nano-vm"
-Homepage = "https://github.com/Ale007XD/nano-vm"
-Issues = "https://github.com/Ale007XD/nano-vm/issues"
+Homepage   = "https://github.com/Ale007XD/nano-vm"
+Issues     = "https://github.com/Ale007XD/nano-vm/issues"
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
-testpaths = ["tests"]
+testpaths    = ["tests"]
 
 [tool.ruff]
-line-length = 100
+line-length    = 100
 target-version = "py310"
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["nano_vm"]
