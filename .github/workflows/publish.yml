@@ -3,7 +3,7 @@ name: Publish nano-vm
 on:
   push:
     tags:
-      - 'v*' # Срабатывает на любой тег версии
+      - 'v*' # Запуск при пуше любого тега версии
 
 jobs:
   build:
@@ -13,6 +13,7 @@ jobs:
       is_rc: ${{ steps.check-tag.outputs.rc }}
     steps:
       - uses: actions/checkout@v4
+      
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
@@ -44,33 +45,32 @@ jobs:
     needs: build
     if: needs.build.outputs.is_rc == 'true'
     runs-on: ubuntu-latest
-    environment: release-test
-    permissions:
-      id-token: write # Необходимо для Trusted Publishing
     steps:
       - name: Download all the dists
         uses: actions/download-artifact@v4
         with:
           name: python-package-distributions
           path: dist/
+      
       - name: Publish to TestPyPI
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
           repository-url: https://test.pypi.org/legacy/
+          password: ${{ secrets.TEST_PYPI_API_TOKEN }}
 
   publish-pypi:
     name: Publish to PyPI 🚀
     needs: build
     if: needs.build.outputs.is_rc == 'false'
     runs-on: ubuntu-latest
-    environment: release-prod
-    permissions:
-      id-token: write
     steps:
       - name: Download all the dists
         uses: actions/download-artifact@v4
         with:
           name: python-package-distributions
           path: dist/
+      
       - name: Publish to PyPI
         uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          password: ${{ secrets.PYPI_API_TOKEN }}
