@@ -57,8 +57,8 @@ class LiteLLMAdapter:
         self,
         messages: list[dict[str, str]],
         **kwargs: Any,
-    ) -> str:
-        """Вызов LLM через litellm, возвращает текст ответа."""
+    ) -> tuple[str, dict | None]:
+        """Вызов LLM через litellm. Возвращает (text, usage_dict) или (text, None)."""
         params: dict[str, Any] = {
             "model": self.model,
             "messages": messages,
@@ -73,7 +73,28 @@ class LiteLLMAdapter:
             params["fallbacks"] = self.fallbacks
 
         response = await acompletion(**params)
-        return response.choices[0].message.content
+        text = response.choices[0].message.content
+
+        usage_dict: dict | None = None
+        raw_usage = getattr(response, "usage", None)
+        if raw_usage is not None:
+            prompt_tokens = getattr(raw_usage, "prompt_tokens", 0) or 0
+            completion_tokens = getattr(raw_usage, "completion_tokens", 0) or 0
+            total_tokens = getattr(raw_usage, "total_tokens", 0) or (
+                prompt_tokens + completion_tokens
+            )
+            cost_usd: float | None = None
+            hidden = getattr(response, "_hidden_params", {}) or {}
+            if "response_cost" in hidden and hidden["response_cost"] is not None:
+                cost_usd = float(hidden["response_cost"])
+            usage_dict = {
+                "prompt_tokens": prompt_tokens,
+                "completion_tokens": completion_tokens,
+                "total_tokens": total_tokens,
+                "cost_usd": cost_usd,
+            }
+
+        return text, usage_dict
 
     def __repr__(self) -> str:
         parts = [f"model={self.model!r}"]
