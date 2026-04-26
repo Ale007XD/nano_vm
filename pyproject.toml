@@ -1,10 +1,10 @@
 [build-system]
-requires = ["hatchling"]
+requires = ["hatchling", "hatch-vcs"]
 build-backend = "hatchling.build"
 
 [project]
 name = "nano-vm"
-version = "0.1.2"
+dynamic = ["version"]  # 🔑 Версия теперь вычисляется автоматически из git-тегов
 description = "Deterministic VM for LLM program execution"
 authors = [
     {name = "Ale007XD", email = "alex.deloverov@gmail.com"}
@@ -40,6 +40,10 @@ dev     = [
 Repository = "https://github.com/Ale007XD/nano-vm"
 Homepage   = "https://github.com/Ale007XD/nano-vm"
 Issues     = "https://github.com/Ale007XD/nano-vm/issues"
+
+# 🔑 Настройка динамического версионирования через git-теги
+[tool.hatch.version]
+source = "vcs"
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
