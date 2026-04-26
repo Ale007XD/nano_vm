@@ -1,13 +1,16 @@
 import asyncio
-import time
 import platform
 import sys
+import time
 from multiprocessing import cpu_count
 
 # Пытаемся импортировать ядро, чтобы выдать понятную ошибку
 try:
     from nano_vm import (
-        ExecutionVM, Program, Step, StepType,
+        ExecutionVM,
+        Program,
+        Step,
+        StepType,
         TraceStatus,
     )
     from nano_vm.adapters.base import LLMAdapter
