@@ -37,9 +37,9 @@ dev     = [
 ]
 
 [project.urls]
-Repository = "https://github.com/Ale007XD/nano-vm"
-Homepage   = "https://github.com/Ale007XD/nano-vm"
-Issues     = "https://github.com/Ale007XD/nano-vm/issues"
+Repository = "https://github.com/Ale007XD/nano_vm"
+Homepage   = "https://github.com/Ale007XD/nano_vm"
+Issues     = "https://github.com/Ale007XD/nano_vm/issues"
 
 # 🔑 Настройка динамического версионирования через git-теги
 [tool.hatch.version]
