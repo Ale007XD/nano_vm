@@ -75,6 +75,10 @@ class Step(BaseModel):
             raise ValueError(f"Step '{self.id}': tool step requires tool")
         if self.type == StepType.CONDITION and not self.condition:
             raise ValueError(f"Step '{self.id}': condition step requires condition")
+        if self.type == StepType.CONDITION and not self.then and not self.otherwise:
+            raise ValueError(
+                f"Step '{self.id}': condition step requires at least one of: then, otherwise"
+            )
         return self
 
 

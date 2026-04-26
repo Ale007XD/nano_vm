@@ -107,18 +107,32 @@ class ExecutionVM:
             # Condition step: jump to then/otherwise and finish
             if step.type == StepType.CONDITION and result.status == StepStatus.SUCCESS:
                 next_id = result.output
-                if next_id and next_id in step_index:
-                    target_step = steps[step_index[next_id]]
-                    target_result, state = await self._run_step(target_step, state)
-                    trace = trace.add_step(target_result)
-                    if target_result.status == StepStatus.FAILED:
-                        trace = trace.finish(
-                            TraceStatus.FAILED,
-                            error=f"Step '{target_step.id}' failed: {target_result.error}",
-                        )
-                    else:
-                        trace = trace.finish(TraceStatus.SUCCESS, final_output=trace.last_output())
+
+                if not next_id:
+                    trace = trace.finish(
+                        TraceStatus.FAILED,
+                        error=f"Step '{step.id}': condition produced no branch target",
+                    )
                     return trace
+
+                if next_id not in step_index:
+                    msg = (
+                        f"Step '{step.id}': condition target '{next_id}' not found in program"
+                    )
+                    trace = trace.finish(TraceStatus.FAILED, error=msg)
+                    return trace
+
+                target_step = steps[step_index[next_id]]
+                target_result, state = await self._run_step(target_step, state)
+                trace = trace.add_step(target_result)
+                if target_result.status == StepStatus.FAILED:
+                    trace = trace.finish(
+                        TraceStatus.FAILED,
+                        error=f"Step '{target_step.id}' failed: {target_result.error}",
+                    )
+                else:
+                    trace = trace.finish(TraceStatus.SUCCESS, final_output=trace.last_output())
+                return trace
 
             current_idx += 1
 
@@ -151,6 +165,7 @@ class ExecutionVM:
             except Exception as exc:
                 attempt += 1
                 if step.on_error == OnError.RETRY and attempt < step.max_retries:
+                    result = result.model_copy(update={"retries": attempt})
                     await asyncio.sleep(0.5 * attempt)
                     continue
 
