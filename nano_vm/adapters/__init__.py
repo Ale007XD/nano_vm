@@ -1,6 +1,7 @@
 from .base import LLMAdapter
+from .mock_adapter import MockLLMAdapter
 
-__all__ = ["LLMAdapter"]
+__all__ = ["LLMAdapter", "MockLLMAdapter"]
 
 try:
     from .litellm_adapter import LiteLLMAdapter  # noqa: F401
