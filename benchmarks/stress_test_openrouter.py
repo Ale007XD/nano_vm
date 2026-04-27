@@ -13,18 +13,18 @@ llm-nano-vm benchmark script (v0.2.0)
 """
 
 import asyncio
-import time
-import os
-import platform
-import sys
 import contextlib
 import logging
+import os
+import platform
+import time
 
 # Глобальное подавление логов библиотек
 logging.basicConfig(level=logging.CRITICAL)
 
 from nano_vm import ExecutionVM, Program, Step
 from nano_vm.adapters.litellm_adapter import LiteLLMAdapter
+
 
 async def main():
     # Проверка наличия ключа
@@ -33,10 +33,10 @@ async def main():
         return
 
     # Блок подавления лишнего вывода (litellm warnings, provider list и т.д.)
-    with open(os.devnull, 'w') as f, contextlib.redirect_stderr(f), contextlib.redirect_stdout(f):
+    with open(os.devnull, "w") as f, contextlib.redirect_stderr(f), contextlib.redirect_stdout(f):
         adapter = LiteLLMAdapter(model="openrouter/meta-llama/llama-3.1-8b-instruct")
         vm = ExecutionVM(llm=adapter)
-        
+
         # Конфигурация: 20 параллельных сетевых вызовов
         CONCURRENCY = 20
         program = Program(
@@ -45,14 +45,14 @@ async def main():
                     id="stress_job",
                     type="parallel",
                     parallel_steps=[
-                        Step(id=f"task_{i}", type="llm", prompt="Say 'OK'") 
+                        Step(id=f"task_{i}", type="llm", prompt="Say 'OK'")
                         for i in range(CONCURRENCY)
                     ],
-                    on_error="skip"
+                    on_error="skip",
                 )
             ]
         )
-        
+
         t0 = time.perf_counter()
         trace = await vm.run(program)
         t1 = time.perf_counter()
@@ -62,16 +62,16 @@ async def main():
     outputs = getattr(trace, "final_output", {}) or {}
     success_count = len(outputs)
     rps = success_count / duration if duration > 0 else 0
-    
+
     # Системная информация
     cores = os.cpu_count() or "Unknown"
     py_version = platform.python_version()
     is_android = any(x in os.environ for x in ["ANDROID_DATA", "ANDROID_ROOT"])
     sys_name = "Android" if is_android else platform.system()
-        
+
     # Форматированный вывод для README/Скриншотов
     print("\n")
-    print(f"🧬 Инициализация бенчмарка llm-nano-vm (OpenRouter Network)...")
+    print("🧬 Инициализация бенчмарка llm-nano-vm (OpenRouter Network)...")
     print(f"📱 Система: {sys_name} {platform.release()}")
     print(f"⚙️ Процессор: {platform.machine()} ({cores} cores)")
     print(f"🐍 Python: {py_version}")
@@ -85,6 +85,6 @@ async def main():
     print("═" * 54)
     print("\n")
 
+
 if __name__ == "__main__":
     asyncio.run(main())
-  
