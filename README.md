@@ -377,7 +377,7 @@ Test:   1 run × 20 parallel steps (StepType.PARALLEL, asyncio.gather)
 Result: 1.7574 s total  →  ~11.4 effective steps/sec
 ```
 
-![llm-nano-vm benchmark — 20 parallel steps via OpenRouter](docs/benchmark_openrouter.png)
+![llm-nano-vm benchmark — 20 parallel steps via OpenRouter](assets/benchmark_openrouter.png)
 
 Reproduce locally:
 
