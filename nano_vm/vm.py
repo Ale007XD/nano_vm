@@ -7,6 +7,7 @@ Key properties:
 - VM has no knowledge of providers; receives LLMAdapter via __init__
 - Same Program + StateContext + deterministic adapter -> reproducible result
 - Steps execute sequentially; condition steps control branching
+- Parallel steps execute sub-steps concurrently via asyncio.gather
 - Per-step on_error: fail | skip | retry
 - LLM steps populate StepResult.usage (tokens + cost) when available
 """
@@ -94,7 +95,11 @@ class ExecutionVM:
 
         while current_idx < len(steps):
             step = steps[current_idx]
-            result, state = await self._run_step(step, state)
+            result, state, sub_results = await self._run_step(step, state)
+
+            # Add sub-step results to trace before the parent step
+            for sub_result in sub_results:
+                trace = trace.add_step(sub_result)
             trace = trace.add_step(result)
 
             if result.status == StepStatus.FAILED:
@@ -123,7 +128,9 @@ class ExecutionVM:
                     return trace
 
                 target_step = steps[step_index[next_id]]
-                target_result, state = await self._run_step(target_step, state)
+                target_result, state, target_sub = await self._run_step(target_step, state)
+                for sub_result in target_sub:
+                    trace = trace.add_step(sub_result)
                 trace = trace.add_step(target_result)
                 if target_result.status == StepStatus.FAILED:
                     trace = trace.finish(
@@ -147,20 +154,32 @@ class ExecutionVM:
         self,
         step: Step,
         state: StateContext,
-    ) -> tuple[StepResult, StateContext]:
+    ) -> tuple[StepResult, StateContext, list[StepResult]]:
+        """
+        Execute a single step.
+
+        Returns:
+            (result, state, sub_results)
+            sub_results: list of StepResult for parallel sub-steps (empty otherwise)
+        """
         result = StepResult(step_id=step.id, status=StepStatus.RUNNING)
         attempt = 0
 
         while True:
             try:
-                output, usage = await self._execute_step(step, state)
+                output, usage, sub_results = await self._execute_step(step, state)
                 result = result.finish(output=output, usage=usage)
 
                 if step.output_key:
                     state = state.with_data(step.output_key, output)
                 state = state.with_output(step.id, output)
 
-                return result, state
+                # For parallel: also store each sub-step output individually
+                if step.type == StepType.PARALLEL and isinstance(output, dict):
+                    for sub_id, sub_out in output.items():
+                        state = state.with_output(sub_id, sub_out)
+
+                return result, state, sub_results
 
             except Exception as exc:
                 attempt += 1
@@ -178,25 +197,35 @@ class ExecutionVM:
                             "error": error_msg,
                         }
                     )
-                    return result, state
+                    return result, state, []
 
                 result = result.finish(error=error_msg)
-                return result, state
+                return result, state, []
 
     async def _execute_step(
         self,
         step: Step,
         state: StateContext,
-    ) -> tuple[Any, LLMUsage | None]:
-        """Dispatch by step type. Returns (output, usage)."""
+    ) -> tuple[Any, LLMUsage | None, list[StepResult]]:
+        """
+        Dispatch by step type.
+
+        Returns:
+            (output, usage, sub_results)
+            sub_results: StepResult list for parallel sub-steps; empty for all others
+        """
         if step.type == StepType.LLM:
-            return await self._execute_llm(step, state)
+            output, usage = await self._execute_llm(step, state)
+            return output, usage, []
         if step.type == StepType.TOOL:
             output = await self._execute_tool(step, state)
-            return output, None
+            return output, None, []
         if step.type == StepType.CONDITION:
             output = self._execute_condition(step, state)
-            return output, None
+            return output, None, []
+        if step.type == StepType.PARALLEL:
+            output, sub_results = await self._execute_parallel(step, state)
+            return output, None, sub_results
         raise VMError(f"Unknown step type: {step.type}")
 
     # ------------------------------------------------------------------
@@ -214,10 +243,8 @@ class ExecutionVM:
             messages.append({"role": "system", "content": self._resolve(step.system, state)})
         messages.append({"role": "user", "content": prompt})
 
-        # Pass raw call to adapter; usage extracted if adapter returns it
         result = await self._llm.complete(messages)
 
-        # LiteLLMAdapter can optionally return (text, usage_dict) tuple
         if isinstance(result, tuple):
             text, usage_data = result
             usage = LLMUsage(**usage_data) if usage_data else None
@@ -263,6 +290,77 @@ class ExecutionVM:
         except Exception as exc:
             raise VMError(f"Condition eval error '{condition}': {exc}") from exc
         return step.then if result else step.otherwise
+
+    # ------------------------------------------------------------------
+    # Parallel step
+    # ------------------------------------------------------------------
+
+    async def _execute_parallel(
+        self,
+        step: Step,
+        state: StateContext,
+    ) -> tuple[dict[str, Any], list[StepResult]]:
+        """
+        Execute parallel_steps concurrently via asyncio.gather.
+
+        on_error=FAIL (default): any sub-step failure raises, aborting the parallel step.
+        on_error=SKIP: failed sub-steps are recorded with SKIPPED status; others proceed.
+
+        Returns:
+            outputs: dict[sub_step_id -> output]  (only successful/skipped-with-None)
+            sub_results: list[StepResult] for each sub-step (for trace)
+        """
+        async def _run_sub(sub: Step) -> tuple[StepResult, Any]:
+            sub_result = StepResult(step_id=sub.id, status=StepStatus.RUNNING)
+            try:
+                output, usage = await self._dispatch_leaf(sub, state)
+                sub_result = sub_result.finish(output=output, usage=usage)
+                return sub_result, output
+            except Exception as exc:
+                error_msg = f"{type(exc).__name__}: {exc}"
+                if step.on_error == OnError.SKIP:
+                    sub_result = sub_result.model_copy(
+                        update={"status": StepStatus.SKIPPED, "error": error_msg}
+                    )
+                    return sub_result, None
+                sub_result = sub_result.finish(error=error_msg)
+                return sub_result, None
+
+        raw = await asyncio.gather(*[_run_sub(sub) for sub in step.parallel_steps])
+
+        sub_results: list[StepResult] = []
+        outputs: dict[str, Any] = {}
+        failed: list[str] = []
+
+        for sub_step, (sub_result, output) in zip(step.parallel_steps, raw):
+            sub_results.append(sub_result)
+            if sub_result.status == StepStatus.FAILED:
+                failed.append(sub_step.id)
+            elif sub_result.status == StepStatus.SUCCESS:
+                outputs[sub_step.id] = output
+            # SKIPPED → не включаем в outputs
+
+        if failed and step.on_error != OnError.SKIP:
+            raise VMError(
+                f"Parallel step '{step.id}': sub-steps failed: {failed}"
+            )
+
+        return outputs, sub_results
+
+    async def _dispatch_leaf(
+        self,
+        step: Step,
+        state: StateContext,
+    ) -> tuple[Any, LLMUsage | None]:
+        """Execute llm or tool sub-step. Condition/parallel not allowed here."""
+        if step.type == StepType.LLM:
+            return await self._execute_llm(step, state)
+        if step.type == StepType.TOOL:
+            output = await self._execute_tool(step, state)
+            return output, None
+        raise VMError(
+            f"Sub-step '{step.id}': type '{step.type}' not allowed inside parallel"
+        )
 
     # ------------------------------------------------------------------
     # Resolver: substitute $variables from state

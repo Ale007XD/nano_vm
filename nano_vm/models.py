@@ -22,6 +22,7 @@ class StepType(str, Enum):
     LLM = "llm"
     TOOL = "tool"
     CONDITION = "condition"
+    PARALLEL = "parallel"
 
 
 class StepStatus(str, Enum):
@@ -63,6 +64,9 @@ class Step(BaseModel):
     then: str | None = None
     otherwise: str | None = None
 
+    # parallel step
+    parallel_steps: list[Step] = Field(default_factory=list)
+
     # error handling
     on_error: OnError = OnError.FAIL
     max_retries: int = 1
@@ -79,6 +83,15 @@ class Step(BaseModel):
             raise ValueError(
                 f"Step '{self.id}': condition step requires at least one of: then, otherwise"
             )
+        if self.type == StepType.PARALLEL and not self.parallel_steps:
+            raise ValueError(f"Step '{self.id}': parallel step requires at least one parallel_steps entry")
+        if self.type == StepType.PARALLEL:
+            for sub in self.parallel_steps:
+                if sub.type in (StepType.CONDITION, StepType.PARALLEL):
+                    raise ValueError(
+                        f"Step '{self.id}': parallel sub-step '{sub.id}' "
+                        f"cannot be of type '{sub.type}' (only llm/tool allowed)"
+                    )
         return self
 
 
