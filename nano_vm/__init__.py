@@ -13,6 +13,13 @@ Quick start:
     trace = await vm.run(program, context={"user_input": "..."})
     print(trace.final_output)
     print(f"Tokens used: {trace.total_tokens()}")
+
+Testing with deterministic adapter:
+    from nano_vm.adapters import MockLLMAdapter
+
+    vm = ExecutionVM(llm=MockLLMAdapter("SAFE"))
+    trace = await vm.run(program, context={"user_input": "test"})
+    assert trace.status == TraceStatus.SUCCESS
 """
 
 from .models import (
@@ -47,4 +54,4 @@ __all__ = [
     "TraceStatus",
 ]
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"

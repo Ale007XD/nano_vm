@@ -60,7 +60,7 @@ pip install llm-nano-vm[litellm]   # for built-in provider support
 
 ```python
 from nano_vm import ExecutionVM, Program
-from nano_vm.adapters.litellm_adapter import LiteLLMAdapter
+from nano_vm.adapters import LiteLLMAdapter
 
 program = Program.from_dict({
     "name": "customer_refund",
@@ -91,8 +91,10 @@ program = Program.from_dict({
     ],
 })
 
-adapter = LiteLLMAdapter("openai/gpt-4o-mini")
-vm = ExecutionVM(adapter=adapter, tools={"issue_refund": ..., "send_rejection": ...})
+vm = ExecutionVM(
+    llm=LiteLLMAdapter("openai/gpt-4o-mini"),
+    tools={"issue_refund": ..., "send_rejection": ...},
+)
 trace = await vm.run(program, context={"user_input": "I was charged twice"})
 
 print(trace.status)           # SUCCESS
@@ -196,7 +198,7 @@ Every step is logged. No agent "decided" the flow. The DSL did.
 ```
 user_input
   → Planner (optional, 1 LLM call)
-  → Program (DSL — JSON/dict)
+  → Program (DSL — JSON/dict/YAML)
   → ExecutionVM (deterministic FSM)
   → Trace (status · cost · tokens · duration)
 ```
@@ -205,13 +207,14 @@ user_input
 
 ## Program DSL
 
-Three step types:
+Four step types:
 
 | Type | Purpose |
 | :--- | :--- |
 | `llm` | call the model; result stored in `output_key` |
 | `tool` | call a Python function |
 | `condition` | branch on an expression; `then` / `otherwise` |
+| `parallel` | run independent sub-steps concurrently via `asyncio.gather` |
 
 ### Variable interpolation
 
@@ -237,6 +240,63 @@ Three step types:
 }
 ```
 
+### Example — parallel steps (v0.2.0)
+
+```python
+program = Program.from_dict({
+    "name": "enrich",
+    "steps": [
+        {
+            "id": "fetch",
+            "type": "parallel",
+            "output_key": "fetched",
+            "parallel_steps": [
+                {"id": "weather", "type": "tool", "tool": "get_weather", "args": {"city": "$city"}},
+                {"id": "news",    "type": "tool", "tool": "get_news",    "args": {"topic": "$topic"}},
+            ],
+        },
+        {
+            "id": "summarize",
+            "type": "llm",
+            "prompt": "Weather: $weather.output\nNews: $news.output\nSummarize for user.",
+        },
+    ],
+})
+```
+
+`fetch` runs both tools concurrently. Each sub-step output is available as `$weather.output` and `$news.output`.
+Sequential execution resumes at `summarize` only after all sub-steps complete.
+
+---
+
+## Testing — Deterministic by Design
+
+`MockLLMAdapter` ships with the package for writing tests without a real LLM:
+
+```python
+from nano_vm import ExecutionVM, Program, TraceStatus
+from nano_vm.adapters import MockLLMAdapter
+
+# Always returns the same string
+vm = ExecutionVM(llm=MockLLMAdapter("SAFE"))
+
+# Per-call sequence
+vm = ExecutionVM(llm=MockLLMAdapter(["SAFE", "yes"]))
+
+# Per-prompt mapping (substring match on last user message)
+vm = ExecutionVM(llm=MockLLMAdapter({
+    "Classify": "SAFE",
+    "eligible": "yes",
+    "__default__": "ok",
+}))
+
+trace = await vm.run(program, context={"user_input": "refund"})
+assert trace.status == TraceStatus.SUCCESS
+assert [s.step_id for s in trace.steps] == ["classify", "route", "verify_eligibility", ...]
+```
+
+Same input → same step sequence. Always. Testable in CI without any API key.
+
 ---
 
 ## Observability
@@ -248,7 +308,7 @@ trace.total_tokens()    # sum across all steps
 trace.total_cost_usd()  # sum across all steps (requires LiteLLMAdapter)
 
 for step in trace.steps:
-    print(step.step_id, step.status, step.duration, step.usage)
+    print(step.step_id, step.status, step.duration_ms, step.usage)
 ```
 
 ---
@@ -258,7 +318,7 @@ for step in trace.steps:
 ```python
 from nano_vm import Planner
 
-planner = Planner(adapter=adapter)
+planner = Planner(llm=adapter)
 program = await planner.generate("Fetch latest AI news, summarize, classify by topic")
 trace = await vm.run(program)
 ```
@@ -294,14 +354,37 @@ LiteLLMAdapter("openai/gpt-4o-mini")
 
 The VM itself introduces near-zero overhead. Your bottleneck is the LLM API.
 
-| Metric | Value |
-| :--- | :--- |
-| VM throughput (no LLM) | ~535 programs/sec |
-| VM latency per step | ~1.80 ms |
-| Test coverage | 33/33 tests passing |
+| Metric | Adapter | Value |
+| :--- | :--- | :--- |
+| VM throughput | Mock (no network) | ~535 programs/sec |
+| VM latency per step | Mock (no network) | ~1.80 ms |
+| Parallel steps (20) | OpenRouter (network) | **1.76 s total → ~11.4 steps/sec** |
+| Test suite | — | 56 tests passing |
 
-> **Note:** throughput is measured with a mock adapter (no network).
-> Real end-to-end latency is dominated by LLM API response time (typically 0.5–5 s/step).
+> **Note:** Mock throughput measures pure VM overhead with no I/O.
+> Real end-to-end latency is dominated by LLM API response time.
+> Parallel steps execute via `asyncio.gather` — wall-clock time equals the **slowest single step**, not the sum.
+
+---
+
+## Benchmark
+
+Real execution: **20 parallel steps via OpenRouter** on a 2-core Linux VPS.
+
+```
+System: Linux 6.8.0-110-generic  ·  x86_64 (2 cores)  ·  Python 3.12.3
+Test:   1 run × 20 parallel steps (StepType.PARALLEL, asyncio.gather)
+Result: 1.7574 s total  →  ~11.4 effective steps/sec
+```
+
+![llm-nano-vm benchmark — 20 parallel steps via OpenRouter](docs/benchmark_openrouter.png)
+
+Reproduce locally:
+
+```bash
+pip install llm-nano-vm[litellm]
+python benchmarks/stress_test.py
+```
 
 ---
 
@@ -340,7 +423,8 @@ The VM itself introduces near-zero overhead. Your bottleneck is the LLM API.
 - [x] `llm / tool / condition` step types
 - [x] LiteLLM adapter + cost tracking
 - [x] Published to PyPI as `llm-nano-vm`
-- [ ] `parallel` steps — `asyncio.gather` for independent tool calls (v0.4)
+- [x] `parallel` steps — `asyncio.gather` for independent sub-steps (v0.2.0)
+- [x] `MockLLMAdapter` — deterministic testing without API keys (v0.2.0)
 - [ ] MCP server — `run_program`, `get_trace`, `list_programs` (nano-vm-mcp)
 - [ ] REST API — pay-per-run, API keys (nano-vm-server)
 
