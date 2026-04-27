@@ -121,9 +121,7 @@ class ExecutionVM:
                     return trace
 
                 if next_id not in step_index:
-                    msg = (
-                        f"Step '{step.id}': condition target '{next_id}' not found in program"
-                    )
+                    msg = f"Step '{step.id}': condition target '{next_id}' not found in program"
                     trace = trace.finish(TraceStatus.FAILED, error=msg)
                     return trace
 
@@ -310,6 +308,7 @@ class ExecutionVM:
             outputs: dict[sub_step_id -> output]  (only successful/skipped-with-None)
             sub_results: list[StepResult] for each sub-step (for trace)
         """
+
         async def _run_sub(sub: Step) -> tuple[StepResult, Any]:
             sub_result = StepResult(step_id=sub.id, status=StepStatus.RUNNING)
             try:
@@ -341,9 +340,7 @@ class ExecutionVM:
             # SKIPPED → не включаем в outputs
 
         if failed and step.on_error != OnError.SKIP:
-            raise VMError(
-                f"Parallel step '{step.id}': sub-steps failed: {failed}"
-            )
+            raise VMError(f"Parallel step '{step.id}': sub-steps failed: {failed}")
 
         return outputs, sub_results
 
@@ -358,9 +355,7 @@ class ExecutionVM:
         if step.type == StepType.TOOL:
             output = await self._execute_tool(step, state)
             return output, None
-        raise VMError(
-            f"Sub-step '{step.id}': type '{step.type}' not allowed inside parallel"
-        )
+        raise VMError(f"Sub-step '{step.id}': type '{step.type}' not allowed inside parallel")
 
     # ------------------------------------------------------------------
     # Resolver: substitute $variables from state

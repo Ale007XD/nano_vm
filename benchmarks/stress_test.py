@@ -18,6 +18,7 @@ except ImportError:
     print("❌ Ошибка: nano-vm не установлена. Запустите 'pip install nano-vm'.")
     sys.exit(1)
 
+
 # 1. Заглушка для LLM (Network-free)
 class MockLLMAdapter(LLMAdapter):
     async def complete(self, messages: list[dict[str, str]]) -> tuple[str, dict]:
@@ -25,11 +26,13 @@ class MockLLMAdapter(LLMAdapter):
         await asyncio.sleep(0.001)
         return "mock_response", {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15}
 
+
 # 2. Тестовый инструмент (CPU-bound имитация)
 async def workload_tool(data_size: int = 100):
     # Имитируем небольшую работу с данными
     _ = "x" * data_size
     return "ok"
+
 
 def create_stress_program(steps_count: int = 20) -> Program:
     """Генерирует цепочку последовательных шагов и финальное условие."""
@@ -39,26 +42,31 @@ def create_stress_program(steps_count: int = 20) -> Program:
             type=StepType.TOOL,
             tool="workload",
             args={"data_size": 1000},
-            output_key=f"data_{i}"
-        ) for i in range(steps_count)
+            output_key=f"data_{i}",
+        )
+        for i in range(steps_count)
     ]
 
     # Сложное условие для проверки Resolver и Eval
-    steps.append(Step(
-        id="check_logic",
-        type=StepType.CONDITION,
-        condition="'o' in '$step_0.output'",
-        then=f"step_{steps_count-1}",
-        otherwise="step_0",
-    ))
+    steps.append(
+        Step(
+            id="check_logic",
+            type=StepType.CONDITION,
+            condition="'o' in '$step_0.output'",
+            then=f"step_{steps_count - 1}",
+            otherwise="step_0",
+        )
+    )
 
     return Program(name="performance_benchmark", steps=steps)
+
 
 async def run_worker(vm: ExecutionVM, program: Program, context: dict):
     start = time.perf_counter()
     trace = await vm.run(program, context=context)
     duration = time.perf_counter() - start
     return trace.status == TraceStatus.SUCCESS, duration
+
 
 async def main():
     # Настройки масштабирования
@@ -98,11 +106,11 @@ async def main():
     print("═" * 45)
     print("📊 ФИНАЛЬНЫЕ МЕТРИКИ")
     print(f"⏱️  Общее время теста: {total_time:.4f} s")
-    print(f"🚀 Ср. время исполнения (1 Program): {avg_run_time*1000:.2f} ms")
+    print(f"🚀 Ср. время исполнения (1 Program): {avg_run_time * 1000:.2f} ms")
     print(f"💎 Успешность: {success_runs}/{CONCURRENT_RUNS}")
-    print(f"📈 Производительность: {CONCURRENT_RUNS/total_time:.2f} RPS")
+    print(f"📈 Производительность: {CONCURRENT_RUNS / total_time:.2f} RPS")
     print("═" * 45)
+
 
 if __name__ == "__main__":
     asyncio.run(main())
-    

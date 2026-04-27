@@ -84,7 +84,9 @@ class Step(BaseModel):
                 f"Step '{self.id}': condition step requires at least one of: then, otherwise"
             )
         if self.type == StepType.PARALLEL and not self.parallel_steps:
-            raise ValueError(f"Step '{self.id}': parallel step requires at least one parallel_steps entry")
+            raise ValueError(
+                f"Step '{self.id}': parallel step requires at least one parallel_steps entry"
+            )
         if self.type == StepType.PARALLEL:
             for sub in self.parallel_steps:
                 if sub.type in (StepType.CONDITION, StepType.PARALLEL):

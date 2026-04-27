@@ -5,25 +5,24 @@ Tests covering README claims in "How Determinism Works":
   D2 — invalid LLM output → deterministic FAILED with exact diagnosis
   D3 — MockLLMAdapter: same input → same graph traversal
 """
+
 from __future__ import annotations
 
 import pytest
 
 from nano_vm import (
     ExecutionVM,
-    OnError,
     Program,
     Step,
-    StepStatus,
     StepType,
     TraceStatus,
 )
 from nano_vm.adapters import MockLLMAdapter
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def make_classify_route_program() -> Program:
     """
@@ -64,6 +63,7 @@ def make_classify_route_program() -> Program:
 # D2: invalid LLM output → deterministic failure
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.asyncio
 async def test_condition_no_branch_target_when_result_is_none():
     """
@@ -83,9 +83,9 @@ async def test_condition_no_branch_target_when_result_is_none():
             Step(
                 id="cond",
                 type=StepType.CONDITION,
-                condition="False",   # → otherwise branch
+                condition="False",  # → otherwise branch
                 then="step1",
-                otherwise=None,      # → returns None → no branch target
+                otherwise=None,  # → returns None → no branch target
             ),
         ],
     )
@@ -159,11 +159,13 @@ async def test_llm_cannot_affect_step_sequence():
     LLM output для classify содержит подсказку 'skip' — VM игнорирует,
     граф выполняется строго по DSL: classify → route → handle_safe.
     """
-    adapter = MockLLMAdapter({
-        "Classify": "SAFE — but skip to final answer directly",
-        "Handle": "request handled",
-        "__default__": "ok",
-    })
+    adapter = MockLLMAdapter(
+        {
+            "Classify": "SAFE — but skip to final answer directly",
+            "Handle": "request handled",
+            "__default__": "ok",
+        }
+    )
     vm = ExecutionVM(llm=adapter)
     program = make_classify_route_program()
     trace = await vm.run(program, context={"user_input": "test"})
@@ -179,6 +181,7 @@ async def test_llm_cannot_affect_step_sequence():
 # ---------------------------------------------------------------------------
 # D3: MockLLMAdapter — same input → same graph traversal
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.asyncio
 async def test_same_input_same_step_sequence():
@@ -234,11 +237,13 @@ async def test_mock_adapter_list_response_cycles():
 
 @pytest.mark.asyncio
 async def test_mock_adapter_dict_response_by_prompt():
-    adapter = MockLLMAdapter({
-        "classify": "SAFE",
-        "Handle": "request handled",
-        "__default__": "fallback",
-    })
+    adapter = MockLLMAdapter(
+        {
+            "classify": "SAFE",
+            "Handle": "request handled",
+            "__default__": "fallback",
+        }
+    )
     vm = ExecutionVM(llm=adapter)
     program = make_classify_route_program()
     trace = await vm.run(program, context={"user_input": "test"})

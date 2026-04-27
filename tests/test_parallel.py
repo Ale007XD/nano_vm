@@ -1,9 +1,11 @@
 """
 Tests for StepType.PARALLEL (DSL v0.4)
 """
+
 from __future__ import annotations
 
 import asyncio
+
 import pytest
 
 from nano_vm.models import (
@@ -14,12 +16,12 @@ from nano_vm.models import (
     StepType,
     TraceStatus,
 )
-from nano_vm.vm import ExecutionVM, VMError
-
+from nano_vm.vm import ExecutionVM
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 class MockLLM:
     async def complete(self, messages):
@@ -46,6 +48,7 @@ async def tool_fail(**kwargs) -> str:
 # ---------------------------------------------------------------------------
 # Model validation
 # ---------------------------------------------------------------------------
+
 
 def test_parallel_step_requires_parallel_steps():
     with pytest.raises(ValueError, match="requires at least one parallel_steps"):
@@ -96,6 +99,7 @@ def test_parallel_step_valid():
 # Execution: happy path
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.asyncio
 async def test_parallel_two_tools_success():
     vm = make_vm({"echo": tool_echo})
@@ -144,8 +148,12 @@ async def test_parallel_output_key_stored_in_state():
                 type=StepType.PARALLEL,
                 output_key="par_out",
                 parallel_steps=[
-                    Step(id="sa", type=StepType.TOOL, tool="capture", args={"key": "a", "value": "A"}),
-                    Step(id="sb", type=StepType.TOOL, tool="capture", args={"key": "b", "value": "B"}),
+                    Step(
+                        id="sa", type=StepType.TOOL, tool="capture", args={"key": "a", "value": "A"}
+                    ),
+                    Step(
+                        id="sb", type=StepType.TOOL, tool="capture", args={"key": "b", "value": "B"}
+                    ),
                 ],
             ),
             Step(
@@ -215,6 +223,7 @@ async def test_parallel_with_llm_sub_steps():
 # Execution: on_error=FAIL (default)
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.asyncio
 async def test_parallel_fail_on_sub_error():
     vm = make_vm({"echo": tool_echo, "fail": tool_fail})
@@ -263,6 +272,7 @@ async def test_parallel_fail_propagates_to_trace():
 # Execution: on_error=SKIP
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.asyncio
 async def test_parallel_skip_on_sub_error():
     vm = make_vm({"echo": tool_echo, "fail": tool_fail})
@@ -293,6 +303,7 @@ async def test_parallel_skip_on_sub_error():
 # ---------------------------------------------------------------------------
 # Trace structure
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.asyncio
 async def test_parallel_sub_steps_appear_before_parent_in_trace():
