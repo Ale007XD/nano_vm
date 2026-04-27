@@ -19,11 +19,11 @@ import os
 import platform
 import time
 
-# Глобальное подавление логов библиотек
-logging.basicConfig(level=logging.CRITICAL)
-
 from nano_vm import ExecutionVM, Program, Step
 from nano_vm.adapters.litellm_adapter import LiteLLMAdapter
+
+# Глобальное подавление логов библиотек
+logging.basicConfig(level=logging.CRITICAL)
 
 
 async def main():
