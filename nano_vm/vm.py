@@ -313,7 +313,9 @@ class ExecutionVM:
 
         # max_concurrency=None → no cap; otherwise limit via Semaphore
         semaphore: asyncio.Semaphore | None = (
-            asyncio.Semaphore(step.max_concurrency) if step.max_concurrency is not None else None
+            asyncio.Semaphore(step.max_concurrency)
+            if step.max_concurrency is not None
+            else None
         )
 
         async def _run_sub(sub: Step) -> tuple[StepResult, Any]:
@@ -385,21 +387,25 @@ class ExecutionVM:
         if not isinstance(value, str):
             return value
 
+        _MISSING = object()
+
         def replace(match: re.Match) -> str:
             expr = match.group(1)
 
             if "." in expr:
                 step_id, field = expr.split(".", 1)
-                step_out = state.step_outputs.get(step_id)
-                if step_out is None:
+                # Use sentinel to distinguish missing key from None value
+                step_out = state.step_outputs.get(step_id, _MISSING)
+                if step_out is _MISSING:
                     return match.group(0)
                 if field == "output":
                     return str(step_out)
                 if isinstance(step_out, dict):
-                    return str(step_out.get(field, match.group(0)))
+                    val = step_out.get(field, _MISSING)
+                    return str(val) if val is not _MISSING else match.group(0)
                 return match.group(0)
 
-            val = state.data.get(expr)
-            return str(val) if val is not None else match.group(0)
+            val = state.data.get(expr, _MISSING)
+            return str(val) if val is not _MISSING else match.group(0)
 
         return re.sub(r"\$(\w+(?:\.\w+)?)", replace, value)
