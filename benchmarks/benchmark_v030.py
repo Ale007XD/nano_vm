@@ -104,11 +104,9 @@ async def bm_retry_overhead(runs: int = 200) -> None:
     original_sleep = asyncio.sleep
 
     results = {}
-    for fail_times, label in [
-        (0, "0 retries (success 1st)"),
-        (1, "1 retry  (success 2nd)"),
-        (2, "2 retries (success 3rd)"),
-    ]:
+    for fail_times, label in [(0, "0 retries (success 1st)"),
+                               (1, "1 retry  (success 2nd)"),
+                               (2, "2 retries (success 3rd)")]:
         vm = make_vm()
         program = Program(
             name="retry_bench",
@@ -158,7 +156,7 @@ async def bm_concurrency_scaling(
     if caps is None:
         caps = [None, 10, 5, 2, 1]
 
-    print(f"\n── BM2: max_concurrency scaling ({n_steps} steps × {step_delay * 1000:.0f}ms each) ─")
+    print(f"\n── BM2: max_concurrency scaling ({n_steps} steps × {step_delay*1000:.0f}ms each) ─")
 
     vm = make_vm()
     baseline_elapsed = None
@@ -192,7 +190,6 @@ async def bm_concurrency_scaling(
         elapsed = time.perf_counter() - t0
 
         success = sum(1 for t in traces if t.status == TraceStatus.SUCCESS)
-        avg_ms = elapsed / RUNS * 1000
 
         if baseline_elapsed is None:
             baseline_elapsed = elapsed
@@ -230,7 +227,10 @@ async def bm_parallel_throughput() -> None:
     ]
 
     for n_steps, cap in configs:
-        parallel_steps = [Step(id=f"s{i}", type=StepType.TOOL, tool="fast") for i in range(n_steps)]
+        parallel_steps = [
+            Step(id=f"s{i}", type=StepType.TOOL, tool="fast")
+            for i in range(n_steps)
+        ]
         program = Program(
             name="throughput_bench",
             steps=[
@@ -282,7 +282,8 @@ async def bm_skipped_resolver_overhead(runs: int = 300) -> None:
                 id="par",
                 type=StepType.PARALLEL,
                 parallel_steps=[
-                    Step(id=f"s{i}", type=StepType.TOOL, tool="fast") for i in range(5)
+                    Step(id=f"s{i}", type=StepType.TOOL, tool="fast")
+                    for i in range(5)
                 ],
             ),
             Step(id="next", type=StepType.LLM, prompt="$s0.output $s1.output"),
@@ -305,11 +306,8 @@ async def bm_skipped_resolver_overhead(runs: int = 300) -> None:
                     Step(id="s4", type=StepType.TOOL, tool="fast"),
                 ],
             ),
-            Step(
-                id="next",
-                type=StepType.LLM,
-                prompt="$s0.output $s1.output $s2.output $s3.output $s4.output",
-            ),
+            Step(id="next", type=StepType.LLM,
+                 prompt="$s0.output $s1.output $s2.output $s3.output $s4.output"),
         ],
     )
 
@@ -325,11 +323,8 @@ async def bm_skipped_resolver_overhead(runs: int = 300) -> None:
 
     overhead = (skip_elapsed - baseline_elapsed) / baseline_elapsed * 100
     print(row("all success (baseline)", runs, baseline_elapsed, runs))
-    print(
-        row(
-            "2/5 SKIPPED → None in resolver", runs, skip_elapsed, runs, f"+{overhead:.1f}% overhead"
-        )
-    )
+    print(row("2/5 SKIPPED → None in resolver", runs, skip_elapsed, runs,
+              f"+{overhead:.1f}% overhead"))
 
 
 # ---------------------------------------------------------------------------
