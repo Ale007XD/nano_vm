@@ -183,7 +183,9 @@ class ExecutionVM:
                 attempt += 1
                 if step.on_error == OnError.RETRY and attempt < step.max_retries:
                     result = result.model_copy(update={"retries": attempt})
-                    await asyncio.sleep(0.5 * attempt)
+                    # exponential backoff: 1s, 2s, 4s, … capped at 30s
+                    backoff = min(2 ** (attempt - 1), 30)
+                    await asyncio.sleep(backoff)
                     continue
 
                 error_msg = f"{type(exc).__name__}: {exc}"
@@ -309,10 +311,21 @@ class ExecutionVM:
             sub_results: list[StepResult] for each sub-step (for trace)
         """
 
+        # max_concurrency=None → no cap; otherwise limit via Semaphore
+        semaphore: asyncio.Semaphore | None = (
+            asyncio.Semaphore(step.max_concurrency)
+            if step.max_concurrency is not None
+            else None
+        )
+
         async def _run_sub(sub: Step) -> tuple[StepResult, Any]:
             sub_result = StepResult(step_id=sub.id, status=StepStatus.RUNNING)
             try:
-                output, usage = await self._dispatch_leaf(sub, state)
+                if semaphore is not None:
+                    async with semaphore:
+                        output, usage = await self._dispatch_leaf(sub, state)
+                else:
+                    output, usage = await self._dispatch_leaf(sub, state)
                 sub_result = sub_result.finish(output=output, usage=usage)
                 return sub_result, output
             except Exception as exc:
@@ -337,7 +350,9 @@ class ExecutionVM:
                 failed.append(sub_step.id)
             elif sub_result.status == StepStatus.SUCCESS:
                 outputs[sub_step.id] = output
-            # SKIPPED → не включаем в outputs
+            else:
+                # SKIPPED → явный None (контракт: не absent key, не exception)
+                outputs[sub_step.id] = None
 
         if failed and step.on_error != OnError.SKIP:
             raise VMError(f"Parallel step '{step.id}': sub-steps failed: {failed}")
