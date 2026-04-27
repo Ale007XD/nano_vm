@@ -19,7 +19,6 @@ import pytest
 from nano_vm import ExecutionVM, Program, TraceStatus
 from nano_vm.models import OnError, Step, StepStatus, StepType
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -215,7 +214,12 @@ async def test_output_key_dict_contains_none_for_skipped():
                 output_key="par_result",
                 on_error=OnError.SKIP,
                 parallel_steps=[
-                    Step(id="ok1", type=StepType.TOOL, tool="capture", args={"key": "k1", "val": "v1"}),
+                    Step(
+                        id="ok1",
+                        type=StepType.TOOL,
+                        tool="capture",
+                        args={"key": "k1", "val": "v1"},
+                    ),
                     Step(id="bad1", type=StepType.TOOL, tool="fail"),
                 ],
             ),

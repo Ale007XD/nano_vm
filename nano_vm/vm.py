@@ -313,9 +313,7 @@ class ExecutionVM:
 
         # max_concurrency=None → no cap; otherwise limit via Semaphore
         semaphore: asyncio.Semaphore | None = (
-            asyncio.Semaphore(step.max_concurrency)
-            if step.max_concurrency is not None
-            else None
+            asyncio.Semaphore(step.max_concurrency) if step.max_concurrency is not None else None
         )
 
         async def _run_sub(sub: Step) -> tuple[StepResult, Any]:

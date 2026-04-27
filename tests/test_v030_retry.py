@@ -19,8 +19,7 @@ import asyncio
 import pytest
 
 from nano_vm import ExecutionVM, Program, TraceStatus
-from nano_vm.models import OnError, Step, StepResult, StepStatus, StepType
-
+from nano_vm.models import OnError, Step, StepStatus, StepType
 
 # ---------------------------------------------------------------------------
 # Helpers
