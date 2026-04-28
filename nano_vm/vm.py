@@ -15,6 +15,7 @@ Key properties:
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import re
 from collections.abc import Callable
 from typing import Any
@@ -116,7 +117,10 @@ class ExecutionVM:
                 stalled_count = 0
             last_fingerprint = current_fp
 
-            if program.max_stalled_steps is not None and stalled_count >= program.max_stalled_steps:
+            if (
+                program.max_stalled_steps is not None
+                and stalled_count >= program.max_stalled_steps
+            ):
                 trace = trace.finish(
                     TraceStatus.STALLED,
                     error=(
@@ -125,6 +129,12 @@ class ExecutionVM:
                     ),
                 )
                 return trace
+
+            # State snapshot (P2): sha256 fingerprint per step
+            trace = trace.add_snapshot(
+                steps_executed - 1,
+                self._state_fingerprint_hex(state),
+            )
 
             # Add sub-step results to trace before the parent step
             for sub_result in sub_results:
@@ -417,6 +427,19 @@ class ExecutionVM:
         Empty state returns a consistent (platform-defined) value.
         """
         return hash(frozenset((k, str(v)) for k, v in state.step_outputs.items()))
+
+    @staticmethod
+    def _state_fingerprint_hex(state: StateContext) -> str:
+        """
+        SHA-256 hex digest of step_outputs — stable across processes and restarts.
+
+        Used for state_snapshots serialisation (P2).
+        _state_fingerprint (hash) is kept for in-process no-op detection (P1).
+        """
+        canonical = ",".join(
+            f"{k}={v!r}" for k, v in sorted(state.step_outputs.items())
+        )
+        return hashlib.sha256(canonical.encode()).hexdigest()
 
     # ------------------------------------------------------------------
     # Resolver: substitute $variables from state

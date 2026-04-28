@@ -227,6 +227,7 @@ class Trace(BaseModel):
     started_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     finished_at: datetime | None = None
     duration_ms: float | None = None
+    state_snapshots: list[tuple[int, str]] = Field(default_factory=list)  # (step_index, sha256_hex)
 
     def finish(
         self,
@@ -248,6 +249,13 @@ class Trace(BaseModel):
 
     def add_step(self, result: StepResult) -> Trace:
         return self.model_copy(update={"steps": [*self.steps, result]})
+
+    def add_snapshot(self, step_index: int, fp_hex: str) -> Trace:
+        """Record a state fingerprint snapshot for the given step_index."""
+        entry = (step_index, fp_hex)
+        return self.model_copy(
+            update={"state_snapshots": [*self.state_snapshots, entry]}
+        )
 
     def last_output(self) -> Any:
         for result in reversed(self.steps):
