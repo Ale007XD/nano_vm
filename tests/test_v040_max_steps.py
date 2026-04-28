@@ -20,6 +20,7 @@ import pytest
 from nano_vm.models import Program, Step, StepType, TraceStatus
 from nano_vm.vm import ExecutionVM
 
+
 # ---------------------------------------------------------------------------
 # Minimal fake LLM adapter
 # ---------------------------------------------------------------------------
@@ -167,7 +168,6 @@ async def test_budget_exceeded_condition_branch_counts():
 
     With max_steps=2: condition + branch both execute → SUCCESS.
     """
-
     # Inline tool for condition to have a deterministic branch
     def _always_yes(**_):
         return "yes"
@@ -193,10 +193,11 @@ async def test_budget_exceeded_condition_branch_counts():
     assert trace_ok.status == TraceStatus.SUCCESS
 
     # max_steps=1: condition executes (steps_executed → 1), then branch would
-    # increment steps_executed to 2 before execution...
+    # increment steps_executed to 2 before execution... 
     # The condition branch increments BEFORE running target step.
     # After condition executes steps_executed=1, then branch: steps_executed becomes 2.
-    # But max_steps=1: check fires at start of while (steps_executed=1 >= 1) for next top-level step.
+    # But max_steps=1: check fires at start of while (steps_executed=1 >= 1)
+    # for next top-level step.
     # Condition path returns early — so budget check never fires mid-condition.
     # Result: condition + branch = 2 steps total; max_steps=1 → only 1 step allowed.
     # But condition is handled outside the while loop continuation...
