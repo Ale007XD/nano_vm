@@ -93,6 +93,8 @@ class ExecutionVM:
         steps = program.steps
         current_idx = 0
         steps_executed = 0
+        last_fingerprint: int | None = None
+        stalled_count = 0
 
         while current_idx < len(steps):
             if program.max_steps is not None and steps_executed >= program.max_steps:
@@ -105,6 +107,24 @@ class ExecutionVM:
             step = steps[current_idx]
             result, state, sub_results = await self._run_step(step, state)
             steps_executed += 1
+
+            # Fingerprint-based no-op detection (P1)
+            current_fp = self._state_fingerprint(state)
+            if last_fingerprint is not None and current_fp == last_fingerprint:
+                stalled_count += 1
+            else:
+                stalled_count = 0
+            last_fingerprint = current_fp
+
+            if program.max_stalled_steps is not None and stalled_count >= program.max_stalled_steps:
+                trace = trace.finish(
+                    TraceStatus.STALLED,
+                    error=(
+                        f"max_stalled_steps={program.max_stalled_steps} exceeded: "
+                        f"{stalled_count} consecutive no-op step(s)"
+                    ),
+                )
+                return trace
 
             # Add sub-step results to trace before the parent step
             for sub_result in sub_results:
@@ -382,6 +402,21 @@ class ExecutionVM:
             output = await self._execute_tool(step, state)
             return output, None
         raise VMError(f"Sub-step '{step.id}': type '{step.type}' not allowed inside parallel")
+
+    # ------------------------------------------------------------------
+    # Fingerprint: deterministic no-op detection
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _state_fingerprint(state: StateContext) -> int:
+        """
+        Hash of current step_outputs snapshot.
+
+        Converts values to str for hashability (covers dicts from parallel steps).
+        Returns hash of frozenset of (key, str(value)) pairs from step_outputs.
+        Empty state returns a consistent (platform-defined) value.
+        """
+        return hash(frozenset((k, str(v)) for k, v in state.step_outputs.items()))
 
     # ------------------------------------------------------------------
     # Resolver: substitute $variables from state
