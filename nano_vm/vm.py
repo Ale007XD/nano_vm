@@ -105,6 +105,18 @@ class ExecutionVM:
                 )
                 return trace
 
+            if program.max_tokens is not None:
+                tokens_used = trace.total_tokens()
+                if tokens_used >= program.max_tokens:
+                    trace = trace.finish(
+                        TraceStatus.BUDGET_EXCEEDED,
+                        error=(
+                            f"max_tokens={program.max_tokens} exceeded: "
+                            f"{tokens_used} tokens consumed"
+                        ),
+                    )
+                    return trace
+
             step = steps[current_idx]
             result, state, sub_results = await self._run_step(step, state)
             steps_executed += 1
@@ -117,7 +129,10 @@ class ExecutionVM:
                 stalled_count = 0
             last_fingerprint = current_fp
 
-            if program.max_stalled_steps is not None and stalled_count >= program.max_stalled_steps:
+            if (
+                program.max_stalled_steps is not None
+                and stalled_count >= program.max_stalled_steps
+            ):
                 trace = trace.finish(
                     TraceStatus.STALLED,
                     error=(
@@ -433,7 +448,9 @@ class ExecutionVM:
         Used for state_snapshots serialisation (P2).
         _state_fingerprint (hash) is kept for in-process no-op detection (P1).
         """
-        canonical = ",".join(f"{k}={v!r}" for k, v in sorted(state.step_outputs.items()))
+        canonical = ",".join(
+            f"{k}={v!r}" for k, v in sorted(state.step_outputs.items())
+        )
         return hashlib.sha256(canonical.encode()).hexdigest()
 
     # ------------------------------------------------------------------

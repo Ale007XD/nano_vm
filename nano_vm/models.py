@@ -114,6 +114,7 @@ class Program(BaseModel):
     steps: list[Step] = Field(..., min_length=1)
     max_steps: int | None = None  # None = no cap; BUDGET_EXCEEDED when exceeded
     max_stalled_steps: int | None = None  # None = disabled; STALLED after N consecutive no-ops
+    max_tokens: int | None = None  # None = no cap; BUDGET_EXCEEDED when total_tokens >= limit
 
     @classmethod
     def from_dict(cls, data: dict) -> Program:
@@ -253,7 +254,9 @@ class Trace(BaseModel):
     def add_snapshot(self, step_index: int, fp_hex: str) -> Trace:
         """Record a state fingerprint snapshot for the given step_index."""
         entry = (step_index, fp_hex)
-        return self.model_copy(update={"state_snapshots": [*self.state_snapshots, entry]})
+        return self.model_copy(
+            update={"state_snapshots": [*self.state_snapshots, entry]}
+        )
 
     def last_output(self) -> Any:
         for result in reversed(self.steps):
