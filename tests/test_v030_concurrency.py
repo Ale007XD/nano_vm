@@ -13,7 +13,6 @@ v0.3.0 — max_concurrency per parallel block.
 """
 
 from __future__ import annotations
-
 import asyncio
 import time
 
@@ -21,6 +20,7 @@ import pytest
 
 from nano_vm import ExecutionVM, Program, TraceStatus
 from nano_vm.models import OnError, Step, StepStatus, StepType
+
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -59,7 +59,8 @@ async def test_no_concurrency_cap_all_start_simultaneously():
                 type=StepType.PARALLEL,
                 # max_concurrency не задан → None
                 parallel_steps=[
-                    Step(id=f"s{i}", type=StepType.TOOL, tool="slow") for i in range(5)
+                    Step(id=f"s{i}", type=StepType.TOOL, tool="slow")
+                    for i in range(5)
                 ],
             )
         ],
@@ -91,10 +92,13 @@ async def test_max_concurrency_1_sequential_order():
         active.remove(idx)
         return f"done_{idx}"
 
-    async def make_tracked(i: int):
-        return await tracked(i)
+    # Register tracked directly as async callables — no lambda wrapper needed
+    async def make_t0(): return await tracked(0)
+    async def make_t1(): return await tracked(1)
+    async def make_t2(): return await tracked(2)
+    async def make_t3(): return await tracked(3)
 
-    vm = make_vm({f"t{i}": (lambda i=i: make_tracked(i)) for i in range(4)})
+    vm = make_vm({"t0": make_t0, "t1": make_t1, "t2": make_t2, "t3": make_t3})
     program = Program(
         name="test",
         steps=[
@@ -103,7 +107,8 @@ async def test_max_concurrency_1_sequential_order():
                 type=StepType.PARALLEL,
                 max_concurrency=1,
                 parallel_steps=[
-                    Step(id=f"s{i}", type=StepType.TOOL, tool=f"t{i}") for i in range(4)
+                    Step(id=f"s{i}", type=StepType.TOOL, tool=f"t{i}")
+                    for i in range(4)
                 ],
             )
         ],
@@ -133,7 +138,17 @@ async def test_max_concurrency_2_limits_active():
         return f"r{idx}"
 
     N = 6
-    vm = make_vm({f"t{i}": (lambda i=i: tracked(i)) for i in range(N)})
+
+    async def make_t0(): return await tracked(0)
+    async def make_t1(): return await tracked(1)
+    async def make_t2(): return await tracked(2)
+    async def make_t3(): return await tracked(3)
+    async def make_t4(): return await tracked(4)
+    async def make_t5(): return await tracked(5)
+
+    tools = {"t0": make_t0, "t1": make_t1, "t2": make_t2,
+             "t3": make_t3, "t4": make_t4, "t5": make_t5}
+    vm = make_vm(tools)
     program = Program(
         name="test",
         steps=[
@@ -142,7 +157,8 @@ async def test_max_concurrency_2_limits_active():
                 type=StepType.PARALLEL,
                 max_concurrency=2,
                 parallel_steps=[
-                    Step(id=f"s{i}", type=StepType.TOOL, tool=f"t{i}") for i in range(N)
+                    Step(id=f"s{i}", type=StepType.TOOL, tool=f"t{i}")
+                    for i in range(N)
                 ],
             )
         ],
@@ -176,7 +192,8 @@ async def test_max_concurrency_exceeds_steps_count():
                 type=StepType.PARALLEL,
                 max_concurrency=100,
                 parallel_steps=[
-                    Step(id=f"s{i}", type=StepType.TOOL, tool="slow") for i in range(3)
+                    Step(id=f"s{i}", type=StepType.TOOL, tool="slow")
+                    for i in range(3)
                 ],
             )
         ],
