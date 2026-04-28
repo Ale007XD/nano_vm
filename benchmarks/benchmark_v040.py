@@ -253,9 +253,7 @@ async def bm_parallel_throughput() -> None:
     ]
 
     for n_steps, cap in configs:
-        parallel_steps = [
-            Step(id=f"s{i}", type=StepType.TOOL, tool="fast") for i in range(n_steps)
-        ]
+        parallel_steps = [Step(id=f"s{i}", type=StepType.TOOL, tool="fast") for i in range(n_steps)]
         program = Program(
             name="throughput_bench",
             steps=[
@@ -402,10 +400,7 @@ async def bm_max_steps_overhead(runs: int = 500) -> None:
 
         print(row(label, runs, elapsed, success, extra))
 
-    print(
-        "\n  max_steps adds one integer comparison per loop iteration. "
-        "Expected overhead: < 1%."
-    )
+    print("\n  max_steps adds one integer comparison per loop iteration. Expected overhead: < 1%.")
 
 
 # ---------------------------------------------------------------------------
