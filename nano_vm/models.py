@@ -112,6 +112,7 @@ class Program(BaseModel):
     description: str = ""
     version: str = "1.0"
     steps: list[Step] = Field(..., min_length=1)
+    max_steps: int | None = None  # None = no cap; BUDGET_EXCEEDED when exceeded
 
     @classmethod
     def from_dict(cls, data: dict) -> Program:
@@ -212,6 +213,7 @@ class TraceStatus(str, Enum):
     RUNNING = "running"
     SUCCESS = "success"
     FAILED = "failed"
+    BUDGET_EXCEEDED = "budget_exceeded"
 
 
 class Trace(BaseModel):

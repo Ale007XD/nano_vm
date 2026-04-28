@@ -92,10 +92,19 @@ class ExecutionVM:
         step_index = {s.id: i for i, s in enumerate(program.steps)}
         steps = program.steps
         current_idx = 0
+        steps_executed = 0
 
         while current_idx < len(steps):
+            if program.max_steps is not None and steps_executed >= program.max_steps:
+                trace = trace.finish(
+                    TraceStatus.BUDGET_EXCEEDED,
+                    error=f"max_steps={program.max_steps} exceeded after {steps_executed} step(s)",
+                )
+                return trace
+
             step = steps[current_idx]
             result, state, sub_results = await self._run_step(step, state)
+            steps_executed += 1
 
             # Add sub-step results to trace before the parent step
             for sub_result in sub_results:
@@ -126,6 +135,7 @@ class ExecutionVM:
                     return trace
 
                 target_step = steps[step_index[next_id]]
+                steps_executed += 1
                 target_result, state, target_sub = await self._run_step(target_step, state)
                 for sub_result in target_sub:
                     trace = trace.add_step(sub_result)
