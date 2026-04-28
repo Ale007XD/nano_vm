@@ -267,7 +267,10 @@ class ExecutionVM:
         resolved_args = {k: self._resolve(v, state) for k, v in step.args.items()}
         if asyncio.iscoroutinefunction(fn):
             return await fn(**resolved_args)
-        return fn(**resolved_args)
+        result = fn(**resolved_args)
+        if asyncio.iscoroutine(result):
+            return await result
+        return result
 
     # ------------------------------------------------------------------
     # Condition step
@@ -313,7 +316,9 @@ class ExecutionVM:
 
         # max_concurrency=None → no cap; otherwise limit via Semaphore
         semaphore: asyncio.Semaphore | None = (
-            asyncio.Semaphore(step.max_concurrency) if step.max_concurrency is not None else None
+            asyncio.Semaphore(step.max_concurrency)
+            if step.max_concurrency is not None
+            else None
         )
 
         async def _run_sub(sub: Step) -> tuple[StepResult, Any]:
