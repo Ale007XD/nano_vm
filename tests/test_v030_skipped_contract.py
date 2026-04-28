@@ -13,11 +13,11 @@ v0.3.0 — partial result contract: SKIPPED sub-step → output=None.
 """
 
 from __future__ import annotations
+
 import pytest
 
 from nano_vm import ExecutionVM, Program, TraceStatus
 from nano_vm.models import OnError, Step, StepStatus, StepType
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -215,7 +215,9 @@ async def test_output_key_dict_contains_none_for_skipped():
                 on_error=OnError.SKIP,
                 parallel_steps=[
                     Step(
-                        id="ok1", type=StepType.TOOL, tool="capture",
+                        id="ok1",
+                        type=StepType.TOOL,
+                        tool="capture",
                         args={"key": "k1", "val": "v1"},
                     ),
                     Step(id="bad1", type=StepType.TOOL, tool="fail"),

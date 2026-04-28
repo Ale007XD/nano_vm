@@ -13,13 +13,13 @@ v0.3.0 — retry policy: exponential backoff, max_retries default, exhaustion.
 """
 
 from __future__ import annotations
+
 import asyncio
 
 import pytest
 
 from nano_vm import ExecutionVM, Program, TraceStatus
 from nano_vm.models import OnError, Step, StepStatus, StepType
-
 
 # ---------------------------------------------------------------------------
 # Helpers

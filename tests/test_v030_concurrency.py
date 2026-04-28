@@ -13,6 +13,7 @@ v0.3.0 — max_concurrency per parallel block.
 """
 
 from __future__ import annotations
+
 import asyncio
 import time
 
@@ -20,7 +21,6 @@ import pytest
 
 from nano_vm import ExecutionVM, Program, TraceStatus
 from nano_vm.models import OnError, Step, StepStatus, StepType
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -59,8 +59,7 @@ async def test_no_concurrency_cap_all_start_simultaneously():
                 type=StepType.PARALLEL,
                 # max_concurrency не задан → None
                 parallel_steps=[
-                    Step(id=f"s{i}", type=StepType.TOOL, tool="slow")
-                    for i in range(5)
+                    Step(id=f"s{i}", type=StepType.TOOL, tool="slow") for i in range(5)
                 ],
             )
         ],
@@ -104,8 +103,7 @@ async def test_max_concurrency_1_sequential_order():
                 type=StepType.PARALLEL,
                 max_concurrency=1,
                 parallel_steps=[
-                    Step(id=f"s{i}", type=StepType.TOOL, tool=f"t{i}")
-                    for i in range(4)
+                    Step(id=f"s{i}", type=StepType.TOOL, tool=f"t{i}") for i in range(4)
                 ],
             )
         ],
@@ -144,8 +142,7 @@ async def test_max_concurrency_2_limits_active():
                 type=StepType.PARALLEL,
                 max_concurrency=2,
                 parallel_steps=[
-                    Step(id=f"s{i}", type=StepType.TOOL, tool=f"t{i}")
-                    for i in range(N)
+                    Step(id=f"s{i}", type=StepType.TOOL, tool=f"t{i}") for i in range(N)
                 ],
             )
         ],
@@ -179,8 +176,7 @@ async def test_max_concurrency_exceeds_steps_count():
                 type=StepType.PARALLEL,
                 max_concurrency=100,
                 parallel_steps=[
-                    Step(id=f"s{i}", type=StepType.TOOL, tool="slow")
-                    for i in range(3)
+                    Step(id=f"s{i}", type=StepType.TOOL, tool="slow") for i in range(3)
                 ],
             )
         ],
