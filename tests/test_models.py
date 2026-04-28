@@ -40,7 +40,7 @@ def test_step_condition_requires_branch():
 def test_valid_llm_step():
     s = Step(id="s1", type=StepType.LLM, prompt="Hello")
     assert s.on_error == OnError.FAIL
-    assert s.max_retries == 1
+    assert s.max_retries == 3  # v0.3.0: default changed 1→3 (1 initial + 2 retries)
 
 
 def test_state_context_immutable():

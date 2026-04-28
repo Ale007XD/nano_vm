@@ -294,7 +294,8 @@ async def test_parallel_skip_on_sub_error():
     assert trace.status == TraceStatus.SUCCESS
     parent = next(s for s in trace.steps if s.step_id == "par")
     assert parent.status == StepStatus.SUCCESS
-    assert parent.output == {"ok": "echo:good"}
+    # v0.3.0 contract: SKIPPED sub-step → output_key=None (not absent key)
+    assert parent.output == {"ok": "echo:good", "bad": None}
 
     bad_result = next(s for s in trace.steps if s.step_id == "bad")
     assert bad_result.status == StepStatus.SKIPPED

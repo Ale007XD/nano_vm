@@ -67,9 +67,12 @@ class Step(BaseModel):
     # parallel step
     parallel_steps: list[Step] = Field(default_factory=list)
 
+    # parallel step options
+    max_concurrency: int | None = None  # None = no cap (all sub-steps at once)
+
     # error handling
     on_error: OnError = OnError.FAIL
-    max_retries: int = 1
+    max_retries: int = 3  # attempts total (1 initial + 2 retries)
 
     @model_validator(mode="after")
     def _validate_by_type(self) -> Step:

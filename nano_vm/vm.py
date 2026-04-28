@@ -183,7 +183,9 @@ class ExecutionVM:
                 attempt += 1
                 if step.on_error == OnError.RETRY and attempt < step.max_retries:
                     result = result.model_copy(update={"retries": attempt})
-                    await asyncio.sleep(0.5 * attempt)
+                    # exponential backoff: 1s, 2s, 4s, … capped at 30s
+                    backoff = min(2 ** (attempt - 1), 30)
+                    await asyncio.sleep(backoff)
                     continue
 
                 error_msg = f"{type(exc).__name__}: {exc}"
@@ -265,7 +267,10 @@ class ExecutionVM:
         resolved_args = {k: self._resolve(v, state) for k, v in step.args.items()}
         if asyncio.iscoroutinefunction(fn):
             return await fn(**resolved_args)
-        return fn(**resolved_args)
+        result = fn(**resolved_args)
+        if asyncio.iscoroutine(result):
+            return await result
+        return result
 
     # ------------------------------------------------------------------
     # Condition step
@@ -309,10 +314,19 @@ class ExecutionVM:
             sub_results: list[StepResult] for each sub-step (for trace)
         """
 
+        # max_concurrency=None → no cap; otherwise limit via Semaphore
+        semaphore: asyncio.Semaphore | None = (
+            asyncio.Semaphore(step.max_concurrency) if step.max_concurrency is not None else None
+        )
+
         async def _run_sub(sub: Step) -> tuple[StepResult, Any]:
             sub_result = StepResult(step_id=sub.id, status=StepStatus.RUNNING)
             try:
-                output, usage = await self._dispatch_leaf(sub, state)
+                if semaphore is not None:
+                    async with semaphore:
+                        output, usage = await self._dispatch_leaf(sub, state)
+                else:
+                    output, usage = await self._dispatch_leaf(sub, state)
                 sub_result = sub_result.finish(output=output, usage=usage)
                 return sub_result, output
             except Exception as exc:
@@ -337,7 +351,9 @@ class ExecutionVM:
                 failed.append(sub_step.id)
             elif sub_result.status == StepStatus.SUCCESS:
                 outputs[sub_step.id] = output
-            # SKIPPED → не включаем в outputs
+            else:
+                # SKIPPED → явный None (контракт: не absent key, не exception)
+                outputs[sub_step.id] = None
 
         if failed and step.on_error != OnError.SKIP:
             raise VMError(f"Parallel step '{step.id}': sub-steps failed: {failed}")
@@ -372,21 +388,25 @@ class ExecutionVM:
         if not isinstance(value, str):
             return value
 
+        _MISSING = object()
+
         def replace(match: re.Match) -> str:
             expr = match.group(1)
 
             if "." in expr:
                 step_id, field = expr.split(".", 1)
-                step_out = state.step_outputs.get(step_id)
-                if step_out is None:
+                # Use sentinel to distinguish missing key from None value
+                step_out = state.step_outputs.get(step_id, _MISSING)
+                if step_out is _MISSING:
                     return match.group(0)
                 if field == "output":
                     return str(step_out)
                 if isinstance(step_out, dict):
-                    return str(step_out.get(field, match.group(0)))
+                    val = step_out.get(field, _MISSING)
+                    return str(val) if val is not _MISSING else match.group(0)
                 return match.group(0)
 
-            val = state.data.get(expr)
-            return str(val) if val is not None else match.group(0)
+            val = state.data.get(expr, _MISSING)
+            return str(val) if val is not _MISSING else match.group(0)
 
         return re.sub(r"\$(\w+(?:\.\w+)?)", replace, value)

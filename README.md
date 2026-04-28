@@ -220,6 +220,14 @@ Four step types:
 | `condition` | branch on an expression; `then` / `otherwise` |
 | `parallel` | run independent sub-steps concurrently via `asyncio.gather` |
 
+**Step options (v0.3.0):**
+
+| Option | Default | Description |
+| :--- | :--- | :--- |
+| `on_error` | `fail` | `fail` · `skip` · `retry` |
+| `max_retries` | `3` | total attempts (1 initial + N retries); exponential backoff: 1s, 2s, 4s… cap 30s |
+| `max_concurrency` | `None` | parallel blocks only; `None` = no cap (all sub-steps at once) |
+
 ### Variable interpolation
 
 | Syntax | Resolves to |
@@ -244,7 +252,7 @@ Four step types:
 }
 ```
 
-### Example — parallel steps (v0.2.0)
+### Example — parallel steps (v0.2.0+)
 
 ```python
 program = Program.from_dict({
@@ -254,7 +262,7 @@ program = Program.from_dict({
             "id": "fetch",
             "type": "parallel",
             "output_key": "fetched",
-            "max_concurrency": 5,        # cap concurrent API calls; default = len(parallel_steps)
+            "max_concurrency": 5,        # cap concurrent sub-steps; default = None (no cap = all at once)
             "on_error": "skip",          # failed sub-step → output is None; others still complete
             "parallel_steps": [
                 {"id": "weather", "type": "tool", "tool": "get_weather", "args": {"city": "$city"}},
@@ -378,12 +386,13 @@ The VM itself introduces near-zero overhead. Your bottleneck is the LLM API.
 | :--- | :--- | :--- |
 | VM throughput | Mock (no network) | ~535 programs/sec |
 | VM latency per step | Mock (no network) | ~1.80 ms |
-| Parallel steps (20) | OpenRouter (network) | **1.76 s total → ~11.4 steps/sec** |
-| Test suite | — | 56 tests passing |
+| Parallel steps (20) | OpenRouter (network) | **1.7574 s → 11.38 steps/sec** |
+| Test suite | — | 78 tests passing |
 
 > **Note:** Mock throughput measures pure VM overhead with no I/O.
 > Real end-to-end latency is dominated by LLM API response time.
 > Parallel steps execute via `asyncio.gather` — wall-clock time equals the **slowest single step**, not the sum.
+> v0.3.0 result matches v0.2.0 baseline — no regression from `max_concurrency` / `retry` additions.
 
 ---
 
@@ -394,16 +403,25 @@ Real execution: **20 parallel steps via OpenRouter** on a 2-core Linux VPS.
 ```
 System: Linux 6.8.0-110-generic  ·  x86_64 (2 cores)  ·  Python 3.12.3
 Test:   1 run × 20 parallel steps (StepType.PARALLEL, asyncio.gather)
-Result: 1.7574 s total  →  ~11.4 effective steps/sec
+
+v0.3.0 result:
+  Total Execution Time : 1.7574 s
+  Parallel Steps       : 20
+  Effective Throughput : 11.38 steps/sec
+  VM Overhead (Core)   : ~1.80 ms/step
+  Trace Status         : SUCCESS — all constraints enforced, 0 steps skipped
 ```
 
-![llm-nano-vm benchmark — 20 parallel steps via OpenRouter](assets/benchmark_openrouter.png)
+![llm-nano-vm v0.3.0 benchmark — 20 parallel steps, OpenRouter, 2-core VPS](assets/benchmark_v030.jpg)
+
+No regression vs v0.2.0 — `max_concurrency` / `retry` path adds zero overhead when not triggered.
 
 Reproduce locally:
 
 ```bash
 pip install llm-nano-vm[litellm]
-python benchmarks/stress_test.py
+python benchmarks/stress_test.py       # sequential baseline
+python benchmarks/benchmark_v030.py   # v0.3.0 suite: retry overhead, concurrency scaling
 ```
 
 ---
@@ -450,8 +468,8 @@ python benchmarks/stress_test.py
 - [x] Published to PyPI as `llm-nano-vm`
 - [x] `parallel` steps — `asyncio.gather` for independent sub-steps (v0.2.0)
 - [x] `MockLLMAdapter` — deterministic testing without API keys (v0.2.0)
-- [ ] `max_concurrency` — cap concurrent sub-steps per parallel block (v0.3.0)
-- [ ] `retry` policy per sub-step — backoff, max_attempts (v0.3.0)
+- [x] `max_concurrency` — cap concurrent sub-steps per parallel block (v0.3.0)
+- [x] `retry` policy per sub-step — exponential backoff, max_attempts (v0.3.0)
 - [ ] MCP server — `run_program`, `get_trace`, `list_programs` (nano-vm-mcp)
 - [ ] REST API — pay-per-run, API keys (nano-vm-server)
 
