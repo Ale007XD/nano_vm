@@ -13,7 +13,6 @@ v0.3.0 — max_concurrency per parallel block.
 """
 
 from __future__ import annotations
-
 import asyncio
 import time
 
