@@ -220,13 +220,21 @@ Four step types:
 | `condition` | branch on an expression; `then` / `otherwise` |
 | `parallel` | run independent sub-steps concurrently via `asyncio.gather` |
 
-**Step options (v0.3.0):**
+**Step options (v0.4.0):**
 
 | Option | Default | Description |
 | :--- | :--- | :--- |
 | `on_error` | `fail` | `fail` · `skip` · `retry` |
 | `max_retries` | `3` | total attempts (1 initial + N retries); exponential backoff: 1s, 2s, 4s… cap 30s |
 | `max_concurrency` | `None` | parallel blocks only; `None` = no cap (all sub-steps at once) |
+
+**Program budget options (v0.4.0):**
+
+| Option | Default | Description |
+| :--- | :--- | :--- |
+| `max_steps` | `None` | max total steps executed; `BUDGET_EXCEEDED` if exceeded before next step |
+| `max_stalled_steps` | `None` | max consecutive no-op steps (same state fingerprint); `STALLED` if exceeded |
+| `max_tokens` | `None` | max total tokens across all LLM steps; `BUDGET_EXCEEDED` if exceeded before next step |
 
 ### Variable interpolation
 
@@ -319,10 +327,12 @@ Same input → same step sequence. Always. Testable in CI without any API key.
 ## Observability
 
 ```python
-trace.status            # TraceStatus.SUCCESS | FAILED
-trace.final_output      # last step output
-trace.total_tokens()    # sum across all steps
-trace.total_cost_usd()  # sum across all steps (requires LiteLLMAdapter)
+trace.status                # TraceStatus.SUCCESS | FAILED | BUDGET_EXCEEDED | STALLED
+trace.final_output          # last step output
+trace.total_tokens()        # sum across all steps
+trace.total_cost_usd()      # sum across all steps (requires LiteLLMAdapter)
+trace.state_snapshots       # list[(step_index, sha256_hex)] — one entry per executed step
+trace.error                 # set on FAILED / BUDGET_EXCEEDED / STALLED
 
 for step in trace.steps:
     print(step.step_id, step.status, step.duration_ms, step.usage)
@@ -387,12 +397,17 @@ The VM itself introduces near-zero overhead. Your bottleneck is the LLM API.
 | VM throughput | Mock (no network) | ~535 programs/sec |
 | VM latency per step | Mock (no network) | ~1.80 ms |
 | Parallel steps (20) | OpenRouter (network) | **1.7574 s → 11.38 steps/sec** |
-| Test suite | — | 78 tests passing |
+| max_steps check overhead | Mock | < 1% vs baseline |
+| fingerprint (STALLED) overhead | Mock | < 1% vs baseline |
+| max_tokens check overhead | Mock | < 1% vs baseline |
+| Test suite | — | 46+ tests passing (v0.4.0) |
 
 > **Note:** Mock throughput measures pure VM overhead with no I/O.
 > Real end-to-end latency is dominated by LLM API response time.
 > Parallel steps execute via `asyncio.gather` — wall-clock time equals the **slowest single step**, not the sum.
 > v0.3.0 result matches v0.2.0 baseline — no regression from `max_concurrency` / `retry` additions.
+> v0.4.0 budget checks (max_steps, max_stalled_steps, max_tokens) add < 1% overhead when not triggered.
+> State snapshots (sha256 per step) add ~0.01 ms/step — negligible vs LLM API latency.
 
 ---
 
@@ -416,12 +431,16 @@ v0.3.0 result:
 
 No regression vs v0.2.0 — `max_concurrency` / `retry` path adds zero overhead when not triggered.
 
+v0.4.0 budget mechanisms (max_steps, max_stalled_steps, max_tokens) add < 1% overhead
+when not triggered. Benchmarked via BM5–BM7 in `benchmark_v040.py`.
+
 Reproduce locally:
 
 ```bash
 pip install llm-nano-vm[litellm]
 python benchmarks/stress_test.py       # sequential baseline
 python benchmarks/benchmark_v030.py   # v0.3.0 suite: retry overhead, concurrency scaling
+python benchmarks/benchmark_v040.py   # v0.4.0 suite: budget/guard overhead (BM5–BM7)
 ```
 
 ---
@@ -470,6 +489,10 @@ python benchmarks/benchmark_v030.py   # v0.3.0 suite: retry overhead, concurrenc
 - [x] `MockLLMAdapter` — deterministic testing without API keys (v0.2.0)
 - [x] `max_concurrency` — cap concurrent sub-steps per parallel block (v0.3.0)
 - [x] `retry` policy per sub-step — exponential backoff, max_attempts (v0.3.0)
+- [x] `max_steps` budget — BUDGET_EXCEEDED after N steps (v0.4.0)
+- [x] `max_stalled_steps` — STALLED on N consecutive no-op state fingerprints (v0.4.0)
+- [x] `max_tokens` budget — BUDGET_EXCEEDED when token count exceeds limit (v0.4.0)
+- [x] `state_snapshots` — sha256 fingerprint per step in Trace (v0.4.0)
 - [ ] MCP server — `run_program`, `get_trace`, `list_programs` (nano-vm-mcp)
 - [ ] REST API — pay-per-run, API keys (nano-vm-server)
 

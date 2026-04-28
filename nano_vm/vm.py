@@ -15,6 +15,7 @@ Key properties:
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import re
 from collections.abc import Callable
 from typing import Any
@@ -92,10 +93,57 @@ class ExecutionVM:
         step_index = {s.id: i for i, s in enumerate(program.steps)}
         steps = program.steps
         current_idx = 0
+        steps_executed = 0
+        last_fingerprint: int | None = None
+        stalled_count = 0
 
         while current_idx < len(steps):
+            if program.max_steps is not None and steps_executed >= program.max_steps:
+                trace = trace.finish(
+                    TraceStatus.BUDGET_EXCEEDED,
+                    error=f"max_steps={program.max_steps} exceeded after {steps_executed} step(s)",
+                )
+                return trace
+
+            if program.max_tokens is not None:
+                tokens_used = trace.total_tokens()
+                if tokens_used >= program.max_tokens:
+                    trace = trace.finish(
+                        TraceStatus.BUDGET_EXCEEDED,
+                        error=(
+                            f"max_tokens={program.max_tokens} exceeded: "
+                            f"{tokens_used} tokens consumed"
+                        ),
+                    )
+                    return trace
+
             step = steps[current_idx]
             result, state, sub_results = await self._run_step(step, state)
+            steps_executed += 1
+
+            # Fingerprint-based no-op detection (P1)
+            current_fp = self._state_fingerprint(state)
+            if last_fingerprint is not None and current_fp == last_fingerprint:
+                stalled_count += 1
+            else:
+                stalled_count = 0
+            last_fingerprint = current_fp
+
+            if program.max_stalled_steps is not None and stalled_count >= program.max_stalled_steps:
+                trace = trace.finish(
+                    TraceStatus.STALLED,
+                    error=(
+                        f"max_stalled_steps={program.max_stalled_steps} exceeded: "
+                        f"{stalled_count} consecutive no-op step(s)"
+                    ),
+                )
+                return trace
+
+            # State snapshot (P2): sha256 fingerprint per step
+            trace = trace.add_snapshot(
+                steps_executed - 1,
+                self._state_fingerprint_hex(state),
+            )
 
             # Add sub-step results to trace before the parent step
             for sub_result in sub_results:
@@ -126,6 +174,7 @@ class ExecutionVM:
                     return trace
 
                 target_step = steps[step_index[next_id]]
+                steps_executed += 1
                 target_result, state, target_sub = await self._run_step(target_step, state)
                 for sub_result in target_sub:
                     trace = trace.add_step(sub_result)
@@ -372,6 +421,32 @@ class ExecutionVM:
             output = await self._execute_tool(step, state)
             return output, None
         raise VMError(f"Sub-step '{step.id}': type '{step.type}' not allowed inside parallel")
+
+    # ------------------------------------------------------------------
+    # Fingerprint: deterministic no-op detection
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _state_fingerprint(state: StateContext) -> int:
+        """
+        Hash of current step_outputs snapshot.
+
+        Converts values to str for hashability (covers dicts from parallel steps).
+        Returns hash of frozenset of (key, str(value)) pairs from step_outputs.
+        Empty state returns a consistent (platform-defined) value.
+        """
+        return hash(frozenset((k, str(v)) for k, v in state.step_outputs.items()))
+
+    @staticmethod
+    def _state_fingerprint_hex(state: StateContext) -> str:
+        """
+        SHA-256 hex digest of step_outputs — stable across processes and restarts.
+
+        Used for state_snapshots serialisation (P2).
+        _state_fingerprint (hash) is kept for in-process no-op detection (P1).
+        """
+        canonical = ",".join(f"{k}={v!r}" for k, v in sorted(state.step_outputs.items()))
+        return hashlib.sha256(canonical.encode()).hexdigest()
 
     # ------------------------------------------------------------------
     # Resolver: substitute $variables from state
