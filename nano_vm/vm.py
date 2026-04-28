@@ -117,10 +117,7 @@ class ExecutionVM:
                 stalled_count = 0
             last_fingerprint = current_fp
 
-            if (
-                program.max_stalled_steps is not None
-                and stalled_count >= program.max_stalled_steps
-            ):
+            if program.max_stalled_steps is not None and stalled_count >= program.max_stalled_steps:
                 trace = trace.finish(
                     TraceStatus.STALLED,
                     error=(
@@ -436,9 +433,7 @@ class ExecutionVM:
         Used for state_snapshots serialisation (P2).
         _state_fingerprint (hash) is kept for in-process no-op detection (P1).
         """
-        canonical = ",".join(
-            f"{k}={v!r}" for k, v in sorted(state.step_outputs.items())
-        )
+        canonical = ",".join(f"{k}={v!r}" for k, v in sorted(state.step_outputs.items()))
         return hashlib.sha256(canonical.encode()).hexdigest()
 
     # ------------------------------------------------------------------

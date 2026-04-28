@@ -27,7 +27,6 @@ import pytest
 from nano_vm.models import Program, StateContext, Step, StepType, TraceStatus
 from nano_vm.vm import ExecutionVM
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
