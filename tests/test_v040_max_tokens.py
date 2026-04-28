@@ -18,13 +18,13 @@ Coverage:
   - Steps without usage (usage=None) counted as 0 tokens
   - total_tokens() aggregates across multiple steps correctly
 """
+
 from __future__ import annotations
 
 import pytest
 
 from nano_vm.models import LLMUsage, Program, Step, StepStatus, StepType, TraceStatus
 from nano_vm.vm import ExecutionVM
-
 
 # ---------------------------------------------------------------------------
 # Fake adapter that injects token counts
