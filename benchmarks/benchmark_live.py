@@ -35,8 +35,8 @@ except ImportError:
     print("rich not installed. Run: pip install rich")
     sys.exit(1)
 
-from nano_vm import ExecutionVM, Program
-from nano_vm.models import OnError, Step, StepType
+from nano_vm import ExecutionVM, Program  # noqa: E402
+from nano_vm.models import OnError, Step, StepType  # noqa: E402
 
 # Используем реальный адаптер
 try:
@@ -55,7 +55,8 @@ MODEL_ID = "openrouter/openai/gpt-4o-mini"
 def check_openrouter_auth(api_key: str) -> dict:
     """Пинг API OpenRouter для проверки ключа и лимитов."""
     req = urllib.request.Request(
-        "https://openrouter.ai/api/v1/auth/key", headers={"Authorization": f"Bearer {api_key}"}
+        "https://openrouter.ai/api/v1/auth/key",
+        headers={"Authorization": f"Bearer {api_key}"},
     )
     try:
         with urllib.request.urlopen(req) as response:
@@ -87,7 +88,10 @@ async def run_live_benchmark():
         limit = auth_info.get("limit")
         usage = auth_info.get("usage")
         is_free = auth_info.get("is_free_tier")
-        auth_status_str = f"[bright_green]Ключ ВАЛИДЕН[/] | Free Tier: {is_free} | Лимит: {limit} | Использовано: {usage}"
+        auth_status_str = (
+            f"[bright_green]Ключ ВАЛИДЕН[/] | Free Tier: {is_free}"
+            f" | Лимит: {limit} | Использовано: {usage}"
+        )
 
     console.print(
         Panel.fit(
@@ -122,7 +126,9 @@ async def run_live_benchmark():
     # ---------------------------------------------------------
     # Сценарий 2: Конкурентный вызов (5 шагов параллельно)
     # ---------------------------------------------------------
-    console.print("[bold yellow]2. Конкурентное выполнение (5 sub-steps in parallel)...[/]")
+    console.print(
+        "[bold yellow]2. Конкурентное выполнение (5 sub-steps in parallel)...[/]"
+    )
     N_PARALLEL = 5
     prog_parallel = Program(
         name="Live_Parallel",
@@ -132,7 +138,11 @@ async def run_live_benchmark():
                 type=StepType.PARALLEL,
                 on_error=OnError.SKIP,
                 parallel_steps=[
-                    Step(id=f"p{i}", type=StepType.LLM, prompt=f"Return exactly the number {i}.")
+                    Step(
+                        id=f"p{i}",
+                        type=StepType.LLM,
+                        prompt=f"Return exactly the number {i}.",
+                    )
                     for i in range(N_PARALLEL)
                 ],
             )
@@ -146,7 +156,11 @@ async def run_live_benchmark():
     # ---------------------------------------------------------
     # Вывод результатов
     # ---------------------------------------------------------
-    t = Table(title="[bold white]Результаты Live API[/]", box=box.SIMPLE_HEAVY, show_header=True)
+    t = Table(
+        title="[bold white]Результаты Live API[/]",
+        box=box.SIMPLE_HEAVY,
+        show_header=True,
+    )
     t.add_column("Сценарий", style="cyan")
     t.add_column("Статус", justify="center")
     t.add_column("Время (Wall-clock)", justify="right")
@@ -154,7 +168,9 @@ async def run_live_benchmark():
     t.add_column("Стоимость ($)", justify="right", style="bright_green")
 
     def _add_trace_row(label, t_time, trace):
-        status_val = trace.status.value if hasattr(trace.status, "value") else str(trace.status)
+        status_val = (
+            trace.status.value if hasattr(trace.status, "value") else str(trace.status)
+        )
         status_color = (
             "[bright_green]SUCCESS[/]"
             if str(status_val).upper() == "SUCCESS"
@@ -178,11 +194,13 @@ async def run_live_benchmark():
     console.print("\n")
     console.print(t)
 
-    # Детализация параллельного блока (универсальный вывод всех шагов из Trace)
+    # Детализация параллельного блока
     if getattr(trace_parallel, "steps", None):
         console.print("\n[dim]Детализация параллельного блока (Trace Steps):[/]")
         for step in trace_parallel.steps:
-            status_val = step.status.value if hasattr(step.status, "value") else str(step.status)
+            status_val = (
+                step.status.value if hasattr(step.status, "value") else str(step.status)
+            )
             color = (
                 "bright_green"
                 if str(status_val).upper() == "SUCCESS"
@@ -192,16 +210,18 @@ async def run_live_benchmark():
             )
             status_fmt = f"[{color}]{status_val}[/]"
 
-            output_preview = str(getattr(step, "output", "None")).strip().replace("\n", " ")[:40]
+            output_preview = (
+                str(getattr(step, "output", "None")).strip().replace("\n", " ")[:40]
+            )
             dur = getattr(step, "duration_ms", 0)
-
-            # Визуальное выделение родительского шага
             prefix = "►" if step.step_id == "par_fetch" else "  ├─"
 
             console.print(
-                f"{prefix} {step.step_id:9} | {status_fmt:15} | {dur:5} ms | Output: {output_preview}"
+                f"{prefix} {step.step_id:9} | {status_fmt:15}"
+                f" | {dur:5} ms | Output: {output_preview}"
             )
 
 
 if __name__ == "__main__":
     asyncio.run(run_live_benchmark())
+    
