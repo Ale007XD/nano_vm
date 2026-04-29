@@ -51,8 +51,9 @@ async def test_generate_from_markdown_block():
 
 @pytest.mark.asyncio
 async def test_generate_invalid_json_raises():
+    # D1: сообщение PlannerError — английское, соответствует planner.py
     planner = Planner(llm=MockLLM("not a json at all"))
-    with pytest.raises(PlannerError, match="не вернул валидный JSON"):
+    with pytest.raises(PlannerError, match="Failed to generate a valid Program"):
         await planner.generate("Do something")
 
 
@@ -65,7 +66,11 @@ async def test_generate_invalid_structure_raises():
 
 @pytest.mark.asyncio
 async def test_tools_in_system_prompt():
-    """Проверить что инструменты попадают в системный промпт."""
+    """Проверить что инструменты попадают в промпт.
+
+    D2: tools — не параметр конструктора, передаются в generate(available_tools=).
+    Planner кладёт их в user-сообщение (не system), поэтому ищем в любом сообщении.
+    """
     received_messages = []
 
     class CaptureLLM:
@@ -73,9 +78,9 @@ async def test_tools_in_system_prompt():
             received_messages.extend(messages)
             return VALID_PROGRAM_JSON
 
-    planner = Planner(llm=CaptureLLM(), tools=["search", "send_email"])
-    await planner.generate("Find and email results")
+    planner = Planner(llm=CaptureLLM())
+    await planner.generate("Find and email results", available_tools=["search", "send_email"])
 
-    system_msg = next(m for m in received_messages if m["role"] == "system")
-    assert "search" in system_msg["content"]
-    assert "send_email" in system_msg["content"]
+    full_content = " ".join(m["content"] for m in received_messages)
+    assert "search" in full_content
+    assert "send_email" in full_content
