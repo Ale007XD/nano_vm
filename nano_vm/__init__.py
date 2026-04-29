@@ -14,6 +14,21 @@ Quick start:
     print(trace.final_output)
     print(f"Tokens used: {trace.total_tokens()}")
 
+With Planner (P5):
+    from nano_vm import Planner, ExecutionVM
+    from nano_vm.adapters import LiteLLMAdapter
+
+    adapter = LiteLLMAdapter("openai/gpt-4o-mini")
+    planner = Planner(llm=adapter)
+
+    program = await planner.generate(
+        "Fetch the latest news, summarize each article, then classify by topic",
+        available_tools=["fetch_news", "save_result"],
+        context_keys=["topic"],
+    )
+    trace = await ExecutionVM(llm=adapter).run(program, context={"topic": "AI"})
+    print(trace.final_output)
+
 Testing with deterministic adapter:
     from nano_vm.adapters import MockLLMAdapter
 
@@ -54,4 +69,4 @@ __all__ = [
     "TraceStatus",
 ]
 
-__version__ = "0.3.0"
+__version__ = "0.5.0"

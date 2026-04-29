@@ -1,10 +1,22 @@
 """
 nano_vm.planner
 ===============
-Planner — единственное место недетерминизма.
-Принимает свободный текст, делает один LLM-вызов, возвращает Program.
+P5: P-planner — converts natural language intent into a validated Program DSL.
 
-Исполнение Program — всегда детерминировано (ExecutionVM).
+One LLM call (+ up to max_retries on ValidationError).
+Nondeterminism is contained here; ExecutionVM runs deterministically.
+
+Usage:
+    from nano_vm import Planner, ExecutionVM
+    from nano_vm.adapters import LiteLLMAdapter
+
+    adapter = LiteLLMAdapter("openai/gpt-4o-mini")
+    planner = Planner(llm=adapter)
+
+    program = await planner.generate(
+        "Fetch the latest news, summarize each article, then classify by topic"
+    )
+    trace = await ExecutionVM(llm=adapter).run(program)
 """
 
 from __future__ import annotations
@@ -13,143 +25,287 @@ import json
 import re
 from typing import Any
 
-from .adapters.base import LLMAdapter
+from pydantic import ValidationError
+
 from .models import Program
 
-SYSTEM_PROMPT = """\
-Ты — планировщик задач. Твоя цель: преобразовать запрос пользователя в JSON-программу.
-
-Формат программы:
-{{
-  "name": "краткое название",
-  "description": "что делает программа",
-  "steps": [
-    {{
-      "id": "step_1",
-      "type": "llm",
-      "prompt": "текст промпта, можно использовать $переменные из context",
-      "output_key": "имя_ключа"
-    }},
-    {{
-      "id": "step_2",
-      "type": "tool",
-      "tool": "имя_инструмента",
-      "args": {{"arg1": "$step_1.output"}}
-    }},
-    {{
-      "id": "step_3",
-      "type": "condition",
-      "condition": "$step_2.output == 'yes'",
-      "then": "step_4",
-      "otherwise": "step_5"
-    }}
-  ]
-}}
-
-Правила:
-- Используй только шаги типов: llm, tool, condition
-- Ссылки на предыдущие шаги: $step_id.output
-- Ссылки на входные данные: $имя_переменной
-- Отвечай ТОЛЬКО валидным JSON, без комментариев и markdown-блоков
-- Доступные инструменты: {tools}
-"""
+# ---------------------------------------------------------------------------
+# Exceptions
+# ---------------------------------------------------------------------------
 
 
 class PlannerError(Exception):
-    """Ошибка генерации программы."""
+    """Raised when Planner fails to produce a valid Program after all retries."""
+
+    def __init__(self, message: str, last_raw: str = "", attempts: int = 0) -> None:
+        super().__init__(message)
+        self.last_raw = last_raw   # last LLM response for debugging
+        self.attempts = attempts
+
+
+# ---------------------------------------------------------------------------
+# System prompt
+# ---------------------------------------------------------------------------
+
+_SYSTEM_PROMPT = """\
+You are a program generator for llm-nano-vm.
+Your task: convert the user's intent into a valid JSON program.
+
+Output ONLY a JSON object — no markdown, no explanation, no code fences.
+
+---
+PROGRAM SCHEMA:
+{
+  "name": "<snake_case identifier>",
+  "description": "<one sentence>",
+  "steps": [ <step>, ... ]
+}
+
+STEP TYPES:
+
+llm step:
+  {"id": "<id>", "type": "llm", "prompt": "<prompt with $variables>", "output_key": "<key>"}
+
+tool step:
+  {"id": "<id>", "type": "tool", "tool": "<tool_name>", "args": {}, "output_key": "<key>"}
+
+condition step:
+  {"id": "<id>", "type": "condition", "condition": "'<value>' in '$<key>'", "then": "<step_id>", "otherwise": "<step_id>"}
+
+parallel step:
+  {"id": "<id>", "type": "parallel", "output_key": "<key>", "parallel_steps": [<llm or tool steps only>]}
+
+RULES:
+- Step ids must be unique, snake_case.
+- llm steps require: prompt, output_key.
+- tool steps require: tool name. Use tool names from the available_tools list if provided.
+- condition steps require: condition expression, at least one of: then, otherwise.
+- parallel sub-steps may only be llm or tool type (no nested parallel or condition).
+- Use $variable_name to reference initial context. Use $step_id to reference a previous step output.
+- Keep steps minimal — only what the user's intent requires.
+
+---
+EXAMPLE 1 — simple two-step pipeline:
+User intent: "Classify the user's message as urgent or not, then route accordingly"
+Output:
+{
+  "name": "classify_and_route",
+  "description": "Classify user message and route based on urgency",
+  "steps": [
+    {
+      "id": "classify",
+      "type": "llm",
+      "prompt": "Classify this message as 'urgent' or 'not_urgent'. Reply with one word only.\\nMessage: $user_input",
+      "output_key": "classification"
+    },
+    {
+      "id": "route",
+      "type": "condition",
+      "condition": "'urgent' in '$classification'",
+      "then": "handle_urgent",
+      "otherwise": "handle_normal"
+    },
+    {"id": "handle_urgent", "type": "tool", "tool": "escalate"},
+    {"id": "handle_normal", "type": "tool", "tool": "log_message"}
+  ]
+}
+
+EXAMPLE 2 — parallel fetch then summarize:
+User intent: "Fetch weather and news in parallel, then write a morning briefing"
+Output:
+{
+  "name": "morning_briefing",
+  "description": "Fetch weather and news in parallel, then summarize",
+  "steps": [
+    {
+      "id": "fetch",
+      "type": "parallel",
+      "output_key": "fetched",
+      "parallel_steps": [
+        {"id": "weather", "type": "tool", "tool": "get_weather"},
+        {"id": "news",    "type": "tool", "tool": "get_news"}
+      ]
+    },
+    {
+      "id": "briefing",
+      "type": "llm",
+      "prompt": "Write a short morning briefing.\\nWeather: $weather\\nNews: $news",
+      "output_key": "result"
+    }
+  ]
+}
+---
+
+If a previous attempt failed validation, a VALIDATION ERROR will be shown.
+Fix only what the error describes. Do not change unrelated parts of the program.
+"""
+
+
+# ---------------------------------------------------------------------------
+# Planner
+# ---------------------------------------------------------------------------
 
 
 class Planner:
     """
-    Генерирует Program из свободного текста пользователя.
+    Converts natural language intent → validated Program in one LLM call.
 
     Args:
-        llm:   адаптер языковой модели
-        tools: список имён доступных инструментов (для системного промпта)
-
-    Пример:
-        planner = Planner(llm=adapter, tools=["search", "send_email"])
-        program = await planner.generate("Найди последние новости по AI и отправь на почту")
-        trace = await vm.run(program, context={})
+        llm:         Any LLMAdapter-compatible object (Protocol: async complete()).
+        max_retries: Max additional attempts after first failure (default 2 → up to 3 total).
+        temperature: Passed to adapter. Default 0.0 for reproducibility.
     """
 
     def __init__(
         self,
-        llm: LLMAdapter,
-        tools: list[str] | None = None,
+        llm: Any,
+        max_retries: int = 2,
+        temperature: float = 0.0,
     ) -> None:
         self._llm = llm
-        self._tools = tools or []
+        self._max_retries = max_retries
+        self._temperature = temperature
 
     async def generate(
         self,
-        user_input: str,
-        context: dict[str, Any] | None = None,
+        intent: str,
+        available_tools: list[str] | None = None,
+        context_keys: list[str] | None = None,
     ) -> Program:
         """
-        Сгенерировать Program из запроса пользователя.
+        Generate a Program from natural language intent.
 
         Args:
-            user_input: свободный текст запроса
-            context:    доступные переменные (используются для подсказки в промпте)
+            intent:          What the program should do (plain text).
+            available_tools: Optional list of registered tool names — injected into prompt.
+            context_keys:    Optional list of expected context variable names.
 
         Returns:
-            Program — готова к исполнению в ExecutionVM.
+            Validated Program ready for ExecutionVM.run().
 
         Raises:
-            PlannerError: если LLM вернул невалидный JSON или невалидную программу.
+            PlannerError: If all retries fail (ValidationError or JSON parse error).
         """
-        system = SYSTEM_PROMPT.format(tools=", ".join(self._tools) if self._tools else "нет")
-
-        user_msg = user_input
-        if context:
-            keys = ", ".join(f"${k}" for k in context.keys())
-            user_msg = f"{user_input}\n\nДоступные переменные в context: {keys}"
-
-        messages = [
-            {"role": "system", "content": system},
-            {"role": "user", "content": user_msg},
+        user_prompt = self._build_user_prompt(intent, available_tools, context_keys)
+        messages: list[dict[str, str]] = [
+            {"role": "system", "content": _SYSTEM_PROMPT},
+            {"role": "user", "content": user_prompt},
         ]
 
-        raw = await self._llm.complete(messages)
-        return self._parse_program(raw)
+        last_raw = ""
+        last_error = ""
+
+        for attempt in range(1 + self._max_retries):
+            if attempt > 0:
+                # Append validation error as assistant/user feedback pair
+                messages = self._append_feedback(messages, last_raw, last_error)
+
+            raw = await self._call_llm(messages)
+            last_raw = raw
+
+            # Parse JSON
+            try:
+                data = _extract_json(raw)
+            except ValueError as exc:
+                last_error = f"JSON parse error: {exc}. Raw output was not valid JSON."
+                continue
+
+            # Validate against Program schema
+            try:
+                return Program.from_dict(data)
+            except ValidationError as exc:
+                last_error = f"Schema validation error: {exc}"
+                continue
+
+        raise PlannerError(
+            f"Failed to generate a valid Program after {1 + self._max_retries} attempts. "
+            f"Last error: {last_error}",
+            last_raw=last_raw,
+            attempts=1 + self._max_retries,
+        )
 
     # ------------------------------------------------------------------
-    # Парсинг ответа
+    # Internal helpers
     # ------------------------------------------------------------------
 
-    def _parse_program(self, raw: str) -> Program:
-        """Извлечь JSON из ответа LLM и валидировать как Program."""
-        json_str = self._extract_json(raw)
-        if not json_str:
-            raise PlannerError(f"LLM не вернул валидный JSON. Ответ:\n{raw[:500]}")
-
-        try:
-            data = json.loads(json_str)
-        except json.JSONDecodeError as exc:
-            raise PlannerError(f"Ошибка парсинга JSON: {exc}\nСырой ответ:\n{raw[:500]}") from exc
-
-        try:
-            return Program.model_validate(data)
-        except Exception as exc:
-            raise PlannerError(f"Невалидная структура программы: {exc}") from exc
+    async def _call_llm(self, messages: list[dict[str, str]]) -> str:
+        """Call adapter, handle both str and tuple[str, ...] return signatures."""
+        result = await self._llm.complete(messages, temperature=self._temperature)
+        # LiteLLMAdapter returns tuple[str, dict|None]; Protocol returns str
+        if isinstance(result, tuple):
+            return result[0]
+        return result
 
     @staticmethod
-    def _extract_json(text: str) -> str | None:
-        """
-        Извлечь JSON из текста.
-        Обрабатывает как чистый JSON, так и JSON в markdown-блоках.
-        """
-        text = text.strip()
+    def _build_user_prompt(
+        intent: str,
+        available_tools: list[str] | None,
+        context_keys: list[str] | None,
+    ) -> str:
+        parts = [f"User intent: {intent}"]
+        if available_tools:
+            parts.append(f"Available tools: {', '.join(available_tools)}")
+        if context_keys:
+            parts.append(f"Context variables available: {', '.join('$' + k for k in context_keys)}")
+        return "\n".join(parts)
 
-        # Убрать ```json ... ``` или ``` ... ```
-        md_match = re.search(r"```(?:json)?\s*([\s\S]+?)\s*```", text)
-        if md_match:
-            return md_match.group(1).strip()
+    @staticmethod
+    def _append_feedback(
+        messages: list[dict[str, str]],
+        last_raw: str,
+        error: str,
+    ) -> list[dict[str, str]]:
+        """Inject previous failed output + validation error back into conversation."""
+        return [
+            *messages,
+            {"role": "assistant", "content": last_raw},
+            {
+                "role": "user",
+                "content": (
+                    f"VALIDATION ERROR: {error}\n\n"
+                    "Fix the JSON and return a corrected program. "
+                    "Output only the corrected JSON object."
+                ),
+            },
+        ]
 
-        # Найти первый { ... } блок
-        brace_match = re.search(r"\{[\s\S]+\}", text)
-        if brace_match:
-            return brace_match.group(0)
 
-        return None
+# ---------------------------------------------------------------------------
+# JSON extraction
+# ---------------------------------------------------------------------------
+
+
+def _extract_json(raw: str) -> dict[str, Any]:
+    """
+    Extract a JSON object from LLM output.
+
+    Handles:
+    - Clean JSON output (ideal case)
+    - JSON wrapped in ```json ... ``` or ``` ... ``` fences
+    - Leading/trailing whitespace or explanation text
+
+    Raises ValueError if no valid JSON object found.
+    """
+    text = raw.strip()
+
+    # Strip markdown code fences if present
+    fence_match = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", text, re.DOTALL)
+    if fence_match:
+        text = fence_match.group(1)
+    else:
+        # Find first { ... } block
+        start = text.find("{")
+        end = text.rfind("}")
+        if start == -1 or end == -1 or end <= start:
+            raise ValueError("No JSON object found in LLM output")
+        text = text[start : end + 1]
+
+    try:
+        result = json.loads(text)
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"Invalid JSON: {exc}") from exc
+
+    if not isinstance(result, dict):
+        raise ValueError(f"Expected JSON object, got {type(result).__name__}")
+
+    return result
