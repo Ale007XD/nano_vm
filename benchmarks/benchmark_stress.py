@@ -78,7 +78,6 @@ def _make_real_adapter(model: str, timeout: float):
     """Создаёт LiteLLMAdapter. Возвращает (adapter, is_mock)."""
     try:
         from nano_vm.adapters import LiteLLMAdapter  # type: ignore[attr-defined]
-
         api_key = os.environ.get("OPENROUTER_API_KEY", "")
         if not api_key:
             raise RuntimeError("no API key")
@@ -98,8 +97,8 @@ class BM9Result:
     is_mock: bool
     proposals: int
     succeeded: int
-    failed_by_vm: int  # FAILED статус от VM (constraint нарушен)
-    failed_by_api: int  # исключение от LLM
+    failed_by_vm: int        # FAILED статус от VM (constraint нарушен)
+    failed_by_api: int       # исключение от LLM
     wall_clock_ms: float
     throughput_rps: float
 
@@ -110,9 +109,9 @@ class BM10Result:
     is_mock: bool
     fail_rate: float
     runs: int
-    vm_success: int  # trace.status == SUCCESS
-    vm_partial: int  # часть шагов SKIPPED/FAILED но VM не упал
-    vm_failed: int  # trace.status == FAILED
+    vm_success: int          # trace.status == SUCCESS
+    vm_partial: int          # часть шагов SKIPPED/FAILED но VM не упал
+    vm_failed: int           # trace.status == FAILED
     api_errors_injected: int
     wall_clock_ms: float
 
@@ -122,7 +121,7 @@ class BM11Result:
     model: str
     is_mock: bool
     runs: int
-    deterministic: bool  # все state_snapshots идентичны
+    deterministic: bool      # все state_snapshots идентичны
     unique_fingerprints: int  # сколько уникальных наборов снапшотов
     latency_variance_ms: float
     wall_clock_ms: float
@@ -133,41 +132,39 @@ class BM11Result:
 # ---------------------------------------------------------------------------
 
 # Программа с condition: VM отбросит шаги где classify != "valid"
-_BM9_PROGRAM = Program.from_dict(
-    {
-        "name": "bm9_rejection",
-        "description": "100 parallel proposals → VM enforces constraint",
-        "steps": [
-            {
-                "id": "par",
-                "type": "parallel",
-                "output_key": "proposals",
-                "parallel_steps": [
-                    {
-                        "id": f"p{i}",
-                        "type": "llm",
-                        "prompt": (
-                            f"You are proposal generator #{i}. "
-                            "Reply with exactly one word: 'valid' or 'invalid'."
-                        ),
-                        "output_key": f"prop_{i}",
-                    }
-                    for i in range(20)  # 20 параллельных — достаточно для замера
-                ],
-            },
-            {
-                "id": "filter",
-                "type": "llm",
-                "prompt": (
-                    "Count how many proposals contain the word 'valid'. "
-                    "Reply with a single integer."
-                ),
-                "output_key": "valid_count",
-            },
-        ],
-        "max_steps": 10,
-    }
-)
+_BM9_PROGRAM = Program.from_dict({
+    "name": "bm9_rejection",
+    "description": "100 parallel proposals → VM enforces constraint",
+    "steps": [
+        {
+            "id": "par",
+            "type": "parallel",
+            "output_key": "proposals",
+            "parallel_steps": [
+                {
+                    "id": f"p{i}",
+                    "type": "llm",
+                    "prompt": (
+                        f"You are proposal generator #{i}. "
+                        "Reply with exactly one word: 'valid' or 'invalid'."
+                    ),
+                    "output_key": f"prop_{i}",
+                }
+                for i in range(20)  # 20 параллельных — достаточно для замера
+            ],
+        },
+        {
+            "id": "filter",
+            "type": "llm",
+            "prompt": (
+                "Count how many proposals contain the word 'valid'. "
+                "Reply with a single integer."
+            ),
+            "output_key": "valid_count",
+        },
+    ],
+    "max_steps": 10,
+})
 
 
 async def run_bm9(
@@ -199,11 +196,14 @@ async def run_bm9(
         trace = await vm.run(_BM9_PROGRAM)
         wall_ms = (time.perf_counter() - t0) * 1000
 
-        succeeded = sum(1 for s in trace.steps if s.status == StepStatus.SUCCESS)
-        failed_vm = sum(1 for s in trace.steps if s.status == StepStatus.FAILED)
+        succeeded = sum(
+            1 for s in trace.steps if s.status == StepStatus.SUCCESS
+        )
+        failed_vm = sum(
+            1 for s in trace.steps if s.status == StepStatus.FAILED
+        )
         failed_api = sum(
-            1
-            for s in trace.steps
+            1 for s in trace.steps
             if s.status == StepStatus.FAILED and s.error and "injected" in s.error
         )
         throughput = len(trace.steps) / (wall_ms / 1000) if wall_ms > 0 else 0
@@ -256,7 +256,10 @@ def _print_bm9(results: list[BM9Result]) -> None:
     for r in results:
         short = MODEL_SHORT.get(r.model, r.model.split("/")[-1])
         source = "[dim]MOCK[/]" if r.is_mock else f"[{_GREEN}]REAL[/]"
-        reject_pct = f"{r.failed_by_vm / r.proposals * 100:.0f}%" if r.proposals > 0 else "—"
+        reject_pct = (
+            f"{r.failed_by_vm / r.proposals * 100:.0f}%"
+            if r.proposals > 0 else "—"
+        )
         t.add_row(
             short,
             str(r.proposals),
@@ -280,35 +283,33 @@ def _print_bm9(results: list[BM9Result]) -> None:
 # BM10 — Fault Injection
 # ---------------------------------------------------------------------------
 
-_BM10_PROGRAM = Program.from_dict(
-    {
-        "name": "bm10_fault",
-        "description": "Fault isolation: partial failures must not cascade",
-        "steps": [
-            {
-                "id": "par",
-                "type": "parallel",
-                "output_key": "results",
-                "on_error": "skip",
-                "parallel_steps": [
-                    {
-                        "id": f"task_{i}",
-                        "type": "llm",
-                        "prompt": f"Complete task {i}. Reply with 'done_{i}'.",
-                        "output_key": f"result_{i}",
-                    }
-                    for i in range(10)
-                ],
-            },
-            {
-                "id": "aggregate",
-                "type": "llm",
-                "prompt": "Summarize completed tasks. Reply with count of 'done' words.",
-                "output_key": "summary",
-            },
-        ],
-    }
-)
+_BM10_PROGRAM = Program.from_dict({
+    "name": "bm10_fault",
+    "description": "Fault isolation: partial failures must not cascade",
+    "steps": [
+        {
+            "id": "par",
+            "type": "parallel",
+            "output_key": "results",
+            "on_error": "skip",
+            "parallel_steps": [
+                {
+                    "id": f"task_{i}",
+                    "type": "llm",
+                    "prompt": f"Complete task {i}. Reply with 'done_{i}'.",
+                    "output_key": f"result_{i}",
+                }
+                for i in range(10)
+            ],
+        },
+        {
+            "id": "aggregate",
+            "type": "llm",
+            "prompt": "Summarize completed tasks. Reply with count of 'done' words.",
+            "output_key": "summary",
+        },
+    ],
+})
 
 
 async def run_bm10(
@@ -331,14 +332,14 @@ async def run_bm10(
             # Пробуем Real, fallback Mock
             try:
                 from nano_vm.adapters import LiteLLMAdapter  # type: ignore[attr-defined]
-
                 api_key = os.environ.get("OPENROUTER_API_KEY", "")
                 if not api_key:
                     raise RuntimeError("no key")
-                base_adapter = LiteLLMAdapter(model, timeout=timeout, temperature=0.0)
+                LiteLLMAdapter(
+                    model, timeout=timeout, temperature=0.0
+                )
                 is_mock = False
             except Exception:
-                base_adapter = _MockLLM("done")
                 is_mock = True
 
             faulty = _FaultyLLM(fail_rate=fail_rate, response="done")
@@ -357,7 +358,9 @@ async def run_bm10(
 
             try:
                 trace = await vm.run(_BM10_PROGRAM)
-                skipped = sum(1 for s in trace.steps if s.status == StepStatus.SKIPPED)
+                skipped = sum(
+                    1 for s in trace.steps if s.status == StepStatus.SKIPPED
+                )
                 if trace.status == TraceStatus.SUCCESS and skipped == 0:
                     vm_success += 1
                 elif trace.status == TraceStatus.SUCCESS and skipped > 0:
@@ -370,26 +373,27 @@ async def run_bm10(
                 api_errors_total += faulty.fail_count
 
         wall_ms = (time.perf_counter() - t0) * 1000
-        out.append(
-            BM10Result(
-                model=model,
-                is_mock=is_mock,
-                fail_rate=fail_rate,
-                runs=runs_per_rate,
-                vm_success=vm_success,
-                vm_partial=vm_partial,
-                vm_failed=vm_failed,
-                api_errors_injected=api_errors_total,
-                wall_clock_ms=wall_ms,
-            )
-        )
+        out.append(BM10Result(
+            model=model,
+            is_mock=is_mock,
+            fail_rate=fail_rate,
+            runs=runs_per_rate,
+            vm_success=vm_success,
+            vm_partial=vm_partial,
+            vm_failed=vm_failed,
+            api_errors_injected=api_errors_total,
+            wall_clock_ms=wall_ms,
+        ))
 
     return out
 
 
 def _print_bm10(all_results: list[list[BM10Result]]) -> None:
     t = Table(
-        title=("[bold cyan]BM10: Fault Injection[/]  [dim]random API failures → VM isolation[/]"),
+        title=(
+            "[bold cyan]BM10: Fault Injection[/]  "
+            "[dim]random API failures → VM isolation[/]"
+        ),
         box=box.SIMPLE_HEAVY,
         show_header=True,
         header_style="bold magenta",
@@ -434,32 +438,30 @@ def _print_bm10(all_results: list[list[BM10Result]]) -> None:
 # BM11 — Determinism
 # ---------------------------------------------------------------------------
 
-_BM11_PROGRAM = Program.from_dict(
-    {
-        "name": "bm11_determinism",
-        "description": "Determinism test: same input → identical state_snapshots",
-        "steps": [
-            {
-                "id": "s1",
-                "type": "llm",
-                "prompt": "Reply with the word 'alpha'.",
-                "output_key": "out1",
-            },
-            {
-                "id": "s2",
-                "type": "llm",
-                "prompt": "Reply with the word 'beta'.",
-                "output_key": "out2",
-            },
-            {
-                "id": "s3",
-                "type": "llm",
-                "prompt": "Combine: $out1 $out2. Reply with both words.",
-                "output_key": "result",
-            },
-        ],
-    }
-)
+_BM11_PROGRAM = Program.from_dict({
+    "name": "bm11_determinism",
+    "description": "Determinism test: same input → identical state_snapshots",
+    "steps": [
+        {
+            "id": "s1",
+            "type": "llm",
+            "prompt": "Reply with the word 'alpha'.",
+            "output_key": "out1",
+        },
+        {
+            "id": "s2",
+            "type": "llm",
+            "prompt": "Reply with the word 'beta'.",
+            "output_key": "out2",
+        },
+        {
+            "id": "s3",
+            "type": "llm",
+            "prompt": "Combine: $out1 $out2. Reply with both words.",
+            "output_key": "result",
+        },
+    ],
+})
 
 
 async def run_bm11(
@@ -486,21 +488,24 @@ async def run_bm11(
     wall_ms = (time.perf_counter() - t0_total) * 1000
 
     # Уникальные наборы снапшотов (должно быть 1 если детерминированно)
-    unique = {tuple(snap_list) for snap_list in snapshots_per_run}
+    unique = {
+        tuple(snap_list) for snap_list in snapshots_per_run
+    }
     deterministic = len(unique) == 1
 
     # Variance latency
     avg_lat = sum(latencies) / len(latencies)
-    variance = sum((l - avg_lat) ** 2 for l in latencies) / len(latencies)
-    std_ms = variance**0.5
+    variance = sum((lat_val - avg_lat) ** 2 for lat_val in latencies) / len(latencies)
+    std_ms = variance ** 0.5
 
     # Если API key есть — дополнительно прогоняем Real для latency variance
     try:
         from nano_vm.adapters import LiteLLMAdapter  # type: ignore[attr-defined]
-
         api_key = os.environ.get("OPENROUTER_API_KEY", "")
         if api_key:
-            real_adapter = LiteLLMAdapter(model, timeout=timeout, temperature=0.0)
+            real_adapter = LiteLLMAdapter(
+                model, timeout=timeout, temperature=0.0
+            )
             real_vm = ExecutionVM(llm=real_adapter)
             real_latencies: list[float] = []
             for _ in range(min(runs, 3)):
@@ -509,8 +514,8 @@ async def run_bm11(
                 real_latencies.append((time.perf_counter() - t0) * 1000)
                 await asyncio.sleep(1.5)
             avg_r = sum(real_latencies) / len(real_latencies)
-            var_r = sum((l - avg_r) ** 2 for l in real_latencies) / len(real_latencies)
-            std_ms = var_r**0.5
+            var_r = sum((lat_val - avg_r) ** 2 for lat_val in real_latencies) / len(real_latencies)
+            std_ms = var_r ** 0.5
             is_mock = False
     except Exception:
         pass
@@ -529,7 +534,8 @@ async def run_bm11(
 def _print_bm11(results: list[BM11Result]) -> None:
     t = Table(
         title=(
-            "[bold cyan]BM11: Determinism[/]  [dim]same (S, E) × N → identical state_snapshots[/]"
+            "[bold cyan]BM11: Determinism[/]  "
+            "[dim]same (S, E) × N → identical state_snapshots[/]"
         ),
         box=box.SIMPLE_HEAVY,
         show_header=True,
@@ -548,8 +554,7 @@ def _print_bm11(results: list[BM11Result]) -> None:
     for r in results:
         short = MODEL_SHORT.get(r.model, r.model.split("/")[-1])
         det_str = (
-            f"[{_GREEN}]✓ YES[/]"
-            if r.deterministic
+            f"[{_GREEN}]✓ YES[/]" if r.deterministic
             else f"[{_RED}]✗ NO ({r.unique_fingerprints} variants)[/]"
         )
         source = "[dim]MOCK[/]" if r.is_mock else f"[{_GREEN}]REAL σ[/]"
