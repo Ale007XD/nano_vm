@@ -2,7 +2,7 @@
 benchmarks/benchmark_live.py
 =============================
 Боевой тест llm-nano-vm через реальный API (OpenRouter).
-Измеряет сетевой overhead, реальный TTFT (Time-To-First-Token) / Latency, 
+Измеряет сетевой overhead, реальный TTFT (Time-To-First-Token) / Latency,
 работу параллельных шагов и подсчет стоимости.
 
 Требует:
@@ -14,28 +14,29 @@ benchmarks/benchmark_live.py
 """
 
 import asyncio
+import json
 import os
 import sys
 import time
 import urllib.request
-import json
 
 # Подавляем лишний спам от litellm при сетевых ошибках
 import litellm
+
 litellm.suppress_debug_info = True
 litellm.set_verbose = False
 
 try:
+    from rich import box
     from rich.console import Console
     from rich.panel import Panel
     from rich.table import Table
-    from rich import box
 except ImportError:
     print("rich not installed. Run: pip install rich")
     sys.exit(1)
 
-from nano_vm import ExecutionVM, Program, TraceStatus
-from nano_vm.models import Step, StepType, OnError
+from nano_vm import ExecutionVM, Program
+from nano_vm.models import OnError, Step, StepType
 
 # Используем реальный адаптер
 try:
@@ -54,15 +55,14 @@ MODEL_ID = "openrouter/openai/gpt-4o-mini"
 def check_openrouter_auth(api_key: str) -> dict:
     """Пинг API OpenRouter для проверки ключа и лимитов."""
     req = urllib.request.Request(
-        "https://openrouter.ai/api/v1/auth/key",
-        headers={"Authorization": f"Bearer {api_key}"}
+        "https://openrouter.ai/api/v1/auth/key", headers={"Authorization": f"Bearer {api_key}"}
     )
     try:
         with urllib.request.urlopen(req) as response:
             data = json.loads(response.read())
             return data.get("data", {})
     except urllib.error.HTTPError as e:
-        error_body = e.read().decode('utf-8')
+        error_body = e.read().decode("utf-8")
         return {"error": f"HTTP {e.code}: {e.reason} - {error_body}"}
     except Exception as e:
         return {"error": str(e)}
@@ -79,7 +79,7 @@ async def run_live_benchmark():
     # ---------------------------------------------------------
     console.print("[dim]Пинг OpenRouter и проверка ключа...[/]")
     auth_info = check_openrouter_auth(api_key)
-    
+
     auth_status_str = ""
     if "error" in auth_info:
         auth_status_str = f"[bold red]ОШИБКА АВТОРИЗАЦИИ:[/] {auth_info['error']}"
@@ -89,16 +89,19 @@ async def run_live_benchmark():
         is_free = auth_info.get("is_free_tier")
         auth_status_str = f"[bright_green]Ключ ВАЛИДЕН[/] | Free Tier: {is_free} | Лимит: {limit} | Использовано: {usage}"
 
-    console.print(Panel.fit(
-        f"[bold bright_green]Live API Benchmark[/]\n"
-        f"Модель: [cyan]{MODEL_ID}[/]\n"
-        f"Статус: {auth_status_str}",
-        box=box.HEAVY, border_style="bright_green"
-    ))
+    console.print(
+        Panel.fit(
+            f"[bold bright_green]Live API Benchmark[/]\n"
+            f"Модель: [cyan]{MODEL_ID}[/]\n"
+            f"Статус: {auth_status_str}",
+            box=box.HEAVY,
+            border_style="bright_green",
+        )
+    )
 
     # Инициализация боевого VM
     vm = ExecutionVM(llm=LiteLLMAdapter(model=MODEL_ID))
-    
+
     # ---------------------------------------------------------
     # Сценарий 1: Серийный вызов (3 шага)
     # ---------------------------------------------------------
@@ -109,7 +112,7 @@ async def run_live_benchmark():
             Step(id="s1", type=StepType.LLM, prompt="Say 'ping 1' and nothing else."),
             Step(id="s2", type=StepType.LLM, prompt="Say 'ping 2' and nothing else."),
             Step(id="s3", type=StepType.LLM, prompt="Say 'ping 3' and nothing else."),
-        ]
+        ],
     )
 
     t0 = time.perf_counter()
@@ -131,9 +134,9 @@ async def run_live_benchmark():
                 parallel_steps=[
                     Step(id=f"p{i}", type=StepType.LLM, prompt=f"Return exactly the number {i}.")
                     for i in range(N_PARALLEL)
-                ]
+                ],
             )
-        ]
+        ],
     )
 
     t0 = time.perf_counter()
@@ -152,17 +155,21 @@ async def run_live_benchmark():
 
     def _add_trace_row(label, t_time, trace):
         status_val = trace.status.value if hasattr(trace.status, "value") else str(trace.status)
-        status_color = "[bright_green]SUCCESS[/]" if str(status_val).upper() == "SUCCESS" else f"[red]{status_val}[/]"
-        
+        status_color = (
+            "[bright_green]SUCCESS[/]"
+            if str(status_val).upper() == "SUCCESS"
+            else f"[red]{status_val}[/]"
+        )
+
         tokens = trace.total_tokens()
         tokens_str = str(tokens) if tokens is not None else "N/A"
-        
+
         cost_str = "N/A"
-        if hasattr(trace, 'total_cost_usd'):
+        if hasattr(trace, "total_cost_usd"):
             cost_val = trace.total_cost_usd()
             if cost_val is not None:
                 cost_str = f"${cost_val:.6f}"
-                
+
         t.add_row(label, status_color, f"{t_time:.2f} s", tokens_str, cost_str)
 
     _add_trace_row("Серийный (3 шага)", serial_time, trace_serial)
@@ -172,20 +179,28 @@ async def run_live_benchmark():
     console.print(t)
 
     # Детализация параллельного блока (универсальный вывод всех шагов из Trace)
-    if getattr(trace_parallel, 'steps', None):
+    if getattr(trace_parallel, "steps", None):
         console.print("\n[dim]Детализация параллельного блока (Trace Steps):[/]")
         for step in trace_parallel.steps:
             status_val = step.status.value if hasattr(step.status, "value") else str(step.status)
-            color = "bright_green" if str(status_val).upper() == "SUCCESS" else "yellow" if str(status_val).upper() == "SKIPPED" else "red"
+            color = (
+                "bright_green"
+                if str(status_val).upper() == "SUCCESS"
+                else "yellow"
+                if str(status_val).upper() == "SKIPPED"
+                else "red"
+            )
             status_fmt = f"[{color}]{status_val}[/]"
-            
-            output_preview = str(getattr(step, 'output', 'None')).strip().replace('\n', ' ')[:40]
-            dur = getattr(step, 'duration_ms', 0)
-            
+
+            output_preview = str(getattr(step, "output", "None")).strip().replace("\n", " ")[:40]
+            dur = getattr(step, "duration_ms", 0)
+
             # Визуальное выделение родительского шага
             prefix = "►" if step.step_id == "par_fetch" else "  ├─"
-            
-            console.print(f"{prefix} {step.step_id:9} | {status_fmt:15} | {dur:5} ms | Output: {output_preview}")
+
+            console.print(
+                f"{prefix} {step.step_id:9} | {status_fmt:15} | {dur:5} ms | Output: {output_preview}"
+            )
 
 
 if __name__ == "__main__":
