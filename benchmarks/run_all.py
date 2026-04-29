@@ -144,13 +144,13 @@ async def run_suite_mock(args: argparse.Namespace) -> None:
         "Measures orchestration cost.[/]\n"
     )
 
-    # Динамический импорт чтобы не падать если файла нет
     try:
         import importlib.util
-        spec = importlib.util.spec_from_file_location(
-            "benchmark_v040",
-            _bench_path("benchmark_v040.py"),
-        )
+        import pathlib
+        p = pathlib.Path(_bench_path("benchmark_v040.py"))
+        if not p.exists():
+            raise FileNotFoundError(f"{p} not found — copy benchmark_v040.py to benchmarks/")
+        spec = importlib.util.spec_from_file_location("benchmark_v040", str(p))
         mod = importlib.util.module_from_spec(spec)  # type: ignore[arg-type]
         spec.loader.exec_module(mod)  # type: ignore[union-attr]
     except Exception as exc:
@@ -208,10 +208,11 @@ async def run_suite_real(args: argparse.Namespace) -> None:
 
     try:
         import importlib.util
-        spec = importlib.util.spec_from_file_location(
-            "benchmark_v050",
-            _bench_path("benchmark_v050.py"),
-        )
+        import pathlib
+        p = pathlib.Path(_bench_path("benchmark_v050.py"))
+        if not p.exists():
+            raise FileNotFoundError(f"{p} not found — copy benchmark_v050.py to benchmarks/")
+        spec = importlib.util.spec_from_file_location("benchmark_v050", str(p))
         mod = importlib.util.module_from_spec(spec)  # type: ignore[arg-type]
         spec.loader.exec_module(mod)  # type: ignore[union-attr]
     except Exception as exc:
@@ -271,10 +272,11 @@ async def run_suite_stress(args: argparse.Namespace) -> None:
 
     try:
         import importlib.util
-        spec = importlib.util.spec_from_file_location(
-            "benchmark_stress",
-            _bench_path("benchmark_stress.py"),
-        )
+        import pathlib
+        p = pathlib.Path(_bench_path("benchmark_stress.py"))
+        if not p.exists():
+            raise FileNotFoundError(f"{p} not found — copy benchmark_stress.py to benchmarks/")
+        spec = importlib.util.spec_from_file_location("benchmark_stress", str(p))
         mod = importlib.util.module_from_spec(spec)  # type: ignore[arg-type]
         spec.loader.exec_module(mod)  # type: ignore[union-attr]
     except Exception as exc:
@@ -399,4 +401,4 @@ Examples:
 
 if __name__ == "__main__":
     asyncio.run(main())
-  
+      
