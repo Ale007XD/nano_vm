@@ -39,7 +39,7 @@ class PlannerError(Exception):
 
     def __init__(self, message: str, last_raw: str = "", attempts: int = 0) -> None:
         super().__init__(message)
-        self.last_raw = last_raw   # last LLM response for debugging
+        self.last_raw = last_raw  # last LLM response for debugging
         self.attempts = attempts
 
 

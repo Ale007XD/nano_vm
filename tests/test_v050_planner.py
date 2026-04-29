@@ -19,11 +19,11 @@ P5: Planner — 18 tests covering:
 from __future__ import annotations
 
 import json
+
 import pytest
 
-from nano_vm.models import Program, StepType, TraceStatus
+from nano_vm.models import Program, StepType
 from nano_vm.planner import Planner, PlannerError, _extract_json
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -48,50 +48,54 @@ def _make_program_json(**overrides) -> str:
 
 
 def _make_two_step_json() -> str:
-    return json.dumps({
-        "name": "classify_route",
-        "description": "Classify and route",
-        "steps": [
-            {
-                "id": "classify",
-                "type": "llm",
-                "prompt": "Classify: $user_input. Reply urgent or normal.",
-                "output_key": "category",
-            },
-            {
-                "id": "route",
-                "type": "condition",
-                "condition": "'urgent' in '$category'",
-                "then": "handle_urgent",
-                "otherwise": "handle_normal",
-            },
-            {"id": "handle_urgent", "type": "tool", "tool": "escalate"},
-            {"id": "handle_normal", "type": "tool", "tool": "log"},
-        ],
-    })
+    return json.dumps(
+        {
+            "name": "classify_route",
+            "description": "Classify and route",
+            "steps": [
+                {
+                    "id": "classify",
+                    "type": "llm",
+                    "prompt": "Classify: $user_input. Reply urgent or normal.",
+                    "output_key": "category",
+                },
+                {
+                    "id": "route",
+                    "type": "condition",
+                    "condition": "'urgent' in '$category'",
+                    "then": "handle_urgent",
+                    "otherwise": "handle_normal",
+                },
+                {"id": "handle_urgent", "type": "tool", "tool": "escalate"},
+                {"id": "handle_normal", "type": "tool", "tool": "log"},
+            ],
+        }
+    )
 
 
 def _make_parallel_json() -> str:
-    return json.dumps({
-        "name": "parallel_fetch",
-        "steps": [
-            {
-                "id": "fetch",
-                "type": "parallel",
-                "output_key": "fetched",
-                "parallel_steps": [
-                    {"id": "weather", "type": "tool", "tool": "get_weather"},
-                    {"id": "news", "type": "tool", "tool": "get_news"},
-                ],
-            },
-            {
-                "id": "briefing",
-                "type": "llm",
-                "prompt": "Summarize: $weather $news",
-                "output_key": "result",
-            },
-        ],
-    })
+    return json.dumps(
+        {
+            "name": "parallel_fetch",
+            "steps": [
+                {
+                    "id": "fetch",
+                    "type": "parallel",
+                    "output_key": "fetched",
+                    "parallel_steps": [
+                        {"id": "weather", "type": "tool", "tool": "get_weather"},
+                        {"id": "news", "type": "tool", "tool": "get_news"},
+                    ],
+                },
+                {
+                    "id": "briefing",
+                    "type": "llm",
+                    "prompt": "Summarize: $weather $news",
+                    "output_key": "result",
+                },
+            ],
+        }
+    )
 
 
 class MockAdapter:
