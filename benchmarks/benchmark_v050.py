@@ -57,7 +57,9 @@ try:
     from nano_vm import ExecutionVM, Planner, Program, TraceStatus
     from nano_vm.adapters import LiteLLMAdapter
 except ImportError as _e:
-    raise ImportError("nano-vm[litellm] not installed. Run: pip install llm-nano-vm[litellm]") from _e
+    raise ImportError(
+        "nano-vm[litellm] not installed. Run: pip install llm-nano-vm[litellm]"
+    ) from _e
 
 console = Console()
 
