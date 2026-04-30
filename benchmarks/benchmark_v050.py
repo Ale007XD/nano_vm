@@ -50,16 +50,14 @@ try:
     from rich.panel import Panel
     from rich.progress import BarColumn, Progress, SpinnerColumn, TextColumn
     from rich.table import Table
-except ImportError:
-    print("rich not installed. Run: pip install rich")
-    sys.exit(1)
+except ImportError as _e:
+    raise ImportError("rich not installed. Run: pip install rich") from _e
 
 try:
     from nano_vm import ExecutionVM, Planner, Program, TraceStatus
     from nano_vm.adapters import LiteLLMAdapter
-except ImportError:
-    print("nano-vm not installed. Run: pip install llm-nano-vm[litellm]")
-    sys.exit(1)
+except ImportError as _e:
+    raise ImportError("nano-vm[litellm] not installed. Run: pip install llm-nano-vm[litellm]") from _e
 
 console = Console()
 

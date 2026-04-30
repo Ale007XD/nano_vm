@@ -152,6 +152,7 @@ async def run_suite_mock(args: argparse.Namespace) -> None:
             raise FileNotFoundError(f"{p} not found — copy benchmark_v040.py to benchmarks/")
         spec = importlib.util.spec_from_file_location("benchmark_v040", str(p))
         mod = importlib.util.module_from_spec(spec)  # type: ignore[arg-type]
+        sys.modules["benchmark_v040"] = mod  # required: @dataclass reads cls.__module__ via sys.modules
         spec.loader.exec_module(mod)  # type: ignore[union-attr]
     except Exception as exc:
         console.print(f"  [{_YELLOW}]benchmark_v040.py not found: {exc}[/]\n")
@@ -214,6 +215,7 @@ async def run_suite_real(args: argparse.Namespace) -> None:
             raise FileNotFoundError(f"{p} not found — copy benchmark_v050.py to benchmarks/")
         spec = importlib.util.spec_from_file_location("benchmark_v050", str(p))
         mod = importlib.util.module_from_spec(spec)  # type: ignore[arg-type]
+        sys.modules["benchmark_v050"] = mod  # required: @dataclass reads cls.__module__ via sys.modules
         spec.loader.exec_module(mod)  # type: ignore[union-attr]
     except Exception as exc:
         console.print(f"  [{_YELLOW}]benchmark_v050.py not found: {exc}[/]\n")
@@ -278,6 +280,7 @@ async def run_suite_stress(args: argparse.Namespace) -> None:
             raise FileNotFoundError(f"{p} not found — copy benchmark_stress.py to benchmarks/")
         spec = importlib.util.spec_from_file_location("benchmark_stress", str(p))
         mod = importlib.util.module_from_spec(spec)  # type: ignore[arg-type]
+        sys.modules["benchmark_stress"] = mod  # required: @dataclass reads cls.__module__ via sys.modules
         spec.loader.exec_module(mod)  # type: ignore[union-attr]
     except Exception as exc:
         console.print(f"  [{_YELLOW}]benchmark_stress.py not found: {exc}[/]\n")
