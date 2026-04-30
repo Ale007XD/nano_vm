@@ -216,7 +216,9 @@ async def run_suite_real(args: argparse.Namespace) -> None:
             raise FileNotFoundError(f"{p} not found — copy benchmark_v050.py to benchmarks/")
         spec = importlib.util.spec_from_file_location("benchmark_v050", str(p))
         mod = importlib.util.module_from_spec(spec)  # type: ignore[arg-type]
-        sys.modules["benchmark_v050"] = mod  # required: @dataclass reads cls.__module__ via sys.modules
+        sys.modules["benchmark_v050"] = mod
+        # required: @dataclass reads cls.__module__ via sys.modules
+        # at decoration time
         spec.loader.exec_module(mod)  # type: ignore[union-attr]
     except Exception as exc:
         console.print(f"  [{_YELLOW}]benchmark_v050.py not found: {exc}[/]\n")
