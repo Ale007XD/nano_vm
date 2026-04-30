@@ -72,8 +72,14 @@ class SummaryCollector:
         source: str = "MOCK",
     ) -> None:
         self._rows.append(
-            dict(bm=bm, label=label, throughput=throughput,
-                 latency=latency, status=status, source=source)
+            dict(
+                bm=bm,
+                label=label,
+                throughput=throughput,
+                latency=latency,
+                status=status,
+                source=source,
+            )
         )
 
     def print(self) -> None:
@@ -95,9 +101,12 @@ class SummaryCollector:
         t.add_column("Source", justify="center", style="dim")
         for row in self._rows:
             t.add_row(
-                row["bm"], row["label"],
-                row["throughput"], row["latency"],
-                row["status"], row["source"],
+                row["bm"],
+                row["label"],
+                row["throughput"],
+                row["latency"],
+                row["status"],
+                row["source"],
             )
         console.print(t)
 
@@ -139,14 +148,12 @@ def _print_header(suites: list[str], mock_forced: bool) -> None:
 
 async def run_suite_mock(args: argparse.Namespace) -> None:
     console.print(Rule("[bold cyan]Suite: Mock  BM1–BM7  (v0.4.0)[/]"))
-    console.print(
-        "  [dim]Pure VM overhead — no network, no I/O. "
-        "Measures orchestration cost.[/]\n"
-    )
+    console.print("  [dim]Pure VM overhead — no network, no I/O. Measures orchestration cost.[/]\n")
 
     try:
         import importlib.util
         import pathlib
+
         p = pathlib.Path(_bench_path("benchmark_v040.py"))
         if not p.exists():
             raise FileNotFoundError(f"{p} not found — copy benchmark_v040.py to benchmarks/")
@@ -169,24 +176,15 @@ async def run_suite_mock(args: argparse.Namespace) -> None:
     await mod.bm_max_tokens_overhead(runs=500)
     elapsed = time.perf_counter() - t0
 
-    summary.add("BM1", "retry overhead (200 runs)", "—", "—",
-                f"[{_GREEN}]✓ passed[/]", "MOCK")
-    summary.add("BM2", "max_concurrency scaling", "—", "—",
-                f"[{_GREEN}]✓ passed[/]", "MOCK")
-    summary.add("BM3", "parallel throughput", "—", "—",
-                f"[{_GREEN}]✓ passed[/]", "MOCK")
-    summary.add("BM4", "SKIPPED resolver overhead", "—", "—",
-                f"[{_GREEN}]✓ passed[/]", "MOCK")
-    summary.add("BM5", "max_steps budget overhead", "—", "—",
-                f"[{_GREEN}]✓ passed[/]", "MOCK")
-    summary.add("BM6", "fingerprint/STALLED overhead", "—", "—",
-                f"[{_GREEN}]✓ passed[/]", "MOCK")
-    summary.add("BM7", "max_tokens budget overhead", "—", "—",
-                f"[{_GREEN}]✓ passed[/]", "MOCK")
+    summary.add("BM1", "retry overhead (200 runs)", "—", "—", f"[{_GREEN}]✓ passed[/]", "MOCK")
+    summary.add("BM2", "max_concurrency scaling", "—", "—", f"[{_GREEN}]✓ passed[/]", "MOCK")
+    summary.add("BM3", "parallel throughput", "—", "—", f"[{_GREEN}]✓ passed[/]", "MOCK")
+    summary.add("BM4", "SKIPPED resolver overhead", "—", "—", f"[{_GREEN}]✓ passed[/]", "MOCK")
+    summary.add("BM5", "max_steps budget overhead", "—", "—", f"[{_GREEN}]✓ passed[/]", "MOCK")
+    summary.add("BM6", "fingerprint/STALLED overhead", "—", "—", f"[{_GREEN}]✓ passed[/]", "MOCK")
+    summary.add("BM7", "max_tokens budget overhead", "—", "—", f"[{_GREEN}]✓ passed[/]", "MOCK")
 
-    console.print(
-        f"  [dim]Mock suite done in {elapsed:.1f}s[/]\n"
-    )
+    console.print(f"  [dim]Mock suite done in {elapsed:.1f}s[/]\n")
 
 
 # ---------------------------------------------------------------------------
@@ -211,6 +209,7 @@ async def run_suite_real(args: argparse.Namespace) -> None:
     try:
         import importlib.util
         import pathlib
+
         p = pathlib.Path(_bench_path("benchmark_v050.py"))
         if not p.exists():
             raise FileNotFoundError(f"{p} not found — copy benchmark_v050.py to benchmarks/")
@@ -243,15 +242,14 @@ async def run_suite_real(args: argparse.Namespace) -> None:
                 err_str = f" [{_YELLOW}]{r.error}[/]" if not r.success and r.error else ""
                 console.print(
                     f"  {icon} {short} / {label} "
-                    f"run {i+1}/{args.runs} — {r.latency_ms:.0f}ms{err_str}"
+                    f"run {i + 1}/{args.runs} — {r.latency_ms:.0f}ms{err_str}"
                 )
                 if i < args.runs - 1:
                     await asyncio.sleep(1.5)
 
         # Feed summary (последний run каждого сценария)
         for label in ["A: Planner", "B: VM.run"]:
-            subset = [r for r in all_results
-                      if r.model == model and r.scenario == label]
+            subset = [r for r in all_results if r.model == model and r.scenario == label]
             if subset:
                 ok = [r for r in subset if r.success]
                 avg_ms = sum(r.latency_ms for r in ok) / len(ok) if ok else 0
@@ -262,9 +260,12 @@ async def run_suite_real(args: argparse.Namespace) -> None:
                     else f"[{_YELLOW}]{len(ok)}/{len(subset)} OK[/]"
                 )
                 summary.add(
-                    "BM8", f"{short} / {label}",
-                    f"{rps:.2f} RPS", f"{avg_ms:.0f} ms",
-                    status_str, "REAL",
+                    "BM8",
+                    f"{short} / {label}",
+                    f"{rps:.2f} RPS",
+                    f"{avg_ms:.0f} ms",
+                    status_str,
+                    "REAL",
                 )
 
     elapsed = time.perf_counter() - t0
@@ -278,13 +279,12 @@ async def run_suite_real(args: argparse.Namespace) -> None:
 
 async def run_suite_stress(args: argparse.Namespace) -> None:
     console.print(Rule("[bold cyan]Suite: Stress  BM9–BM11[/]"))
-    console.print(
-        "  [dim]Rejection rate, fault injection, determinism.[/]\n"
-    )
+    console.print("  [dim]Rejection rate, fault injection, determinism.[/]\n")
 
     try:
         import importlib.util
         import pathlib
+
         p = pathlib.Path(_bench_path("benchmark_stress.py"))
         if not p.exists():
             raise FileNotFoundError(f"{p} not found — copy benchmark_stress.py to benchmarks/")
@@ -310,15 +310,23 @@ async def run_suite_stress(args: argparse.Namespace) -> None:
     )
     elapsed = time.perf_counter() - t0
 
-    summary.add("BM9", "rejection rate (20 proposals)",
-                "—", "—", "[dim]see table[/]",
-                "MOCK" if args.mock else "AUTO")
-    summary.add("BM10", "fault injection 0%/20%/50%",
-                "—", "—", "[dim]see table[/]",
-                "MOCK" if args.mock else "AUTO")
-    summary.add("BM11", "determinism × 10 runs",
-                "—", "—", f"[{_GREEN}]✓ det.[/]",
-                "MOCK")
+    summary.add(
+        "BM9",
+        "rejection rate (20 proposals)",
+        "—",
+        "—",
+        "[dim]see table[/]",
+        "MOCK" if args.mock else "AUTO",
+    )
+    summary.add(
+        "BM10",
+        "fault injection 0%/20%/50%",
+        "—",
+        "—",
+        "[dim]see table[/]",
+        "MOCK" if args.mock else "AUTO",
+    )
+    summary.add("BM11", "determinism × 10 runs", "—", "—", f"[{_GREEN}]✓ det.[/]", "MOCK")
 
     console.print(f"  [dim]Stress suite done in {elapsed:.1f}s[/]\n")
 
@@ -331,6 +339,7 @@ async def run_suite_stress(args: argparse.Namespace) -> None:
 def _bench_path(filename: str) -> str:
     """Resolve benchmark file path relative to this script."""
     import pathlib
+
     here = pathlib.Path(__file__).parent
     return str(here / filename)
 
@@ -378,10 +387,7 @@ Examples:
     )
     args = parser.parse_args()
 
-    suites = (
-        [args.only] if args.only
-        else ["mock", "real", "stress"]
-    )
+    suites = [args.only] if args.only else ["mock", "real", "stress"]
     _print_header(suites, mock_forced=args.mock)
 
     t_total = time.perf_counter()
@@ -415,4 +421,3 @@ Examples:
 
 if __name__ == "__main__":
     asyncio.run(main())
-      

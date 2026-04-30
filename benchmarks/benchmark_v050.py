@@ -81,31 +81,32 @@ OPENROUTER_HOST = "openrouter.ai"
 OPENROUTER_PORT = 443
 
 # Fixed Program для сценария B — детерминированный, 2 LLM-шага
-_BENCH_PROGRAM = Program.from_dict({
-    "name": "bm8_bench",
-    "description": "BM8 fixed program: classify then summarize",
-    "steps": [
-        {
-            "id": "classify",
-            "type": "llm",
-            "prompt": (
-                "Classify this text in one word: positive, negative, or neutral.\n"
-                "Text: 'The product works as expected.'\n"
-                "Reply with one word only."
-            ),
-            "output_key": "sentiment",
-        },
-        {
-            "id": "summarize",
-            "type": "llm",
-            "prompt": (
-                "Write one sentence summary based on sentiment: $sentiment.\n"
-                "Be concise."
-            ),
-            "output_key": "result",
-        },
-    ],
-})
+_BENCH_PROGRAM = Program.from_dict(
+    {
+        "name": "bm8_bench",
+        "description": "BM8 fixed program: classify then summarize",
+        "steps": [
+            {
+                "id": "classify",
+                "type": "llm",
+                "prompt": (
+                    "Classify this text in one word: positive, negative, or neutral.\n"
+                    "Text: 'The product works as expected.'\n"
+                    "Reply with one word only."
+                ),
+                "output_key": "sentiment",
+            },
+            {
+                "id": "summarize",
+                "type": "llm",
+                "prompt": (
+                    "Write one sentence summary based on sentiment: $sentiment.\nBe concise."
+                ),
+                "output_key": "result",
+            },
+        ],
+    }
+)
 
 # Intent для сценария A (Planner)
 _BENCH_INTENT = (
@@ -121,7 +122,7 @@ _BENCH_INTENT = (
 @dataclass
 class CallResult:
     model: str
-    scenario: str          # "A: Planner" | "B: VM.run"
+    scenario: str  # "A: Planner" | "B: VM.run"
     success: bool
     latency_ms: float
     prompt_tokens: int = 0
@@ -130,7 +131,7 @@ class CallResult:
     cost_usd: float | None = None
     error: str = ""
     planner_attempts: int = 0  # для сценария A
-    steps_executed: int = 0    # для сценария B
+    steps_executed: int = 0  # для сценария B
 
 
 @dataclass
@@ -161,6 +162,7 @@ async def _http_ping(host: str, timeout: float = 10.0) -> float | None:
     """HTTP HEAD latency to https://{host}/ in ms."""
     try:
         import httpx  # optional; falls back gracefully
+
         async with httpx.AsyncClient(timeout=timeout) as client:
             t0 = time.perf_counter()
             await client.head(f"https://{host}/")
@@ -170,9 +172,7 @@ async def _http_ping(host: str, timeout: float = 10.0) -> float | None:
 
 
 async def measure_ping(host: str, port: int = 443) -> PingResult:
-    tcp_ms = await asyncio.get_event_loop().run_in_executor(
-        None, _tcp_ping, host, port
-    )
+    tcp_ms = await asyncio.get_event_loop().run_in_executor(None, _tcp_ping, host, port)
     http_ms = await _http_ping(host)
     return PingResult(host=host, tcp_ms=tcp_ms, http_ms=http_ms)
 
@@ -239,12 +239,8 @@ async def run_scenario_b(
         cost = trace.total_cost_usd()
 
         # Разбиваем на prompt/completion из шагов
-        prompt_t = sum(
-            s.usage.prompt_tokens for s in trace.steps if s.usage
-        )
-        completion_t = sum(
-            s.usage.completion_tokens for s in trace.steps if s.usage
-        )
+        prompt_t = sum(s.usage.prompt_tokens for s in trace.steps if s.usage)
+        completion_t = sum(s.usage.completion_tokens for s in trace.steps if s.usage)
 
         return CallResult(
             model=model,
@@ -307,9 +303,7 @@ def _aggregate(results: list[CallResult]) -> AggResult:
         latency_min_ms=min(latencies) if latencies else 0,
         latency_max_ms=max(latencies) if latencies else 0,
         latency_p50_ms=p50,
-        total_tokens_avg=(
-            sum(r.total_tokens for r in ok) / len(ok) if ok else 0
-        ),
+        total_tokens_avg=(sum(r.total_tokens for r in ok) / len(ok) if ok else 0),
         cost_usd_total=cost_total,
         errors=[r.error for r in results if not r.success],
     )
@@ -360,9 +354,7 @@ def _print_ping(ping: PingResult) -> None:
     color_tcp = _latency_color(ping.tcp_ms or 9999)
     color_http = _latency_color(ping.http_ms or 9999)
     console.print(
-        f"  [dim]Ping → {ping.host}[/]  "
-        f"TCP [{color_tcp}]{tcp}[/]  "
-        f"HTTP [{color_http}]{http}[/]\n"
+        f"  [dim]Ping → {ping.host}[/]  TCP [{color_tcp}]{tcp}[/]  HTTP [{color_http}]{http}[/]\n"
     )
 
 
@@ -386,10 +378,7 @@ def _build_results_table(agg_list: list[AggResult]) -> Table:
 
     for agg in agg_list:
         short = MODEL_SHORT.get(agg.model, agg.model.split("/")[-1])
-        tokens_str = (
-            f"{agg.total_tokens_avg:.0f}"
-            if agg.total_tokens_avg > 0 else "[dim]—[/]"
-        )
+        tokens_str = f"{agg.total_tokens_avg:.0f}" if agg.total_tokens_avg > 0 else "[dim]—[/]"
         t.add_row(
             short,
             agg.scenario,
@@ -501,8 +490,7 @@ async def main(runs: int, timeout: float) -> None:
 
     if ping.tcp_ms is None:
         console.print(
-            f"  [yellow]⚠ TCP ping to {OPENROUTER_HOST} failed — "
-            f"network issues possible[/]\n"
+            f"  [yellow]⚠ TCP ping to {OPENROUTER_HOST} failed — network issues possible[/]\n"
         )
 
     # Run scenarios
@@ -554,10 +542,7 @@ async def main(runs: int, timeout: float) -> None:
             ("A: Planner", "A: Planner"),
             ("B: VM.run", "B: VM.run"),
         ]:
-            subset = [
-                r for r in all_results
-                if r.model == model and r.scenario == scenario_label
-            ]
+            subset = [r for r in all_results if r.model == model and r.scenario == scenario_label]
             if subset:
                 agg_list.append(_aggregate(subset))
 
@@ -611,9 +596,7 @@ async def main(runs: int, timeout: float) -> None:
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(
-        description="llm-nano-vm v0.5.0 real LLM benchmark (BM8)"
-    )
+    parser = argparse.ArgumentParser(description="llm-nano-vm v0.5.0 real LLM benchmark (BM8)")
     parser.add_argument(
         "--runs",
         type=int,

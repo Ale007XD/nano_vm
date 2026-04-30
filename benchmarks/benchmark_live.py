@@ -126,9 +126,7 @@ async def run_live_benchmark():
     # ---------------------------------------------------------
     # Сценарий 2: Конкурентный вызов (5 шагов параллельно)
     # ---------------------------------------------------------
-    console.print(
-        "[bold yellow]2. Конкурентное выполнение (5 sub-steps in parallel)...[/]"
-    )
+    console.print("[bold yellow]2. Конкурентное выполнение (5 sub-steps in parallel)...[/]")
     N_PARALLEL = 5
     prog_parallel = Program(
         name="Live_Parallel",
@@ -168,9 +166,7 @@ async def run_live_benchmark():
     t.add_column("Стоимость ($)", justify="right", style="bright_green")
 
     def _add_trace_row(label, t_time, trace):
-        status_val = (
-            trace.status.value if hasattr(trace.status, "value") else str(trace.status)
-        )
+        status_val = trace.status.value if hasattr(trace.status, "value") else str(trace.status)
         status_color = (
             "[bright_green]SUCCESS[/]"
             if str(status_val).upper() == "SUCCESS"
@@ -198,9 +194,7 @@ async def run_live_benchmark():
     if getattr(trace_parallel, "steps", None):
         console.print("\n[dim]Детализация параллельного блока (Trace Steps):[/]")
         for step in trace_parallel.steps:
-            status_val = (
-                step.status.value if hasattr(step.status, "value") else str(step.status)
-            )
+            status_val = step.status.value if hasattr(step.status, "value") else str(step.status)
             color = (
                 "bright_green"
                 if str(status_val).upper() == "SUCCESS"
@@ -210,9 +204,7 @@ async def run_live_benchmark():
             )
             status_fmt = f"[{color}]{status_val}[/]"
 
-            output_preview = (
-                str(getattr(step, "output", "None")).strip().replace("\n", " ")[:40]
-            )
+            output_preview = str(getattr(step, "output", "None")).strip().replace("\n", " ")[:40]
             dur = getattr(step, "duration_ms", 0)
             prefix = "►" if step.step_id == "par_fetch" else "  ├─"
 
@@ -224,4 +216,3 @@ async def run_live_benchmark():
 
 if __name__ == "__main__":
     asyncio.run(run_live_benchmark())
-    
