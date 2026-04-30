@@ -67,12 +67,12 @@ console = Console()
 
 MODELS = [
     "openrouter/meta-llama/llama-3.3-70b-instruct:free",
-    "openrouter/mistralai/mistral-7b-instruct:free",
+    "openrouter/google/gemma-3-27b-it:free",
 ]
 
 MODEL_SHORT = {
     "openrouter/meta-llama/llama-3.3-70b-instruct:free": "llama-3.3-70b",
-    "openrouter/mistralai/mistral-7b-instruct:free": "mistral-7b",
+    "openrouter/google/gemma-3-27b-it:free": "gemma-3-27b",
 }
 
 OPENROUTER_HOST = "openrouter.ai"
