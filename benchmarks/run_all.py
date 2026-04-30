@@ -235,6 +235,13 @@ async def run_suite_real(args: argparse.Namespace) -> None:
             for i in range(args.runs):
                 r = await scenario_fn(model, args.timeout)
                 all_results.append(r)
+                # Print per-call result immediately so errors are visible
+                icon = f"[{_GREEN}]✓[/]" if r.success else f"[{_RED}]✗[/]"
+                err_str = f" [{_YELLOW}]{r.error}[/]" if not r.success and r.error else ""
+                console.print(
+                    f"  {icon} {short} / {label} "
+                    f"run {i+1}/{args.runs} — {r.latency_ms:.0f}ms{err_str}"
+                )
                 if i < args.runs - 1:
                     await asyncio.sleep(1.5)
 
