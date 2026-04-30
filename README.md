@@ -356,14 +356,19 @@ Each sub-step has its own `status`, `duration_ms`, and `output`. If `on_error: s
 ```python
 from nano_vm import Planner
 
-planner = Planner(llm=adapter)
-program = await planner.generate("Fetch latest AI news, summarize, classify by topic")
+planner = Planner(llm=adapter, max_retries=2, temperature=0.0)
+program = await planner.generate(
+    "Fetch latest AI news, summarize, classify by topic",
+    available_tools=["fetch_rss", "summarize", "classify"],  # optional hint
+    context_keys=["user_id"],                                 # optional hint
+)
 trace = await vm.run(program)
 ```
 
 - exactly **1** LLM call
-- outputs a validated Program object
+- outputs a validated `Program` object
 - non-deterministic input → deterministic execution
+- signature stable since v0.5.0; all parameters keyword-optional
 
 ---
 
@@ -403,12 +408,15 @@ Benchmarked on Linux, 2-core VPS, Python 3.12.3. Mock adapter (no I/O).
 | BM7: max_tokens | no budget (baseline) | 458 RPS | 2.184 ms | — |
 | BM7: max_tokens | budget active | 420 RPS | 2.379 ms | **+8.9%** |
 | Parallel steps (20) | OpenRouter (network) | 11.38 steps/sec | 1.7574 s | — |
-| Test suite | — | — | — | 124 tests passing |
+| BM11: Planner | determinism check | — | — | ✅ unique fingerprints=1 |
+| BM8: multi-model | OpenRouter free tier | pending | pending | rate limit — off-peak run |
 
-> **Note:** BM5 ±9.5% is within measurement noise — `max_steps` is a single int comparison, overhead is negligible.
-> BM7 +8.9% is real: `total_tokens()` iterates all steps before each new step (O(N²) at depth).
-> Acceptable vs LLM API latency (typically 200–2000 ms), but disable `max_tokens` in hot loops if needed.
-> Parallel steps: wall-clock = **slowest single sub-step**, not the sum.
+> **Note:** BM5 ±9.5% is within measurement noise — `max_steps` is a single int comparison, overhead is negligible.  
+> BM7 +8.9% is real: `total_tokens()` iterates all steps before each new step (O(N²) at depth).  
+> Acceptable vs LLM API latency (typically 200–2000 ms), but disable `max_tokens` in hot loops if needed.  
+> Parallel steps: wall-clock = **slowest single sub-step**, not the sum.  
+> BM11: Planner determinism confirmed — `unique fingerprints=1` across repeated runs with Mock adapter.  
+> BM8: real multi-model latency pending off-peak OpenRouter run (free-tier rate limit during daytime).  
 > No regression vs v0.3.0 — `max_concurrency` / `retry` adds zero overhead when not triggered.
 
 ---
@@ -448,13 +456,26 @@ Test:   1000 warmup + measured runs, 10-step programs, Mock adapter
 > before each new step. On 10-step programs with Mock adapter this shows as ~0.2 ms/step.
 > Irrelevant vs real LLM latency (200–2000 ms), but worth noting for tight loop usage.
 
+### v0.5.0 — Planner determinism (BM11)
+
+```
+System: Linux 6.8.0-110-generic  ·  x86_64 (2 cores)  ·  Python 3.12.3
+Test:   BM11 — Planner.generate() repeated runs, Mock adapter
+
+  BM11  Planner determinism   ✓ YES   unique fingerprints=1
+```
+
+BM8 (real multi-model calls via OpenRouter free tier) pending off-peak run due to rate limiting (429).
+Numbers will be added in a patch release.
+
 Reproduce locally:
 
 ```bash
 pip install llm-nano-vm[litellm]
-python benchmarks/stress_test.py       # sequential baseline
-python benchmarks/benchmark_v030.py   # v0.3.0 suite: retry overhead, concurrency scaling
-python benchmarks/benchmark_v040.py   # v0.4.0 suite: budget/guard overhead (BM5–BM7)
+python benchmarks/stress_test.py           # sequential baseline
+python benchmarks/benchmark_v030.py       # v0.3.0 suite: retry overhead, concurrency scaling
+python benchmarks/benchmark_v040.py       # v0.4.0 suite: budget/guard overhead (BM5–BM7)
+python benchmarks/run_all.py              # v0.5.0 suite: BM1–BM11 (BM8 requires OPENROUTER_API_KEY)
 ```
 
 ---
@@ -507,6 +528,9 @@ python benchmarks/benchmark_v040.py   # v0.4.0 suite: budget/guard overhead (BM5
 - [x] `max_stalled_steps` — STALLED on N consecutive no-op state fingerprints (v0.4.0)
 - [x] `max_tokens` budget — BUDGET_EXCEEDED when token count exceeds limit (v0.4.0)
 - [x] `state_snapshots` — sha256 fingerprint per step in Trace (v0.4.0)
+- [x] `Planner` — LLM intent → validated Program in 1 call; determinism confirmed (v0.5.0)
+- [x] Benchmark suite BM1–BM11 (`benchmarks/run_all.py`) (v0.5.0)
+- [ ] BM8 real-latency numbers — pending off-peak OpenRouter run
 - [ ] MCP server — `run_program`, `get_trace`, `list_programs` (nano-vm-mcp)
 - [ ] REST API — pay-per-run, API keys (nano-vm-server)
 
