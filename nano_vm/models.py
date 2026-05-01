@@ -11,7 +11,7 @@ from datetime import datetime, timezone
 from enum import Enum
 from typing import Any
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, PrivateAttr, model_validator
 
 # ---------------------------------------------------------------------------
 # Enums
@@ -229,6 +229,8 @@ class Trace(BaseModel):
     finished_at: datetime | None = None
     duration_ms: float | None = None
     state_snapshots: list[tuple[int, str]] = Field(default_factory=list)  # (step_index, sha256_hex)
+    # Internal O(1) token counter — not part of public schema, not serialised
+    _token_accumulator: int = PrivateAttr(default=0)
 
     def finish(
         self,
@@ -249,7 +251,11 @@ class Trace(BaseModel):
         )
 
     def add_step(self, result: StepResult) -> Trace:
-        return self.model_copy(update={"steps": [*self.steps, result]})
+        new_trace = self.model_copy(update={"steps": [*self.steps, result]})
+        new_trace._token_accumulator = (
+            self._token_accumulator + (result.usage.total_tokens if result.usage else 0)
+        )
+        return new_trace
 
     def add_snapshot(self, step_index: int, fp_hex: str) -> Trace:
         """Record a state fingerprint snapshot for the given step_index."""
@@ -263,7 +269,7 @@ class Trace(BaseModel):
         return None
 
     def total_tokens(self) -> int:
-        return sum(s.usage.total_tokens for s in self.steps if s.usage)
+        return self._token_accumulator
 
     def total_cost_usd(self) -> float | None:
         costs = [s.usage.cost_usd for s in self.steps if s.usage and s.usage.cost_usd is not None]
