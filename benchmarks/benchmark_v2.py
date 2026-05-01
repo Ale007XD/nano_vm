@@ -1,9 +1,9 @@
-import os
-import time
-import random
 import copy
+import os
+import random
+import time
 from dataclasses import dataclass
-from typing import List, Dict, Any
+from typing import Any
 
 # =========================
 # CONFIG (inputs per run)
@@ -23,8 +23,8 @@ ELIGIBLE_PROB = 0.8
 @dataclass
 class StepResult:
     step: str
-    input: Dict[str, Any]
-    output: Dict[str, Any]
+    input: dict[str, Any]
+    output: dict[str, Any]
     state_before: str
     state_after: str
 
@@ -47,6 +47,7 @@ def llm_decide(context):
     if api_key:
         try:
             from openai import OpenAI
+
             client = OpenAI(api_key=api_key)
 
             start = time.time()
@@ -112,11 +113,7 @@ def run_raw():
         tokens += tk
         retries += 1
 
-    return {
-        "refunds": api.refund_count,
-        "tokens": tokens,
-        "time": time.time() - t0
-    }
+    return {"refunds": api.refund_count, "tokens": tokens, "time": time.time() - t0}
 
 
 # =========================
@@ -125,7 +122,7 @@ def run_raw():
 class Runtime:
     def __init__(self):
         self.state = "INIT"
-        self.trace: List[StepResult] = []
+        self.trace: list[StepResult] = []
         self.api = PaymentAPI()
 
     def step(self, name, fn, inp):
@@ -133,13 +130,15 @@ class Runtime:
         out = fn(inp)
         self.state = out.get("next_state", self.state)
 
-        self.trace.append(StepResult(
-            step=name,
-            input=copy.deepcopy(inp),
-            output=copy.deepcopy(out),
-            state_before=before,
-            state_after=self.state
-        ))
+        self.trace.append(
+            StepResult(
+                step=name,
+                input=copy.deepcopy(inp),
+                output=copy.deepcopy(out),
+                state_before=before,
+                state_after=self.state,
+            )
+        )
 
         return out
 
@@ -178,11 +177,7 @@ def run_fsm():
         tokens += tk
         retries += 1
 
-    return {
-        "refunds": rt.api.refund_count,
-        "tokens": tokens,
-        "time": time.time() - t0
-    }
+    return {"refunds": rt.api.refund_count, "tokens": tokens, "time": time.time() - t0}
 
 
 # =========================
@@ -222,7 +217,7 @@ def run_benchmark():
         "raw_tokens": raw_tokens,
         "fsm_tokens": fsm_tokens,
         "raw_time": raw_time,
-        "fsm_time": fsm_time
+        "fsm_time": fsm_time,
     }
 
 
@@ -250,9 +245,9 @@ def print_table(res):
     rows = [
         ["Double refunds", res["raw_errors"], res["fsm_errors"]],
         ["Total tokens", res["raw_tokens"], res["fsm_tokens"]],
-        ["Avg tokens/run", res["raw_tokens"]//N_RUNS, res["fsm_tokens"]//N_RUNS],
+        ["Avg tokens/run", res["raw_tokens"] // N_RUNS, res["fsm_tokens"] // N_RUNS],
         ["Total time (s)", round(res["raw_time"], 3), round(res["fsm_time"], 3)],
-        ["Avg time/run", round(res["raw_time"]/N_RUNS, 5), round(res["fsm_time"]/N_RUNS, 5)],
+        ["Avg time/run", round(res["raw_time"] / N_RUNS, 5), round(res["fsm_time"] / N_RUNS, 5)],
     ]
 
     print(f"{headers[0]:<20}{headers[1]:<15}{headers[2]:<15}")
