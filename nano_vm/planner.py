@@ -304,7 +304,7 @@ def _extract_json(raw: str) -> dict[str, Any]:
         text = text[start : end + 1]
 
     try:
-        result = json.loads(text)
+        result = json.loads(text, strict=False)
     except json.JSONDecodeError as exc:
         raise ValueError(f"Invalid JSON: {exc}") from exc
 
