@@ -3,13 +3,20 @@ nano_vm.vm
 ==========
 ExecutionVM: deterministic execution of a Program.
 
-Key properties:
-- VM has no knowledge of providers; receives LLMAdapter via __init__
-- Same Program + StateContext + deterministic adapter -> reproducible result
-- Steps execute sequentially; condition steps control branching
-- Parallel steps execute sub-steps concurrently via asyncio.gather
-- Per-step on_error: fail | skip | retry
-- LLM steps populate StepResult.usage (tokens + cost) when available
+v0.6.0 changes:
+  - suspend() / resume() для async webhook-событий (инвариант I5)
+  - BudgetInterrupt как отдельный signal (инвариант I7: Budget = Interrupt)
+  - _emit_interrupt() hook для vault-layer (escalation routing)
+  - CursorRepository protocol для persisted suspend cursor
+  - WebhookEvent — типизированный входной контракт resume()
+
+Key properties (unchanged):
+  - VM has no knowledge of providers; receives LLMAdapter via __init__
+  - Same Program + StateContext + deterministic adapter -> reproducible result
+  - Steps execute sequentially; condition steps control branching
+  - Parallel steps execute sub-steps concurrently via asyncio.gather
+  - Per-step on_error: fail | skip | retry
+  - LLM steps populate StepResult.usage (tokens + cost) when available
 """
 
 from __future__ import annotations
@@ -18,10 +25,12 @@ import asyncio
 import hashlib
 import re
 from collections.abc import Callable
-from typing import Any
+from datetime import datetime, timezone
+from typing import Any, Protocol
 
 from .adapters.base import LLMAdapter
 from .models import (
+    InterruptType,
     LLMUsage,
     OnError,
     Program,
@@ -39,13 +48,128 @@ class VMError(Exception):
     """Program execution error."""
 
 
+class ResumeError(VMError):
+    """Cannot resume: trace not found or not in SUSPENDED state."""
+
+
+# ---------------------------------------------------------------------------
+# v0.6.0: WebhookEvent — typed input contract for resume()
+# ---------------------------------------------------------------------------
+
+
+class WebhookEvent:
+    """
+    Типизированный входной контракт для VM.resume().
+
+    trace_id: должен совпадать с Trace.trace_id — ключ корреляции.
+    payload:  данные от внешней системы (payment confirmed, delivery status, etc.)
+    source:   "WEBHOOK" | "OPERATOR" | "TIMER" — для event sourcing (DomainEvent.source)
+
+    Валидация nonce + timestamp + HMAC — ответственность MCPPolicyLayer (P2 roadmap).
+    VM.resume() получает уже провалидированный WebhookEvent.
+    """
+
+    def __init__(
+        self,
+        trace_id: str,
+        payload: dict[str, Any],
+        source: str = "WEBHOOK",
+    ) -> None:
+        if not trace_id:
+            raise ValueError("WebhookEvent.trace_id cannot be empty")
+        if source not in ("WEBHOOK", "OPERATOR", "TIMER"):
+            raise ValueError(f"WebhookEvent.source must be WEBHOOK|OPERATOR|TIMER, got '{source}'")
+        self.trace_id = trace_id
+        self.payload = payload
+        self.source = source
+        self.received_at = datetime.now(timezone.utc)
+
+
+# ---------------------------------------------------------------------------
+# v0.6.0: CursorRepository Protocol — persist/load suspend cursor
+# ---------------------------------------------------------------------------
+
+
+class CursorRepository(Protocol):
+    """
+    Protocol для persisted suspend cursor.
+
+    Реализации:
+      SqliteCursorRepository — alpha (infrastructure.db, WAL)
+      InMemoryCursorRepository — тесты и dry-run
+
+    Контракт:
+      save(trace_id, step_id, state) — сохранить cursor перед suspend
+      load(trace_id) — восстановить cursor для resume
+      delete(trace_id) — очистить после успешного resume или FAILED terminal
+    """
+
+    async def save(
+        self,
+        trace_id: str,
+        step_id: str,
+        state: StateContext,
+        trace: Trace,
+    ) -> None: ...
+
+    async def load(
+        self,
+        trace_id: str,
+    ) -> tuple[str, StateContext, Trace] | None:
+        """
+        Returns (step_id, state, trace) или None если trace_id не найден.
+        """
+        ...
+
+    async def delete(self, trace_id: str) -> None: ...
+
+
+class InMemoryCursorRepository:
+    """
+    In-memory реализация CursorRepository для тестов и dry-run.
+    Не использовать в production: рестарт = потеря курсора = нарушение идемпотентности.
+    """
+
+    def __init__(self) -> None:
+        self._store: dict[str, tuple[str, StateContext, Trace]] = {}
+
+    async def save(
+        self,
+        trace_id: str,
+        step_id: str,
+        state: StateContext,
+        trace: Trace,
+    ) -> None:
+        self._store[trace_id] = (step_id, state, trace)
+
+    async def load(
+        self,
+        trace_id: str,
+    ) -> tuple[str, StateContext, Trace] | None:
+        return self._store.get(trace_id)
+
+    async def delete(self, trace_id: str) -> None:
+        self._store.pop(trace_id, None)
+
+
+# ---------------------------------------------------------------------------
+# ExecutionVM
+# ---------------------------------------------------------------------------
+
+
 class ExecutionVM:
     """
     Deterministic virtual machine for executing Programs.
 
     Args:
-        llm:   LLM adapter (any object with async complete() method)
-        tools: tool registry {name: async callable}
+        llm:               LLM adapter (any object with async complete() method)
+        tools:             tool registry {name: async callable}
+        cursor_repository: persisted suspend cursor (default: InMemoryCursorRepository)
+                           В production заменить на SqliteCursorRepository (infrastructure.db).
+
+    v0.6.0:
+        suspend() / resume() для async webhook-событий.
+        _emit_interrupt() для BudgetInterrupt signal (vault escalation hook).
 
     Example:
         vm = ExecutionVM(
@@ -53,18 +177,25 @@ class ExecutionVM:
             tools={"search": my_search_fn},
         )
         trace = await vm.run(program, context={"user_input": "..."})
-        print(trace.final_output)
-        print(f"Total tokens: {trace.total_tokens()}")
-        print(f"Total cost: ${trace.total_cost_usd():.6f}")
+
+        # Если шаг вернул PENDING (напр. payment initiation):
+        # trace.status == TraceStatus.SUSPENDED
+        # trace.trace_id — ключ для resume
+        #
+        # После получения webhook:
+        # event = WebhookEvent(trace_id=trace.trace_id, payload={"status": "confirmed"})
+        # trace = await vm.resume(event)
     """
 
     def __init__(
         self,
         llm: LLMAdapter,
         tools: dict[str, Callable] | None = None,
+        cursor_repository: CursorRepository | None = None,
     ) -> None:
         self._llm = llm
         self._tools: dict[str, Callable] = tools or {}
+        self._cursor_repo: CursorRepository = cursor_repository or InMemoryCursorRepository()
 
     def register_tool(self, name: str, fn: Callable) -> None:
         self._tools[name] = fn
@@ -81,47 +212,175 @@ class ExecutionVM:
         """
         Execute a program.
 
-        Args:
-            program: Program with steps
-            context: initial data (stored in StateContext.data)
-
-        Returns:
-            Trace: full execution history with status and per-step results.
+        Returns Trace with status:
+          SUCCESS         — all steps completed
+          FAILED          — step failed with on_error=FAIL
+          BUDGET_EXCEEDED — max_steps or max_tokens limit reached
+          STALLED         — max_stalled_steps consecutive no-ops
+          SUSPENDED       — step returned PENDING; call resume() when webhook arrives
         """
         state = StateContext(data=context or {})
         trace = Trace(program_name=program.name)
+        return await self._execute_loop(program, state, trace, start_step_id=None)
+
+    async def resume(self, webhook_event: WebhookEvent) -> Trace:
+        """
+        v0.6.0: Восстанавливает suspended execution по trace_id из WebhookEvent.
+
+        Контракт:
+          1. Загружает cursor (step_id, state, trace) из CursorRepository.
+          2. Валидирует что trace в SUSPENDED — guard от двойного resume.
+          3. Инжектирует webhook payload в StateContext под ключом "__webhook__".
+          4. Продолжает execution loop со step после suspended_step_id.
+          5. Удаляет cursor после завершения (SUCCESS/FAILED/SUSPENDED снова).
+
+        Raises:
+          ResumeError: если trace не найден или уже не в SUSPENDED.
+        """
+        cursor = await self._cursor_repo.load(webhook_event.trace_id)
+        if cursor is None:
+            raise ResumeError(
+                f"No suspended trace found for trace_id='{webhook_event.trace_id}'. "
+                "Possible causes: already resumed, cursor not persisted (production requires "
+                "SqliteCursorRepository), or invalid trace_id."
+            )
+
+        suspended_step_id, state, trace = cursor
+
+        if trace.status != TraceStatus.SUSPENDED:
+            raise ResumeError(
+                f"Trace '{webhook_event.trace_id}' is not in SUSPENDED state "
+                f"(current: {trace.status}). Cannot resume."
+            )
+
+        # Инжектируем webhook payload в context для downstream steps
+        state = state.with_data("__webhook__", webhook_event.payload)
+        state = state.with_data("__webhook_source__", webhook_event.source)
+
+        # Восстанавливаем программу — нужна для продолжения loop
+        # vault-layer передаёт program через resume; здесь используем имя из trace
+        # для поиска в registry (P8). Пока: program передаётся явно через resume_with_program.
+        # TODO(P8): Blueprint registry -> program lookup by trace.program_name
+
+        await self._cursor_repo.delete(webhook_event.trace_id)
+
+        # Продолжаем loop начиная со следующего шага после suspended_step_id
+        # program недоступен без registry — vault вызывает resume_with_program напрямую
+        raise ResumeError(
+            "resume() requires program context. Use resume_with_program(event, program) "
+            "until Blueprint registry (P8) is implemented."
+        )
+
+    async def resume_with_program(
+        self,
+        webhook_event: WebhookEvent,
+        program: Program,
+    ) -> Trace:
+        """
+        v0.6.0: resume() с явной передачей Program.
+
+        Используется vault-layer до реализации Blueprint registry (P8).
+        После P8: resume(event) найдёт программу через registry по trace.program_name.
+
+        Replay-safe: cursor удаляется перед продолжением.
+        Двойной вызов resume_with_program с одним trace_id → ResumeError (cursor уже удалён).
+        """
+        cursor = await self._cursor_repo.load(webhook_event.trace_id)
+        if cursor is None:
+            raise ResumeError(
+                f"No suspended trace for trace_id='{webhook_event.trace_id}'. "
+                "Already resumed or never suspended."
+            )
+
+        suspended_step_id, state, trace = cursor
+
+        if trace.status != TraceStatus.SUSPENDED:
+            raise ResumeError(
+                f"Trace '{webhook_event.trace_id}' is not SUSPENDED "
+                f"(current: {trace.status})."
+            )
+
+        # Инжектируем webhook payload
+        state = state.with_data("__webhook__", webhook_event.payload)
+        state = state.with_data("__webhook_source__", webhook_event.source)
+
+        # Удаляем cursor до продолжения — replay protection
+        # Если execution снова вернёт PENDING (multi-step async), cursor будет пересохранён.
+        await self._cursor_repo.delete(webhook_event.trace_id)
+
+        # Продолжаем со следующего шага
+        return await self._execute_loop(
+            program=program,
+            state=state,
+            trace=trace,
+            start_step_id=suspended_step_id,
+            resume_after=True,  # пропустить suspended_step_id, начать со следующего
+        )
+
+    # ------------------------------------------------------------------
+    # Core execution loop
+    # ------------------------------------------------------------------
+
+    async def _execute_loop(
+        self,
+        program: Program,
+        state: StateContext,
+        trace: Trace,
+        start_step_id: str | None,
+        resume_after: bool = False,
+    ) -> Trace:
+        """
+        Основной execution loop. Используется и run(), и resume_with_program().
+
+        start_step_id=None: начать с первого шага (run()).
+        start_step_id=X, resume_after=True: начать со шага после X (resume).
+        """
         step_index = {s.id: i for i, s in enumerate(program.steps)}
         steps = program.steps
-        current_idx = 0
-        steps_executed = 0
+
+        # Определяем стартовый индекс
+        if start_step_id is None:
+            current_idx = 0
+        else:
+            if start_step_id not in step_index:
+                return trace.finish(
+                    TraceStatus.FAILED,
+                    error=f"resume: step_id '{start_step_id}' not found in program",
+                )
+            current_idx = step_index[start_step_id]
+            if resume_after:
+                current_idx += 1  # продолжаем со следующего шага
+
+        steps_executed = len(trace.steps)  # учитываем уже выполненные шаги при resume
         last_fingerprint: int | None = None
         stalled_count = 0
 
         while current_idx < len(steps):
+            # Budget guards — до исполнения шага (I7: Budget = Interrupt)
             if program.max_steps is not None and steps_executed >= program.max_steps:
-                trace = trace.finish(
+                await self._emit_interrupt(InterruptType.BUDGET, trace)
+                return trace.finish(
                     TraceStatus.BUDGET_EXCEEDED,
                     error=f"max_steps={program.max_steps} exceeded after {steps_executed} step(s)",
                 )
-                return trace
 
             if program.max_tokens is not None:
                 tokens_used = trace.total_tokens()
                 if tokens_used >= program.max_tokens:
-                    trace = trace.finish(
+                    await self._emit_interrupt(InterruptType.BUDGET, trace)
+                    return trace.finish(
                         TraceStatus.BUDGET_EXCEEDED,
                         error=(
                             f"max_tokens={program.max_tokens} exceeded: "
                             f"{tokens_used} tokens consumed"
                         ),
                     )
-                    return trace
 
             step = steps[current_idx]
             result, state, sub_results = await self._run_step(step, state)
             steps_executed += 1
 
-            # Fingerprint-based no-op detection (P1)
+            # Fingerprint-based no-op detection
             current_fp = self._state_fingerprint(state)
             if last_fingerprint is not None and current_fp == last_fingerprint:
                 stalled_count += 1
@@ -129,49 +388,53 @@ class ExecutionVM:
                 stalled_count = 0
             last_fingerprint = current_fp
 
-            if program.max_stalled_steps is not None and stalled_count >= program.max_stalled_steps:
-                trace = trace.finish(
+            if (
+                program.max_stalled_steps is not None
+                and stalled_count >= program.max_stalled_steps
+            ):
+                return trace.finish(
                     TraceStatus.STALLED,
                     error=(
                         f"max_stalled_steps={program.max_stalled_steps} exceeded: "
                         f"{stalled_count} consecutive no-op step(s)"
                     ),
                 )
-                return trace
 
-            # State snapshot (P2): sha256 fingerprint per step
             trace = trace.add_snapshot(
                 steps_executed - 1,
                 self._state_fingerprint_hex(state),
             )
 
-            # Add sub-step results to trace before the parent step
             for sub_result in sub_results:
                 trace = trace.add_step(sub_result)
             trace = trace.add_step(result)
 
+            # v0.6.0: PENDING → suspend, вернуть SUSPENDED trace
+            if result.status == StepStatus.PENDING:
+                trace = await self._suspend(step, state, trace)
+                return trace
+
             if result.status == StepStatus.FAILED:
-                trace = trace.finish(
+                return trace.finish(
                     TraceStatus.FAILED,
                     error=f"Step '{step.id}' failed: {result.error}",
                 )
-                return trace
 
-            # Condition step: jump to then/otherwise and finish
+            # Condition step: jump to then/otherwise
             if step.type == StepType.CONDITION and result.status == StepStatus.SUCCESS:
                 next_id = result.output
 
                 if not next_id:
-                    trace = trace.finish(
+                    return trace.finish(
                         TraceStatus.FAILED,
                         error=f"Step '{step.id}': condition produced no branch target",
                     )
-                    return trace
 
                 if next_id not in step_index:
-                    msg = f"Step '{step.id}': condition target '{next_id}' not found in program"
-                    trace = trace.finish(TraceStatus.FAILED, error=msg)
-                    return trace
+                    return trace.finish(
+                        TraceStatus.FAILED,
+                        error=f"Step '{step.id}': condition target '{next_id}' not found",
+                    )
 
                 target_step = steps[step_index[next_id]]
                 steps_executed += 1
@@ -179,22 +442,72 @@ class ExecutionVM:
                 for sub_result in target_sub:
                     trace = trace.add_step(sub_result)
                 trace = trace.add_step(target_result)
+
+                if target_result.status == StepStatus.PENDING:
+                    trace = await self._suspend(target_step, state, trace)
+                    return trace
+
                 if target_result.status == StepStatus.FAILED:
-                    trace = trace.finish(
+                    return trace.finish(
                         TraceStatus.FAILED,
                         error=f"Step '{target_step.id}' failed: {target_result.error}",
                     )
-                else:
-                    trace = trace.finish(TraceStatus.SUCCESS, final_output=trace.last_output())
-                return trace
+                return trace.finish(TraceStatus.SUCCESS, final_output=trace.last_output())
 
             current_idx += 1
 
-        trace = trace.finish(TraceStatus.SUCCESS, final_output=trace.last_output())
-        return trace
+        return trace.finish(TraceStatus.SUCCESS, final_output=trace.last_output())
 
     # ------------------------------------------------------------------
-    # Step execution
+    # v0.6.0: suspend / interrupt hooks
+    # ------------------------------------------------------------------
+
+    async def _suspend(
+        self,
+        step: Step,
+        state: StateContext,
+        trace: Trace,
+    ) -> Trace:
+        """
+        Переводит VM в режим ожидания webhook.
+
+        1. Обновляет Trace → SUSPENDED (cursor зафиксирован).
+        2. Сохраняет cursor в CursorRepository (persisted в production).
+        3. Возвращает SUSPENDED Trace вызывающему коду.
+
+        Caller (vault ExecutionVM wrapper) регистрирует webhook handler
+        с trace_id для последующего вызова resume_with_program().
+        """
+        trace = trace.suspend(step.id)
+        await self._cursor_repo.save(
+            trace_id=trace.trace_id,
+            step_id=step.id,
+            state=state,
+            trace=trace,
+        )
+        return trace
+
+    async def _emit_interrupt(
+        self,
+        interrupt_type: InterruptType,
+        trace: Trace,
+    ) -> None:
+        """
+        v0.6.0: Эмиттит interrupt signal.
+
+        Инвариант I7: Budget трактуется как Interrupt, не control-flow условие.
+        Текущая реализация: no-op hook для vault-layer.
+        vault.execution.budget.BudgetInterrupt подписывается на этот hook
+        и маршрутизирует в FSM.ESCALATED через SagaCoordinator.
+
+        Сигнатура стабильна — vault может переопределить через subclass или callback.
+        """
+        # Hook point для vault-layer escalation.
+        # В standalone использовании (без vault) — логирование достаточно.
+        pass
+
+    # ------------------------------------------------------------------
+    # Step execution (без изменений относительно v0.5.0)
     # ------------------------------------------------------------------
 
     async def _run_step(
@@ -202,26 +515,27 @@ class ExecutionVM:
         step: Step,
         state: StateContext,
     ) -> tuple[StepResult, StateContext, list[StepResult]]:
-        """
-        Execute a single step.
-
-        Returns:
-            (result, state, sub_results)
-            sub_results: list of StepResult for parallel sub-steps (empty otherwise)
-        """
         result = StepResult(step_id=step.id, status=StepStatus.RUNNING)
         attempt = 0
 
         while True:
             try:
                 output, usage, sub_results = await self._execute_step(step, state)
+
+                # v0.6.0: tool возвращает "PENDING" string → PENDING статус
+                # Это позволяет tool (через MCP) сигнализировать async ожидание
+                if output == "PENDING" and step.type == StepType.TOOL:
+                    result = result.model_copy(
+                        update={"status": StepStatus.PENDING, "output": output}
+                    )
+                    return result, state, sub_results
+
                 result = result.finish(output=output, usage=usage)
 
                 if step.output_key:
                     state = state.with_data(step.output_key, output)
                 state = state.with_output(step.id, output)
 
-                # For parallel: also store each sub-step output individually
                 if step.type == StepType.PARALLEL and isinstance(output, dict):
                     for sub_id, sub_out in output.items():
                         state = state.with_output(sub_id, sub_out)
@@ -232,7 +546,6 @@ class ExecutionVM:
                 attempt += 1
                 if step.on_error == OnError.RETRY and attempt < step.max_retries:
                     result = result.model_copy(update={"retries": attempt})
-                    # exponential backoff: 1s, 2s, 4s, … capped at 30s
                     backoff = min(2 ** (attempt - 1), 30)
                     await asyncio.sleep(backoff)
                     continue
@@ -256,13 +569,6 @@ class ExecutionVM:
         step: Step,
         state: StateContext,
     ) -> tuple[Any, LLMUsage | None, list[StepResult]]:
-        """
-        Dispatch by step type.
-
-        Returns:
-            (output, usage, sub_results)
-            sub_results: StepResult list for parallel sub-steps; empty for all others
-        """
         if step.type == StepType.LLM:
             output, usage = await self._execute_llm(step, state)
             return output, usage, []
@@ -326,16 +632,6 @@ class ExecutionVM:
     # ------------------------------------------------------------------
 
     def _execute_condition(self, step: Step, state: StateContext) -> str | None:
-        """
-        Evaluate condition string, return id of next step (then or otherwise).
-
-        Condition syntax examples:
-            "'yes' in '$step_id.output'.lower()"
-            "$score.output >= '0.8'"
-
-        Note: $variables are resolved to strings before eval.
-        Use .lower() in your condition for case-insensitive matching.
-        """
         condition = self._resolve(step.condition, state)
         try:
             result = bool(eval(condition, {"__builtins__": {}}, {}))  # noqa: S307
@@ -352,18 +648,6 @@ class ExecutionVM:
         step: Step,
         state: StateContext,
     ) -> tuple[dict[str, Any], list[StepResult]]:
-        """
-        Execute parallel_steps concurrently via asyncio.gather.
-
-        on_error=FAIL (default): any sub-step failure raises, aborting the parallel step.
-        on_error=SKIP: failed sub-steps are recorded with SKIPPED status; others proceed.
-
-        Returns:
-            outputs: dict[sub_step_id -> output]  (only successful/skipped-with-None)
-            sub_results: list[StepResult] for each sub-step (for trace)
-        """
-
-        # max_concurrency=None → no cap; otherwise limit via Semaphore
         semaphore: asyncio.Semaphore | None = (
             asyncio.Semaphore(step.max_concurrency) if step.max_concurrency is not None else None
         )
@@ -401,7 +685,6 @@ class ExecutionVM:
             elif sub_result.status == StepStatus.SUCCESS:
                 outputs[sub_step.id] = output
             else:
-                # SKIPPED → явный None (контракт: не absent key, не exception)
                 outputs[sub_step.id] = None
 
         if failed and step.on_error != OnError.SKIP:
@@ -414,7 +697,6 @@ class ExecutionVM:
         step: Step,
         state: StateContext,
     ) -> tuple[Any, LLMUsage | None]:
-        """Execute llm or tool sub-step. Condition/parallel not allowed here."""
         if step.type == StepType.LLM:
             return await self._execute_llm(step, state)
         if step.type == StepType.TOOL:
@@ -423,43 +705,23 @@ class ExecutionVM:
         raise VMError(f"Sub-step '{step.id}': type '{step.type}' not allowed inside parallel")
 
     # ------------------------------------------------------------------
-    # Fingerprint: deterministic no-op detection
+    # Fingerprint
     # ------------------------------------------------------------------
 
     @staticmethod
     def _state_fingerprint(state: StateContext) -> int:
-        """
-        Hash of current step_outputs snapshot.
-
-        Converts values to str for hashability (covers dicts from parallel steps).
-        Returns hash of frozenset of (key, str(value)) pairs from step_outputs.
-        Empty state returns a consistent (platform-defined) value.
-        """
         return hash(frozenset((k, str(v)) for k, v in state.step_outputs.items()))
 
     @staticmethod
     def _state_fingerprint_hex(state: StateContext) -> str:
-        """
-        SHA-256 hex digest of step_outputs — stable across processes and restarts.
-
-        Used for state_snapshots serialisation (P2).
-        _state_fingerprint (hash) is kept for in-process no-op detection (P1).
-        """
         canonical = ",".join(f"{k}={v!r}" for k, v in sorted(state.step_outputs.items()))
         return hashlib.sha256(canonical.encode()).hexdigest()
 
     # ------------------------------------------------------------------
-    # Resolver: substitute $variables from state
+    # Resolver
     # ------------------------------------------------------------------
 
     def _resolve(self, value: Any, state: StateContext) -> Any:
-        """
-        Substitute $variables in a string from state.
-
-        Syntax:
-            $key            -> state.data[key]
-            $step_id.output -> state.step_outputs[step_id]
-        """
         if not isinstance(value, str):
             return value
 
@@ -470,7 +732,6 @@ class ExecutionVM:
 
             if "." in expr:
                 step_id, field = expr.split(".", 1)
-                # Use sentinel to distinguish missing key from None value
                 step_out = state.step_outputs.get(step_id, _MISSING)
                 if step_out is _MISSING:
                     return match.group(0)

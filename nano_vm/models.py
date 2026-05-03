@@ -3,15 +3,26 @@ nano_vm.models
 ==============
 Pure Pydantic models. No IO, no LLM calls.
 Everything that enters and exits the VM.
+
+v0.6.0 additions (vault-layer primitives):
+  - TraceStatus.SUSPENDED  — VM suspended awaiting webhook resume()
+  - InterruptType           — typed interrupt signals (BUDGET, TIMEOUT)
+  - VaultStepError          — structured error with retryable + compensation_required
+  - VaultStepMetadata       — idempotency_key, trace_id, cached (OTel propagation)
+  - VaultStepResult         — vault-layer StepResult contract (wraps tool output)
+  - Trace.trace_id          — stable UUID, required for suspend/resume correlation
+  - Trace.suspended_at      — timestamp set by VM._suspend()
+  - Trace.suspended_step_id — step cursor for resume()
 """
 
 from __future__ import annotations
 
+import uuid
 from datetime import datetime, timezone
 from enum import Enum
 from typing import Any
 
-from pydantic import BaseModel, Field, PrivateAttr, model_validator
+from pydantic import BaseModel, Field, model_validator
 
 # ---------------------------------------------------------------------------
 # Enums
@@ -37,6 +48,87 @@ class OnError(str, Enum):
     FAIL = "fail"
     SKIP = "skip"
     RETRY = "retry"
+
+
+# ---------------------------------------------------------------------------
+# v0.6.0: Interrupt + vault error/metadata types
+# ---------------------------------------------------------------------------
+
+
+class InterruptType(str, Enum):
+    """
+    Typed interrupt signals emitted by the VM.
+    Budget = Interrupt, не control-flow условие (инвариант I7).
+    """
+    BUDGET = "BUDGET"
+    TIMEOUT = "TIMEOUT"
+
+
+class VaultStepError(BaseModel):
+    """
+    Structured error contract для vault-layer tool steps.
+    retryable: SagaCoordinator использует для решения о retry vs escalate.
+    compensation_required: SagaCoordinator использует для обхода в обратном порядке.
+    """
+    code: str               # machine-readable (e.g. "PAYMENT_DECLINED")
+    message: str            # human-readable
+    retryable: bool
+    compensation_required: bool
+
+
+class VaultStepMetadata(BaseModel):
+    """
+    Metadata, встраиваемые в каждый VaultStepResult.
+    trace_id: OTel propagation с первого коммита (инвариант I из decisions_log).
+    cached: True если результат из _tool_cache (persisted SQLite).
+    """
+    idempotency_key: str    # "{order_id}:{step_id}:{tool_name}"
+    execution_time_ms: int
+    tool_version: str
+    cached: bool
+    trace_id: str           # OTel trace propagation
+
+
+class VaultStepResult(BaseModel):
+    """
+    Vault-layer StepResult contract (Section 4.4 spec).
+    Используется MCPPolicyLayer и SagaCoordinator.
+    Не заменяет существующий StepResult — является его vault-надстройкой.
+
+    status: "SUCCESS" | "FAILED" | "PENDING"
+      - PENDING: шаг инициирован (напр. payment), ждёт webhook -> VM.suspend()
+      - SUCCESS: шаг завершён, data содержит результат
+      - FAILED:  шаг провалился, error содержит VaultStepError
+    """
+    status: str             # строка для MCP-совместимости; валидируется ниже
+    data: dict[str, Any] = Field(default_factory=dict)
+    error: VaultStepError | None = None
+    metadata: VaultStepMetadata
+
+    @model_validator(mode="after")
+    def _validate_status(self) -> VaultStepResult:
+        allowed = {"SUCCESS", "FAILED", "PENDING"}
+        if self.status not in allowed:
+            raise ValueError(
+                f"VaultStepResult.status must be one of {allowed}, got '{self.status}'"
+            )
+        return self
+
+    @property
+    def is_pending(self) -> bool:
+        return self.status == "PENDING"
+
+    @property
+    def is_failed(self) -> bool:
+        return self.status == "FAILED"
+
+    @property
+    def is_retryable(self) -> bool:
+        return self.is_failed and self.error is not None and self.error.retryable
+
+    @property
+    def requires_compensation(self) -> bool:
+        return self.is_failed and self.error is not None and self.error.compensation_required
 
 
 # ---------------------------------------------------------------------------
@@ -112,9 +204,9 @@ class Program(BaseModel):
     description: str = ""
     version: str = "1.0"
     steps: list[Step] = Field(..., min_length=1)
-    max_steps: int | None = None  # None = no cap; BUDGET_EXCEEDED when exceeded
-    max_stalled_steps: int | None = None  # None = disabled; STALLED after N consecutive no-ops
-    max_tokens: int | None = None  # None = no cap; BUDGET_EXCEEDED when total_tokens >= limit
+    max_steps: int | None = None
+    max_stalled_steps: int | None = None
+    max_tokens: int | None = None
 
     @classmethod
     def from_dict(cls, data: dict) -> Program:
@@ -167,7 +259,7 @@ class LLMUsage(BaseModel):
     prompt_tokens: int = 0
     completion_tokens: int = 0
     total_tokens: int = 0
-    cost_usd: float | None = None  # None if provider did not return cost
+    cost_usd: float | None = None
 
     def __str__(self) -> str:
         cost = f", cost=${self.cost_usd:.6f}" if self.cost_usd is not None else ""
@@ -180,7 +272,7 @@ class StepResult(BaseModel):
     output: Any = None
     error: str | None = None
     retries: int = 0
-    usage: LLMUsage | None = None  # filled only for llm steps
+    usage: LLMUsage | None = None
     started_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     finished_at: datetime | None = None
     duration_ms: float | None = None
@@ -217,20 +309,27 @@ class TraceStatus(str, Enum):
     FAILED = "failed"
     BUDGET_EXCEEDED = "budget_exceeded"
     STALLED = "stalled"
+    SUSPENDED = "suspended"  # v0.6.0: VM suspended, awaiting resume() via webhook
 
 
 class Trace(BaseModel):
     program_name: str
     status: TraceStatus = TraceStatus.RUNNING
+
+    # v0.6.0: stable ID для suspend/resume correlation и OTel propagation
+    trace_id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+
     steps: list[StepResult] = Field(default_factory=list)
     final_output: Any = None
     error: str | None = None
     started_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     finished_at: datetime | None = None
     duration_ms: float | None = None
-    state_snapshots: list[tuple[int, str]] = Field(default_factory=list)  # (step_index, sha256_hex)
-    # Internal O(1) token counter — not part of public schema, not serialised
-    _token_accumulator: int = PrivateAttr(default=0)
+    state_snapshots: list[tuple[int, str]] = Field(default_factory=list)
+
+    # v0.6.0: suspend cursor
+    suspended_step_id: str | None = None
+    suspended_at: datetime | None = None
 
     def finish(
         self,
@@ -250,15 +349,23 @@ class Trace(BaseModel):
             }
         )
 
-    def add_step(self, result: StepResult) -> Trace:
-        new_trace = self.model_copy(update={"steps": [*self.steps, result]})
-        new_trace._token_accumulator = (
-            self._token_accumulator + (result.usage.total_tokens if result.usage else 0)
+    def suspend(self, step_id: str) -> Trace:
+        """
+        v0.6.0: Переводит Trace в SUSPENDED, фиксирует cursor.
+        Вызывается только из ExecutionVM._suspend().
+        """
+        return self.model_copy(
+            update={
+                "status": TraceStatus.SUSPENDED,
+                "suspended_step_id": step_id,
+                "suspended_at": datetime.now(timezone.utc),
+            }
         )
-        return new_trace
+
+    def add_step(self, result: StepResult) -> Trace:
+        return self.model_copy(update={"steps": [*self.steps, result]})
 
     def add_snapshot(self, step_index: int, fp_hex: str) -> Trace:
-        """Record a state fingerprint snapshot for the given step_index."""
         entry = (step_index, fp_hex)
         return self.model_copy(update={"state_snapshots": [*self.state_snapshots, entry]})
 
@@ -269,7 +376,7 @@ class Trace(BaseModel):
         return None
 
     def total_tokens(self) -> int:
-        return self._token_accumulator
+        return sum(s.usage.total_tokens for s in self.steps if s.usage)
 
     def total_cost_usd(self) -> float | None:
         costs = [s.usage.cost_usd for s in self.steps if s.usage and s.usage.cost_usd is not None]
