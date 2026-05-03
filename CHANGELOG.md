@@ -7,6 +7,84 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [0.6.0] — 2026-05-03
+
+### Added
+
+- **`suspend` / `resume_with_program()` — webhook-driven async execution.**  
+  A `tool` step returning the sentinel string `"PENDING"` causes the VM to suspend,
+  persist the execution cursor, and return `TraceStatus.SUSPENDED`.  
+  Execution resumes via `vm.resume_with_program(program, trace_id, webhook_event)` —
+  the VM restores the cursor and continues from the suspended step.  
+  `resume()` (Blueprint-registry lookup) deferred to P8 of nano-vm-vault; a
+  `ResumeError` with explanation is raised if called directly until then.
+
+- **`CursorRepository` Protocol + `InMemoryCursorRepository`.**  
+  `CursorRepository` is the persistence interface for execution cursors.  
+  `InMemoryCursorRepository` ships for tests and dry-run.  
+  Production: implement the Protocol backed by `infrastructure.db` (SQLite WAL) —
+  `SqliteCursorRepository` is in the roadmap.  
+  Injected via `ExecutionVM(cursor_repo=...)`.
+
+- **`BudgetInterrupt` — isolated signal, not control-flow condition.**  
+  Budget exhaustion emits `InterruptType.BUDGET` before touching the next step.
+  The LLM cannot observe or influence it.  
+  Override `_emit_interrupt(interrupt_type)` in a subclass to hook into the signal
+  (e.g. notify operator, emit metric). Base implementation is a documented no-op.
+
+- **`VaultStepResult` + `VaultStepMetadata` — MCP-compatible step contracts.**  
+  `VaultStepResult.status` is a plain string (`"SUCCESS" | "FAILED" | "PENDING"`),
+  not a `StepStatus` enum — required for round-trip JSON serialization through the
+  MCP enforcement layer. Validated via `@model_validator` at construction time.  
+  `VaultStepMetadata` carries `idempotency_key`, `execution_time_ms`, `tool_version`,
+  `cached` (bool), and `trace_id` (OTel propagation).
+
+- **`Trace.trace_id` — UUID4, OTel propagation from day one.**  
+  Every `Trace` now carries a stable `trace_id` (UUID4, `default_factory`).  
+  Propagated into `VaultStepMetadata.trace_id` and `AuditEvent.trace_id`.  
+  OTel exporter is a separate concern (nano-vm-vault P13) — the field is stable
+  from this release and will not be renamed.
+
+- **`TraceStatus.SUSPENDED` — new non-terminal status.**  
+  Added to the FSM transition table alongside `SUCCESS`, `FAILED`,
+  `BUDGET_EXCEEDED`, `STALLED`. `SUSPENDED` is resumable — cursor is persisted
+  and execution continues via `resume_with_program()`.
+
+### Performance (stress test, Mock adapter, 2-core VPS, Python 3.12)
+
+10 000 FSM graphs × 5 deterministic runs, `concurrency=200`:
+
+| Run | Time (s) | Speed | OK | Failed |
+| :--- | :--- | :--- | :--- | :--- |
+| 1 | 0.70 | 14 286 it/s | 8 973 | 1 027 |
+| 2 | 0.70 | 14 286 it/s | 8 973 | 1 027 |
+| 3 | 0.69 | 14 493 it/s | 8 973 | 1 027 |
+| 4 | 0.70 | 14 286 it/s | 8 973 | 1 027 |
+| 5 | 0.70 | 14 286 it/s | 8 973 | 1 027 |
+| **AVG** | **0.70** | **14 327 it/s** | — | — |
+
+Determinism confirmed: identical results across all 5 runs (dataset fixed before loop).  
+Error rate 10.27% matches `P(value > 0.9) = 0.1` exactly — stochastic failures are
+deterministic given fixed input.  
+Failure isolation confirmed: `VMError: Tool not found` caught per-coroutine;
+event loop unaffected across 200 concurrent tasks.
+
+### Changed
+
+- `ExecutionVM.__init__` — `cursor_repo` keyword argument added.  
+  Default: `InMemoryCursorRepository()`. Zero breaking change for existing code.
+
+### Notes
+
+- `resume()` raises `ResumeError` with explanation until Blueprint registry (P8) is available.
+  Use `resume_with_program()` until then.
+- `InMemoryCursorRepository` is explicitly documented as tests/dry-run only.
+  Do not use in production — cursors are lost on process restart.
+- `VaultStepResult` rationale: MCP layer serializes results to JSON; enum breaks
+  deserialization on the client side. String + `@model_validator` is the correct pattern.
+
+---
+
 ## [0.5.0] — 2025-04-30
 
 ### Added
@@ -113,3 +191,4 @@ No regression vs v0.2.0 — `max_concurrency` / `retry` adds zero overhead when 
 - `LiteLLMAdapter` + cost tracking.
 - `Trace` — full per-step log: status, cost, tokens, duration.
 - Published to PyPI as `llm-nano-vm`.
+- 
