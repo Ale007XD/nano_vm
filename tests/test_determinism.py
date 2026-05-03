@@ -121,7 +121,7 @@ async def test_condition_target_not_in_program():
     )
     trace = await vm.run(program, context={"user_input": "test"})
     assert trace.status == TraceStatus.FAILED
-    assert "not found in program" in trace.error
+    assert "condition target 'nonexistent_step' not found" in trace.error
 
 
 @pytest.mark.asyncio
