@@ -2,22 +2,30 @@
 Tests for llm-nano-vm v0.6.0 vault primitives.
 Покрывает: suspend/resume, BudgetInterrupt, VaultStepResult, trace_id propagation.
 """
+
 import asyncio
 import sys
+
 sys.path.insert(0, "/home/claude")
 
 from nano_vm_v060 import (
-    ExecutionVM, Program, TraceStatus, StepStatus,
-    WebhookEvent, InMemoryCursorRepository, ResumeError,
-    InterruptType, VaultStepResult, VaultStepError, VaultStepMetadata,
-    Trace,
+    ExecutionVM,
+    InMemoryCursorRepository,
+    InterruptType,
+    Program,
+    ResumeError,
+    TraceStatus,
+    VaultStepError,
+    VaultStepMetadata,
+    VaultStepResult,
+    WebhookEvent,
 )
 from nano_vm_v060.adapters.mock_adapter import MockLLMAdapter
-
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def make_vm(**kwargs):
     cursor_repo = InMemoryCursorRepository()
@@ -46,12 +54,15 @@ async def tool_simple(**kwargs):
 # Test 1: Trace имеет trace_id
 # ---------------------------------------------------------------------------
 
+
 async def test_trace_has_id():
     vm, _ = make_vm()
-    program = Program.from_dict({
-        "name": "test_id",
-        "steps": [{"id": "s1", "type": "tool", "tool": "simple"}],
-    })
+    program = Program.from_dict(
+        {
+            "name": "test_id",
+            "steps": [{"id": "s1", "type": "tool", "tool": "simple"}],
+        }
+    )
     vm.register_tool("simple", tool_simple)
     trace = await vm.run(program)
     assert trace.trace_id, "trace_id должен быть непустым"
@@ -64,15 +75,18 @@ async def test_trace_has_id():
 # Test 2: suspend при PENDING tool
 # ---------------------------------------------------------------------------
 
+
 async def test_suspend_on_pending():
     vm, cursor_repo = make_vm()
-    program = Program.from_dict({
-        "name": "test_suspend",
-        "steps": [
-            {"id": "init_payment", "type": "tool", "tool": "payment_initiate"},
-            {"id": "post_payment", "type": "tool", "tool": "payment_complete"},
-        ],
-    })
+    program = Program.from_dict(
+        {
+            "name": "test_suspend",
+            "steps": [
+                {"id": "init_payment", "type": "tool", "tool": "payment_initiate"},
+                {"id": "post_payment", "type": "tool", "tool": "payment_complete"},
+            ],
+        }
+    )
     vm.register_tool("payment_initiate", tool_payment_initiate)
     vm.register_tool("payment_complete", tool_payment_complete)
 
@@ -93,15 +107,18 @@ async def test_suspend_on_pending():
 # Test 3: resume_with_program продолжает execution
 # ---------------------------------------------------------------------------
 
+
 async def test_resume_with_program():
     vm, _ = make_vm()
-    program = Program.from_dict({
-        "name": "test_resume",
-        "steps": [
-            {"id": "init_payment", "type": "tool", "tool": "payment_initiate"},
-            {"id": "post_payment", "type": "tool", "tool": "payment_complete"},
-        ],
-    })
+    program = Program.from_dict(
+        {
+            "name": "test_resume",
+            "steps": [
+                {"id": "init_payment", "type": "tool", "tool": "payment_initiate"},
+                {"id": "post_payment", "type": "tool", "tool": "payment_complete"},
+            ],
+        }
+    )
     vm.register_tool("payment_initiate", tool_payment_initiate)
     vm.register_tool("payment_complete", tool_payment_complete)
 
@@ -115,8 +132,9 @@ async def test_resume_with_program():
     )
     resumed_trace = await vm.resume_with_program(event, program)
 
-    assert resumed_trace.status == TraceStatus.SUCCESS, \
+    assert resumed_trace.status == TraceStatus.SUCCESS, (
         f"Ожидается SUCCESS после resume, получено: {resumed_trace.status}"
+    )
     assert resumed_trace.final_output == "payment_confirmed"
     # trace_id сохраняется через resume
     assert resumed_trace.trace_id == trace.trace_id
@@ -128,15 +146,18 @@ async def test_resume_with_program():
 # Test 4: двойной resume → ResumeError (replay protection)
 # ---------------------------------------------------------------------------
 
+
 async def test_double_resume_raises():
     vm, _ = make_vm()
-    program = Program.from_dict({
-        "name": "test_double_resume",
-        "steps": [
-            {"id": "init_payment", "type": "tool", "tool": "payment_initiate"},
-            {"id": "post_payment", "type": "tool", "tool": "payment_complete"},
-        ],
-    })
+    program = Program.from_dict(
+        {
+            "name": "test_double_resume",
+            "steps": [
+                {"id": "init_payment", "type": "tool", "tool": "payment_initiate"},
+                {"id": "post_payment", "type": "tool", "tool": "payment_complete"},
+            ],
+        }
+    )
     vm.register_tool("payment_initiate", tool_payment_initiate)
     vm.register_tool("payment_complete", tool_payment_complete)
 
@@ -158,6 +179,7 @@ async def test_double_resume_raises():
 # Test 5: Budget = Interrupt (max_steps)
 # ---------------------------------------------------------------------------
 
+
 async def test_budget_interrupt():
     interrupted = []
 
@@ -172,14 +194,16 @@ async def test_budget_interrupt():
     )
     vm.register_tool("simple", tool_simple)
 
-    program = Program.from_dict({
-        "name": "test_budget",
-        "max_steps": 1,
-        "steps": [
-            {"id": "s1", "type": "tool", "tool": "simple"},
-            {"id": "s2", "type": "tool", "tool": "simple"},
-        ],
-    })
+    program = Program.from_dict(
+        {
+            "name": "test_budget",
+            "max_steps": 1,
+            "steps": [
+                {"id": "s1", "type": "tool", "tool": "simple"},
+                {"id": "s2", "type": "tool", "tool": "simple"},
+            ],
+        }
+    )
 
     trace = await vm.run(program)
     assert trace.status == TraceStatus.BUDGET_EXCEEDED
@@ -190,6 +214,7 @@ async def test_budget_interrupt():
 # ---------------------------------------------------------------------------
 # Test 6: VaultStepResult контракт
 # ---------------------------------------------------------------------------
+
 
 def test_vault_step_result():
     metadata = VaultStepMetadata(
@@ -235,6 +260,7 @@ def test_vault_step_result():
 # Test 7: WebhookEvent валидация
 # ---------------------------------------------------------------------------
 
+
 def test_webhook_event_validation():
     # Валидный
     event = WebhookEvent(trace_id="abc", payload={"x": 1}, source="WEBHOOK")
@@ -261,15 +287,18 @@ def test_webhook_event_validation():
 # Test 8: trace_id стабилен через resume
 # ---------------------------------------------------------------------------
 
+
 async def test_trace_id_stable_through_resume():
     vm, _ = make_vm()
-    program = Program.from_dict({
-        "name": "test_id_stable",
-        "steps": [
-            {"id": "pay", "type": "tool", "tool": "payment_initiate"},
-            {"id": "confirm", "type": "tool", "tool": "payment_complete"},
-        ],
-    })
+    program = Program.from_dict(
+        {
+            "name": "test_id_stable",
+            "steps": [
+                {"id": "pay", "type": "tool", "tool": "payment_initiate"},
+                {"id": "confirm", "type": "tool", "tool": "payment_complete"},
+            ],
+        }
+    )
     vm.register_tool("payment_initiate", tool_payment_initiate)
     vm.register_tool("payment_complete", tool_payment_complete)
 
@@ -279,14 +308,16 @@ async def test_trace_id_stable_through_resume():
     event = WebhookEvent(trace_id=original_id, payload={})
     resumed = await vm.resume_with_program(event, program)
 
-    assert resumed.trace_id == original_id, \
+    assert resumed.trace_id == original_id, (
         f"trace_id должен быть стабилен: {original_id} != {resumed.trace_id}"
+    )
     print(f"[OK] test_trace_id_stable: trace_id={original_id} сохранён через resume")
 
 
 # ---------------------------------------------------------------------------
 # Runner
 # ---------------------------------------------------------------------------
+
 
 async def main():
     print("=== llm-nano-vm v0.6.0 tests ===\n")

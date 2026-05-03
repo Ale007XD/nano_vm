@@ -296,8 +296,7 @@ class ExecutionVM:
 
         if trace.status != TraceStatus.SUSPENDED:
             raise ResumeError(
-                f"Trace '{webhook_event.trace_id}' is not SUSPENDED "
-                f"(current: {trace.status})."
+                f"Trace '{webhook_event.trace_id}' is not SUSPENDED (current: {trace.status})."
             )
 
         # Инжектируем webhook payload
@@ -388,10 +387,7 @@ class ExecutionVM:
                 stalled_count = 0
             last_fingerprint = current_fp
 
-            if (
-                program.max_stalled_steps is not None
-                and stalled_count >= program.max_stalled_steps
-            ):
+            if program.max_stalled_steps is not None and stalled_count >= program.max_stalled_steps:
                 return trace.finish(
                     TraceStatus.STALLED,
                     error=(

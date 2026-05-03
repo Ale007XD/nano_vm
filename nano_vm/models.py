@@ -60,6 +60,7 @@ class InterruptType(str, Enum):
     Typed interrupt signals emitted by the VM.
     Budget = Interrupt, не control-flow условие (инвариант I7).
     """
+
     BUDGET = "BUDGET"
     TIMEOUT = "TIMEOUT"
 
@@ -70,8 +71,9 @@ class VaultStepError(BaseModel):
     retryable: SagaCoordinator использует для решения о retry vs escalate.
     compensation_required: SagaCoordinator использует для обхода в обратном порядке.
     """
-    code: str               # machine-readable (e.g. "PAYMENT_DECLINED")
-    message: str            # human-readable
+
+    code: str  # machine-readable (e.g. "PAYMENT_DECLINED")
+    message: str  # human-readable
     retryable: bool
     compensation_required: bool
 
@@ -82,11 +84,12 @@ class VaultStepMetadata(BaseModel):
     trace_id: OTel propagation с первого коммита (инвариант I из decisions_log).
     cached: True если результат из _tool_cache (persisted SQLite).
     """
-    idempotency_key: str    # "{order_id}:{step_id}:{tool_name}"
+
+    idempotency_key: str  # "{order_id}:{step_id}:{tool_name}"
     execution_time_ms: int
     tool_version: str
     cached: bool
-    trace_id: str           # OTel trace propagation
+    trace_id: str  # OTel trace propagation
 
 
 class VaultStepResult(BaseModel):
@@ -100,7 +103,8 @@ class VaultStepResult(BaseModel):
       - SUCCESS: шаг завершён, data содержит результат
       - FAILED:  шаг провалился, error содержит VaultStepError
     """
-    status: str             # строка для MCP-совместимости; валидируется ниже
+
+    status: str  # строка для MCP-совместимости; валидируется ниже
     data: dict[str, Any] = Field(default_factory=dict)
     error: VaultStepError | None = None
     metadata: VaultStepMetadata
