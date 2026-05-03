@@ -8,7 +8,7 @@ import sys
 
 sys.path.insert(0, "/home/claude")
 
-from nano_vm_v060 import (
+from nano_vm import (
     ExecutionVM,
     InMemoryCursorRepository,
     InterruptType,
@@ -20,7 +20,7 @@ from nano_vm_v060 import (
     VaultStepResult,
     WebhookEvent,
 )
-from nano_vm_v060.adapters.mock_adapter import MockLLMAdapter
+from nano_vm.adapters.mock_adapter import MockLLMAdapter
 
 # ---------------------------------------------------------------------------
 # Helpers
