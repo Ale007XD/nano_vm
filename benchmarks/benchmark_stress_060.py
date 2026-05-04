@@ -15,13 +15,15 @@ import sys
 import time
 import traceback
 from collections import defaultdict
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Callable, Literal
+from typing import Any, Literal
 
 # ── rich ──────────────────────────────────────────────────────────────────────
 try:
     from rich import box
+    from rich import print as rprint
     from rich.columns import Columns
     from rich.console import Console
     from rich.layout import Layout
@@ -39,16 +41,14 @@ try:
     from rich.rule import Rule
     from rich.table import Table
     from rich.text import Text
-    from rich import print as rprint
 except ImportError:
     print("Installing rich...")
     import subprocess
+
     subprocess.check_call([sys.executable, "-m", "pip", "install", "rich", "-q"])
     from rich import box
     from rich.columns import Columns
     from rich.console import Console
-    from rich.layout import Layout
-    from rich.live import Live
     from rich.panel import Panel
     from rich.progress import (
         BarColumn,
@@ -62,12 +62,12 @@ except ImportError:
     from rich.rule import Rule
     from rich.table import Table
     from rich.text import Text
-    from rich import print as rprint
 
 # ── llm-nano-vm ───────────────────────────────────────────────────────────────
 try:
     from nano_vm import ExecutionVM, Program
     from nano_vm.adapters import MockLLMAdapter
+
     HAS_NANO_VM = True
 except ImportError:
     HAS_NANO_VM = False
@@ -81,6 +81,7 @@ SEED = 42
 # ═══════════════════════════════════════════════════════════════════════════════
 # FSM STUB (fallback когда llm-nano-vm не установлен, тестирует FSM-логику)
 # ═══════════════════════════════════════════════════════════════════════════════
+
 
 class FSMState(str, Enum):
     DRAFT = "DRAFT"
@@ -147,22 +148,27 @@ class StubFSM:
             return None
         new_state = TRANSITION_MATRIX[key]
         # I1: LLM не влияет — переход чисто детерминирован
-        return OrderState(state=new_state, version=order.version + 1,
-                          side_effects=list(order.side_effects))
+        return OrderState(
+            state=new_state, version=order.version + 1, side_effects=list(order.side_effects)
+        )
 
-    def execute_tool(self, tool_name: str, idempotency_key: str,
-                     fail_prob: float = 0.0) -> StepResult:
+    def execute_tool(
+        self, tool_name: str, idempotency_key: str, fail_prob: float = 0.0
+    ) -> StepResult:
         # I3: exactly-once via persisted cache
         if idempotency_key in self._tool_cache:
             r = self._tool_cache[idempotency_key]
-            return StepResult(status=r.status, data=r.data,
-                              idempotency_key=idempotency_key, cached=True)
+            return StepResult(
+                status=r.status, data=r.data, idempotency_key=idempotency_key, cached=True
+            )
         if random.random() < fail_prob:
-            result = StepResult(status="FAILED", idempotency_key=idempotency_key,
-                                error="simulated_failure")
+            result = StepResult(
+                status="FAILED", idempotency_key=idempotency_key, error="simulated_failure"
+            )
         else:
-            result = StepResult(status="SUCCESS", data={"tool": tool_name},
-                                idempotency_key=idempotency_key)
+            result = StepResult(
+                status="SUCCESS", data={"tool": tool_name}, idempotency_key=idempotency_key
+            )
         self._tool_cache[idempotency_key] = result
         return result
 
@@ -175,6 +181,7 @@ class StubFSM:
 # ═══════════════════════════════════════════════════════════════════════════════
 # BENCHMARK INFRASTRUCTURE
 # ═══════════════════════════════════════════════════════════════════════════════
+
 
 @dataclass
 class BenchmarkResult:
@@ -194,7 +201,7 @@ class BenchmarkResult:
     def p95_ms(self) -> float:
         s = sorted(self.runs)
         idx = int(len(s) * 0.95)
-        return s[min(idx, len(s)-1)] * 1000
+        return s[min(idx, len(s) - 1)] * 1000
 
     @property
     def stdev_ms(self) -> float:
@@ -209,6 +216,7 @@ class BenchmarkResult:
 # ═══════════════════════════════════════════════════════════════════════════════
 # BENCHMARK TESTS
 # ═══════════════════════════════════════════════════════════════════════════════
+
 
 def bench_01_idempotency_replay() -> BenchmarkResult:
     """BM-01: Idempotency Under Replay Stress — S_t = S_{t+k}"""
@@ -278,7 +286,7 @@ def bench_02_duplicate_execution_attack() -> BenchmarkResult:
         metrics={
             "orders_tested": ARRAY_SIZE * RUNS,
             "double_executions": double_executions,
-            "safety_rate": f"{(1 - double_executions/(ARRAY_SIZE*RUNS))*100:.4f}%",
+            "safety_rate": f"{(1 - double_executions / (ARRAY_SIZE * RUNS)) * 100:.4f}%",
         },
     )
 
@@ -357,8 +365,21 @@ def bench_04_nondeterministic_llm_injection() -> BenchmarkResult:
     llm_influenced_transitions = 0
 
     # Имитация: LLM возвращает разные "советы", но δ(S,E) детерминирована
-    llm_outputs = ["pay now", "please pay", "CONFIRMED", "yes, proceed", "оплата", "¿pagar?",
-                   "true", "1", "ok", "done", "✓", "sure why not", "affirmative"]
+    llm_outputs = [
+        "pay now",
+        "please pay",
+        "CONFIRMED",
+        "yes, proceed",
+        "оплата",
+        "¿pagar?",
+        "true",
+        "1",
+        "ok",
+        "done",
+        "✓",
+        "sure why not",
+        "affirmative",
+    ]
 
     for _ in range(RUNS):
         t0 = time.perf_counter()
@@ -396,8 +417,8 @@ def bench_04_nondeterministic_llm_injection() -> BenchmarkResult:
 def bench_05_tool_failure_cascade() -> BenchmarkResult:
     """BM-05: Tool Failure Cascade A→B→C — C не исполняется если B упал"""
     runs = []
-    cascade_violations = 0   # C исполнился после падения B
-    retry_explosions = 0     # retry > MAX_RETRIES
+    cascade_violations = 0  # C исполнился после падения B
+    retry_explosions = 0  # retry > MAX_RETRIES
 
     MAX_RETRIES = 3
 
@@ -420,8 +441,7 @@ def bench_05_tool_failure_cascade() -> BenchmarkResult:
             while r_b.status == "FAILED" and retries < MAX_RETRIES:
                 retries += 1
                 # Новый idempotency_key для retry
-                r_b = fsm.execute_tool("tool_b", f"order:{i}:b:retry:{retries}",
-                                       fail_prob=0.4)
+                r_b = fsm.execute_tool("tool_b", f"order:{i}:b:retry:{retries}", fail_prob=0.4)
 
             if retries >= MAX_RETRIES and r_b.status == "FAILED":
                 retry_explosions += 1 if retries > MAX_RETRIES else 0
@@ -506,7 +526,7 @@ def bench_06_timeout_drift() -> BenchmarkResult:
             "orders_tested": ARRAY_SIZE * RUNS,
             "partial_transitions": partial_transitions,
             "inconsistent_states": inconsistent_states,
-            "timeout_rate": f"{timeout_outcomes['timeout']/(ARRAY_SIZE*RUNS)*100:.1f}%",
+            "timeout_rate": f"{timeout_outcomes['timeout'] / (ARRAY_SIZE * RUNS) * 100:.1f}%",
         },
     )
 
@@ -534,7 +554,7 @@ def bench_07_out_of_order_events() -> BenchmarkResult:
             order = OrderState(state=FSMState.DRAFT)
 
             completed = True
-            for (_, event) in shuffled:
+            for _, event in shuffled:
                 new_order = fsm.transition(order, event)
                 if new_order is None:
                     # Детерминированный reject — ОК
@@ -573,8 +593,13 @@ def bench_08_state_explosion_memory() -> BenchmarkResult:
 
     # Полный happy path × 10_000 orders
     happy_path_events = [
-        "cart.validate", "payment.initiate", "payment.confirmed",
-        "stock.reserve", "delivery.assign", "delivery.confirmed", "order.complete",
+        "cart.validate",
+        "payment.initiate",
+        "payment.confirmed",
+        "stock.reserve",
+        "delivery.assign",
+        "delivery.confirmed",
+        "order.complete",
     ]
 
     for _ in range(RUNS):
@@ -590,9 +615,7 @@ def bench_08_state_explosion_memory() -> BenchmarkResult:
                 if new_order is None:
                     break
                 # Fingerprint = hash(state + version) — не raw payload
-                fp = hashlib.md5(
-                    f"{order.state}:{order.version}".encode()
-                ).hexdigest()[:8]
+                fp = hashlib.md5(f"{order.state}:{order.version}".encode()).hexdigest()[:8]
                 states_seen.add(fp)
                 order = new_order
                 total_steps += 1
@@ -635,7 +658,7 @@ def bench_09_partial_stepresult_corruption() -> BenchmarkResult:
         '{"status": "YOLO"}',
         '{"status": "SUCCESS"',  # truncated JSON
         b"\x00\xff\xfe",  # binary garbage
-        '{"status": "SUCCESS", "data": ' + 'x' * 10_000 + '}',
+        '{"status": "SUCCESS", "data": ' + "x" * 10_000 + "}",
     ]
 
     def normalize_step_result(raw: Any) -> Literal["SUCCESS", "FAILED", "UNKNOWN"]:
@@ -690,10 +713,19 @@ def bench_10_transition_validity_invariant() -> BenchmarkResult:
     valid_transitions = 0
 
     ALL_EVENTS = [
-        "cart.validate", "payment.initiate", "payment.confirmed", "payment.failed",
-        "payment.timeout", "stock.reserve", "delivery.assign", "delivery.confirmed",
-        "order.complete", "order.cancel_safe", "order.cancel_compensate",
-        "reservation.timeout", "delivery.timeout",
+        "cart.validate",
+        "payment.initiate",
+        "payment.confirmed",
+        "payment.failed",
+        "payment.timeout",
+        "stock.reserve",
+        "delivery.assign",
+        "delivery.confirmed",
+        "order.complete",
+        "order.cancel_safe",
+        "order.cancel_compensate",
+        "reservation.timeout",
+        "delivery.timeout",
     ]
 
     for _ in range(RUNS):
@@ -814,8 +846,7 @@ def bench_12_chaos_mode() -> BenchmarkResult:
                 step_count += 1
                 # Случайное событие из chaos mix
                 event = random.choices(
-                    [e for e, _ in CHAOS_EVENTS],
-                    weights=[w for _, w in CHAOS_EVENTS]
+                    [e for e, _ in CHAOS_EVENTS], weights=[w for _, w in CHAOS_EVENTS]
                 )[0]
                 new_order = fsm.transition(order, event)
                 if new_order is not None:
@@ -823,14 +854,12 @@ def bench_12_chaos_mode() -> BenchmarkResult:
 
                 # Inject random failures
                 if random.random() < 0.05:
-                    order = OrderState(state=FSMState.ESCALATED,
-                                       version=order.version + 1)
+                    order = OrderState(state=FSMState.ESCALATED, version=order.version + 1)
                     total_escalations += 1
 
                 # Budget exceeded → force terminal
                 if step_count >= MAX_STEPS:
-                    order = OrderState(state=FSMState.CANCELLED_SAFE,
-                                       version=order.version + 1)
+                    order = OrderState(state=FSMState.CANCELLED_SAFE, version=order.version + 1)
 
             # Финальное состояние должно быть валидным FSMState
             if order.state not in FSMState.__members__.values():
@@ -857,24 +886,34 @@ def bench_12_chaos_mode() -> BenchmarkResult:
 # NANO-VM INTEGRATION TESTS (если установлен)
 # ═══════════════════════════════════════════════════════════════════════════════
 
+
 async def bench_nanovm_double_execution() -> BenchmarkResult | None:
     """BM-VM: Double-execution safety via llm-nano-vm FSM trace invariant"""
     if not HAS_NANO_VM:
         return None
 
-    program = Program.from_dict({
-        "name": "payment_flow",
-        "steps": [
-            {"id": "classify", "type": "llm",
-             "prompt": "Should we process refund? Reply yes or no.",
-             "output_key": "decision"},
-            {"id": "guard", "type": "condition",
-             "condition": "'yes' in '$decision'",
-             "then": "process", "otherwise": "reject"},
-            {"id": "process", "type": "tool", "tool": "issue_payment"},
-            {"id": "reject", "type": "tool", "tool": "send_rejection"},
-        ],
-    })
+    program = Program.from_dict(
+        {
+            "name": "payment_flow",
+            "steps": [
+                {
+                    "id": "classify",
+                    "type": "llm",
+                    "prompt": "Should we process refund? Reply yes or no.",
+                    "output_key": "decision",
+                },
+                {
+                    "id": "guard",
+                    "type": "condition",
+                    "condition": "'yes' in '$decision'",
+                    "then": "process",
+                    "otherwise": "reject",
+                },
+                {"id": "process", "type": "tool", "tool": "issue_payment"},
+                {"id": "reject", "type": "tool", "tool": "send_rejection"},
+            ],
+        }
+    )
 
     payment_executions = 0
     tools = {
@@ -894,13 +933,16 @@ async def bench_nanovm_double_execution() -> BenchmarkResult | None:
             for i in range(N):
                 vm = ExecutionVM(
                     llm=MockLLMAdapter("yes"),
-                    tools={"issue_payment": lambda: {"ok": True},
-                           "send_rejection": lambda: {"ok": True}},
+                    tools={
+                        "issue_payment": lambda: {"ok": True},
+                        "send_rejection": lambda: {"ok": True},
+                    },
                 )
                 trace = await vm.run(program, context={})
                 # Проверка: issue_payment не может появиться дважды в trace
-                payment_steps = [s for s in trace.steps if s.step_id == "process"
-                                 and s.status.name == "SUCCESS"]
+                payment_steps = [
+                    s for s in trace.steps if s.step_id == "process" and s.status.name == "SUCCESS"
+                ]
                 if len(payment_steps) > 1:
                     double_exec += 1
 
@@ -930,23 +972,26 @@ async def bench_nanovm_double_execution() -> BenchmarkResult | None:
 # RICH OUTPUT
 # ═══════════════════════════════════════════════════════════════════════════════
 
+
 def render_header():
     console.print()
-    console.print(Panel(
-        Text.from_markup(
-            "[bold white]nano-vm stress benchmark suite[/bold white]  [dim]v0.1[/dim]\n\n"
-            "[dim]δ(S, E) → S'  —  deterministic · replayable · failure-safe[/dim]\n\n"
-            f"[cyan]Array size:[/cyan] [bold]{ARRAY_SIZE:,}[/bold]  "
-            f"[cyan]Runs per test:[/cyan] [bold]{RUNS}[/bold]  "
-            f"[cyan]Seed:[/cyan] [bold]{SEED}[/bold]  "
-            f"[cyan]Mode:[/cyan] [bold]{'llm-nano-vm' if HAS_NANO_VM else 'FSM stub'}[/bold]",
-            justify="center",
-        ),
-        border_style="cyan",
-        padding=(1, 4),
-        title="[bold cyan]⬡ NANO-VM[/bold cyan]",
-        title_align="center",
-    ))
+    console.print(
+        Panel(
+            Text.from_markup(
+                "[bold white]nano-vm stress benchmark suite[/bold white]  [dim]v0.1[/dim]\n\n"
+                "[dim]δ(S, E) → S'  —  deterministic · replayable · failure-safe[/dim]\n\n"
+                f"[cyan]Array size:[/cyan] [bold]{ARRAY_SIZE:,}[/bold]  "
+                f"[cyan]Runs per test:[/cyan] [bold]{RUNS}[/bold]  "
+                f"[cyan]Seed:[/cyan] [bold]{SEED}[/bold]  "
+                f"[cyan]Mode:[/cyan] [bold]{'llm-nano-vm' if HAS_NANO_VM else 'FSM stub'}[/bold]",
+                justify="center",
+            ),
+            border_style="cyan",
+            padding=(1, 4),
+            title="[bold cyan]⬡ NANO-VM[/bold cyan]",
+            title_align="center",
+        )
+    )
     console.print()
 
 
@@ -976,7 +1021,9 @@ def render_results(results: list[BenchmarkResult]):
     failed_count = 0
 
     for r in results:
-        status_text = Text("✓ PASS", style="bold green") if r.passed else Text("✗ FAIL", style="bold red")
+        status_text = (
+            Text("✓ PASS", style="bold green") if r.passed else Text("✗ FAIL", style="bold red")
+        )
         if r.passed:
             passed_count += 1
         else:
@@ -1005,26 +1052,37 @@ def render_results(results: list[BenchmarkResult]):
         lines = []
         for k, v in r.metrics.items():
             key_str = k.replace("_", " ").title()
-            is_bad = isinstance(v, int) and v > 0 and (
-                "violation" in k or "double" in k or "mutation" in k
-                or "conflict" in k or "undefined" in k or "invalid" in k
-                or "wrong" in k or "explosion" in k
+            is_bad = (
+                isinstance(v, int)
+                and v > 0
+                and (
+                    "violation" in k
+                    or "double" in k
+                    or "mutation" in k
+                    or "conflict" in k
+                    or "undefined" in k
+                    or "invalid" in k
+                    or "wrong" in k
+                    or "explosion" in k
+                )
             )
             val_style = "bold red" if is_bad else "bold white"
             lines.append(f"[dim]{key_str}:[/dim] [{val_style}]{v}[/{val_style}]")
 
         status_color = "green" if r.passed else "red"
-        metric_panels.append(Panel(
-            "\n".join(lines),
-            title=f"[{status_color}]{r.tag}[/{status_color}] [dim]{r.name[:28]}[/dim]",
-            border_style=status_color,
-            padding=(0, 1),
-            expand=True,
-        ))
+        metric_panels.append(
+            Panel(
+                "\n".join(lines),
+                title=f"[{status_color}]{r.tag}[/{status_color}] [dim]{r.name[:28]}[/dim]",
+                border_style=status_color,
+                padding=(0, 1),
+                expand=True,
+            )
+        )
 
     # Выводим по 3 в ряд
     for i in range(0, len(metric_panels), 3):
-        chunk = metric_panels[i:i+3]
+        chunk = metric_panels[i : i + 3]
         console.print(Columns(chunk, equal=True, expand=True))
 
     console.print()
@@ -1033,13 +1091,28 @@ def render_results(results: list[BenchmarkResult]):
     total = passed_count + failed_count
     score_pct = passed_count / total * 100 if total > 0 else 0
     all_mean = statistics.mean([r.mean_ms for r in results])
-    total_ops = sum(r.metrics.get("total_ops", r.metrics.get("orders_tested",
-                   r.metrics.get("sequences_tested",
-                   r.metrics.get("transitions_tested",
-                   r.metrics.get("payloads_tested",
-                   r.metrics.get("orders_processed", ARRAY_SIZE)))))) for r in results)
+    total_ops = sum(
+        r.metrics.get(
+            "total_ops",
+            r.metrics.get(
+                "orders_tested",
+                r.metrics.get(
+                    "sequences_tested",
+                    r.metrics.get(
+                        "transitions_tested",
+                        r.metrics.get(
+                            "payloads_tested", r.metrics.get("orders_processed", ARRAY_SIZE)
+                        ),
+                    ),
+                ),
+            ),
+        )
+        for r in results
+    )
 
-    score_style = "bold green" if score_pct == 100 else "bold yellow" if score_pct >= 75 else "bold red"
+    score_style = (
+        "bold green" if score_pct == 100 else "bold yellow" if score_pct >= 75 else "bold red"
+    )
     verdict_icon = "⬢" if score_pct == 100 else "◈" if score_pct >= 75 else "◇"
     verdict = (
         "DETERMINISTIC EXECUTION RUNTIME VERIFIED"
@@ -1063,18 +1136,21 @@ def render_results(results: list[BenchmarkResult]):
         Text(f"[dim]Total ops: {total_ops:,}[/dim]"),
     )
 
-    console.print(Panel(
-        summary,
-        title=f"[bold]{verdict_icon} {verdict}[/bold]",
-        border_style="green" if score_pct == 100 else "yellow" if score_pct >= 75 else "red",
-        padding=(0, 2),
-    ))
+    console.print(
+        Panel(
+            summary,
+            title=f"[bold]{verdict_icon} {verdict}[/bold]",
+            border_style="green" if score_pct == 100 else "yellow" if score_pct >= 75 else "red",
+            padding=(0, 2),
+        )
+    )
 
     # Per-run timing table
     console.print()
     console.print(Rule("[dim]Per-run timing (seconds)[/dim]", style="dim"))
-    run_table = Table(box=box.SIMPLE, show_header=True, header_style="dim",
-                      border_style="dim", padding=(0, 2))
+    run_table = Table(
+        box=box.SIMPLE, show_header=True, header_style="dim", border_style="dim", padding=(0, 2)
+    )
     run_table.add_column("Test", style="dim yellow", width=8)
     for r in range(1, RUNS + 1):
         run_table.add_column(f"Run {r}", justify="right", style="dim white", width=9)
@@ -1126,15 +1202,19 @@ async def main():
             try:
                 result = fn()
                 results.append(result)
-            except Exception as e:
+            except Exception:
                 tag = fn.__name__.replace("bench_", "BM-").upper()[:6]
-                results.append(BenchmarkResult(
-                    name=fn.__name__, tag=tag, runs=[0.0],
-                    passed=False,
-                    invariant="ERROR",
-                    metrics={},
-                    error=traceback.format_exc(),
-                ))
+                results.append(
+                    BenchmarkResult(
+                        name=fn.__name__,
+                        tag=tag,
+                        runs=[0.0],
+                        passed=False,
+                        invariant="ERROR",
+                        metrics={},
+                        error=traceback.format_exc(),
+                    )
+                )
             progress.advance(task)
 
     # nano-vm integration test
