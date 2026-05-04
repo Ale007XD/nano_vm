@@ -173,7 +173,8 @@ class StubFSM:
         return result
 
     def direct_mutate(self, order: OrderState, new_state: FSMState) -> None:
-        """Нарушение I1 — прямая мутация минуя δ (используется в тесте #10 как invariant violation)."""
+        """Нарушение I1 — прямая мутация минуя δ
+        Используется в тесте #10 как invariant violation."""
         order.state = new_state
         self._state_mut_count += 1
 
