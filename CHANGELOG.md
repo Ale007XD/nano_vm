@@ -7,6 +7,57 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [0.6.0] — 2025-05-04
+
+### Added
+
+- **FSM invariant stress suite (`benchmarks/benchmark_nano_vm.py`).**  
+  13 tests (BM-01–BM-12 + BM-VM) validating δ(S, E) → S' under chaos, injection, replay,
+  and concurrent load. Array size: 10,000 per test · 5 runs · seed=42.  
+  Result: **13/13 PASSED · 1,020,000 total operations · 0 invariant violations.**
+
+- **`## Execution Pipeline` section in README.**  
+  Canonical formal model:
+  ```
+  E  = LLM(input)     →  raw event (probabilistic, untrusted)
+  E' = Validator(E)   →  validated context (deterministic)
+  A(S) = FSM(S, E')   →  allowed actions (deterministic)
+  a*   = Policy(A, C) →  selected action (deterministic pure fn)
+  S'   = δ(S, a*)     →  next state (deterministic)
+  ```
+  Includes layer responsibility table and `Implementation Note` on current
+  single-action `A(S)` vs future multi-candidate Policy.
+
+### Benchmark results (BM-01–BM-12 + BM-VM, Linux · x86_64 · Python 3.12 · venv)
+
+| Tag | Test | Mean ms | Throughput /s | Result |
+| :--- | :--- | ---: | ---: | :--- |
+| BM-01 | Idempotency Under Replay Stress | 279 | 35,794 | 450k replays · **0 violations** |
+| BM-02 | Duplicate Execution Attack | 222 | 45,114 | 50k triggers · **0 double exec** |
+| BM-03 | Crash Mid-Step Recovery | 170 | 58,741 | **0 wrong resumes** |
+| BM-04 | Non-Deterministic LLM Injection | 68 | 148,018 | 13 noise variants · **0 FSM influence** |
+| BM-05 | Tool Failure Cascade A→B→C | 135 | 73,847 | **0 cascade violations** |
+| BM-06 | Long-Running Tool + Timeout Drift | 73 | 137,531 | 66.8% timeout · **0 partial transitions** |
+| BM-07 | Out-of-Order Event Delivery | 123 | 81,234 | **0 invalid sequences accepted** |
+| BM-08 | State Explosion / Memory Pressure | 486 | 20,567 | **StateContext bounded \|S\|=12** |
+| BM-09 | Partial StepResult Corruption | 66 | 151,479 | 8 types · **50k/50k normalized** |
+| BM-10 | Transition Validity Invariant | 123 | 81,068 | 90.5% blocked · **0 mutations** |
+| BM-11 | Reentrancy Stress | 175 | 57,187 | **0 double mutations** |
+| BM-12 | Chaos Mode — Full System Stress | 2352 | 4,252 | 83k escalations · **0 invalid final states** |
+| BM-VM | nano-vm Double Execution Safety | 53 | 190,428 | 300 real `vm.run` · **0 double exec** |
+
+> **BM-04:** I1 confirmed empirically — LLM noise ("оплата", "¿pagar?", "✓", "affirmative"…)
+> produces zero influence on δ(S, E).  
+> **BM-12:** mathematical consequence of δ having no path to an invalid state, not a probabilistic result.  
+> **BM-VM:** `I_k(T) ∈ {0,1}` trace invariant holds across 300 real `ExecutionVM` runs.
+
+### Known issues
+
+- **BM8 still blocked by rate limit (429) during peak hours** (inherited from v0.5.0).  
+  Workaround candidates: `qwen/qwen3-coder:free`, `nvidia/nemotron-nano-9b-v2:free`.
+
+---
+
 ## [0.5.0] — 2025-04-30
 
 ### Added
