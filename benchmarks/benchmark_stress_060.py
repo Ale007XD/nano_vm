@@ -5,15 +5,10 @@ Validates: $\delta(S, E) \to S'$ — deterministic, replayable, failure-safe
 """
 
 import asyncio
-import hashlib
-import json
 import random
 import statistics
 import sys
 import time
-import traceback
-from collections import defaultdict
-from collections.abc import Callable
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, Literal
@@ -39,23 +34,18 @@ try:
 except ImportError:
     print("Installing rich...")
     import subprocess
+
     subprocess.check_call([sys.executable, "-m", "pip", "install", "rich", "-q"])
     from rich import box
-    from rich.columns import Columns
     from rich.console import Console
     from rich.panel import Panel
-    from rich.progress import (
-        BarColumn, MofNCompleteColumn, Progress, SpinnerColumn,
-        TaskProgressColumn, TextColumn, TimeElapsedColumn,
-    )
-    from rich.rule import Rule
     from rich.table import Table
-    from rich.text import Text
 
 # ── llm-nano-vm ───────────────────────────────────────────────────────────────
 try:
     from nano_vm import ExecutionVM, Program
     from nano_vm.adapters import MockLLMAdapter
+
     HAS_NANO_VM = True
 except ImportError:
     HAS_NANO_VM = False
@@ -70,6 +60,7 @@ SEED = 42
 # FSM STUBS
 # ═══════════════════════════════════════════════════════════════════════════════
 
+
 class FSMState(str, Enum):
     DRAFT = "DRAFT"
     CART_VALIDATED = "CART_VALIDATED"
@@ -83,6 +74,7 @@ class FSMState(str, Enum):
     ESCALATED = "ESCALATED"
     CANCELLED_SAFE = "CANCELLED_SAFE"
     CANCELLED_COMPENSATED = "CANCELLED_COMPENSATED"
+
 
 TRANSITION_MATRIX: dict[tuple[FSMState, str], FSMState] = {
     (FSMState.DRAFT, "cart.validate"): FSMState.CART_VALIDATED,
@@ -104,6 +96,7 @@ TRANSITION_MATRIX: dict[tuple[FSMState, str], FSMState] = {
 
 TERMINAL_STATES = {FSMState.COMPLETED, FSMState.CANCELLED_SAFE, FSMState.CANCELLED_COMPENSATED}
 
+
 @dataclass
 class StepResult:
     status: Literal["SUCCESS", "FAILED", "PENDING"]
@@ -112,11 +105,13 @@ class StepResult:
     cached: bool = False
     error: str | None = None
 
+
 @dataclass
 class OrderState:
     state: FSMState
     version: int = 0
     side_effects: list[str] = field(default_factory=list)
+
 
 class StubFSM:
     def __init__(self):
@@ -127,27 +122,37 @@ class StubFSM:
         if key not in TRANSITION_MATRIX:
             return None
         return OrderState(
-            state=TRANSITION_MATRIX[key], 
-            version=order.version + 1, 
-            side_effects=list(order.side_effects)
+            state=TRANSITION_MATRIX[key],
+            version=order.version + 1,
+            side_effects=list(order.side_effects),
         )
 
-    def execute_tool(self, tool_name: str, idempotency_key: str, fail_prob: float = 0.0) -> StepResult:
+    def execute_tool(
+        self, tool_name: str, idempotency_key: str, fail_prob: float = 0.0
+    ) -> StepResult:
         if idempotency_key in self._tool_cache:
             r = self._tool_cache[idempotency_key]
-            return StepResult(status=r.status, data=r.data, idempotency_key=idempotency_key, cached=True)
-        
+            return StepResult(
+                status=r.status, data=r.data, idempotency_key=idempotency_key, cached=True
+            )
+
         if random.random() < fail_prob:
-            result = StepResult(status="FAILED", idempotency_key=idempotency_key, error="simulated_failure")
+            result = StepResult(
+                status="FAILED", idempotency_key=idempotency_key, error="simulated_failure"
+            )
         else:
-            result = StepResult(status="SUCCESS", data={"tool": tool_name}, idempotency_key=idempotency_key)
-        
+            result = StepResult(
+                status="SUCCESS", data={"tool": tool_name}, idempotency_key=idempotency_key
+            )
+
         self._tool_cache[idempotency_key] = result
         return result
+
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # BENCHMARK TESTS
 # ═══════════════════════════════════════════════════════════════════════════════
+
 
 @dataclass
 class BenchmarkResult:
@@ -160,17 +165,23 @@ class BenchmarkResult:
     error: str | None = None
 
     @property
-    def mean_ms(self) -> float: return statistics.mean(self.runs) * 1000
+    def mean_ms(self) -> float:
+        return statistics.mean(self.runs) * 1000
+
     @property
     def p95_ms(self) -> float:
         s = sorted(self.runs)
         return s[min(int(len(s) * 0.95), len(s) - 1)] * 1000
+
     @property
-    def stdev_ms(self) -> float: return (statistics.stdev(self.runs) * 1000) if len(self.runs) > 1 else 0.0
+    def stdev_ms(self) -> float:
+        return (statistics.stdev(self.runs) * 1000) if len(self.runs) > 1 else 0.0
+
     @property
     def throughput(self) -> float:
         m = statistics.mean(self.runs)
         return ARRAY_SIZE / m if m > 0 else 0
+
 
 def bench_01_idempotency_replay() -> BenchmarkResult:
     fsm = StubFSM()
@@ -182,15 +193,24 @@ def bench_01_idempotency_replay() -> BenchmarkResult:
             r1 = fsm.execute_tool("test", key)
             for _ in range(3):
                 r2 = fsm.execute_tool("test", key)
-                if r2.status != r1.status: violations += 1
-                if r2.cached: cached_hits += 1
+                if r2.status != r1.status:
+                    violations += 1
+                if r2.cached:
+                    cached_hits += 1
         runs.append(time.perf_counter() - t0)
-    return BenchmarkResult("Idempotency Replay", "BM-01", runs, violations == 0, 
-                           {"violations": violations, "cache_hits": cached_hits}, "S_t = S_{t+k}")
+    return BenchmarkResult(
+        "Idempotency Replay",
+        "BM-01",
+        runs,
+        violations == 0,
+        {"violations": violations, "cache_hits": cached_hits},
+        "S_t = S_{t+k}",
+    )
+
 
 def bench_02_duplicate_execution_attack() -> BenchmarkResult:
     runs, double_executions = [], 0
-    fsm = StubFSM() # Один инстанс на тест для проверки кеша
+    fsm = StubFSM()  # Один инстанс на тест для проверки кеша
     for _ in range(RUNS):
         t0 = time.perf_counter()
         for i in range(ARRAY_SIZE):
@@ -199,8 +219,15 @@ def bench_02_duplicate_execution_attack() -> BenchmarkResult:
             if sum(1 for r in results if not r.cached) > 1:
                 double_executions += 1
         runs.append(time.perf_counter() - t0)
-    return BenchmarkResult("Duplicate Attack", "BM-02", runs, double_executions == 0, 
-                           {"double_execs": double_executions}, "Exactly-once execution")
+    return BenchmarkResult(
+        "Duplicate Attack",
+        "BM-02",
+        runs,
+        double_executions == 0,
+        {"double_execs": double_executions},
+        "Exactly-once execution",
+    )
+
 
 def bench_05_tool_failure_cascade() -> BenchmarkResult:
     runs, cascade_violations, retry_explosions = [], 0, 0
@@ -215,50 +242,70 @@ def bench_05_tool_failure_cascade() -> BenchmarkResult:
             while r_b.status == "FAILED" and retries < MAX_RETRIES:
                 retries += 1
                 r_b = fsm.execute_tool("tool_b", f"b:{i}:r:{retries}", fail_prob=0.4)
-            
+
             if r_b.status == "FAILED":
                 # Если B упал окончательно, C не должен быть запущен
                 r_c = fsm.execute_tool("tool_c", f"c:{i}")
-                if not r_c.cached: cascade_violations += 1
-            
-            if retries > MAX_RETRIES: # Теперь это может сработать, если цикл сломан
+                if not r_c.cached:
+                    cascade_violations += 1
+
+            if retries > MAX_RETRIES:  # Теперь это может сработать, если цикл сломан
                 retry_explosions += 1
         runs.append(time.perf_counter() - t0)
-    return BenchmarkResult("Failure Cascade", "BM-05", runs, cascade_violations == 0, 
-                           {"violations": cascade_violations}, "C disabled if B fails")
+    return BenchmarkResult(
+        "Failure Cascade",
+        "BM-05",
+        runs,
+        cascade_violations == 0,
+        {"violations": cascade_violations},
+        "C disabled if B fails",
+    )
+
 
 async def bench_11_reentrancy_stress() -> BenchmarkResult:
     """Имитация конкурентных вызовов через asyncio.gather"""
     runs, version_conflicts = [], 0
     for _ in range(RUNS):
         t0 = time.perf_counter()
-        for i in range(ARRAY_SIZE // 10): # Уменьшено для async-оверхеда
+        for i in range(ARRAY_SIZE // 10):  # Уменьшено для async-оверхеда
             fsm = StubFSM()
             order = OrderState(state=FSMState.DRAFT, version=0)
-            
+
             async def call_trans():
                 return fsm.transition(order, "cart.validate")
-            
+
             results = await asyncio.gather(*(call_trans() for _ in range(5)))
             unique_versions = {r.version for r in results if r}
-            if len(unique_versions) > 1: version_conflicts += 1
+            if len(unique_versions) > 1:
+                version_conflicts += 1
         runs.append(time.perf_counter() - t0)
-    return BenchmarkResult("Reentrancy Stress", "BM-11", runs, version_conflicts == 0, 
-                           {"conflicts": version_conflicts}, "Deterministic serialization")
+    return BenchmarkResult(
+        "Reentrancy Stress",
+        "BM-11",
+        runs,
+        version_conflicts == 0,
+        {"conflicts": version_conflicts},
+        "Deterministic serialization",
+    )
+
 
 async def bench_nanovm_double_execution() -> BenchmarkResult | None:
-    if not HAS_NANO_VM: return None
-    
-    program = Program.from_dict({
-        "name": "p", "steps": [
-            {"id": "a", "type": "llm", "prompt": "yes/no", "output_key": "d"},
-            {"id": "p", "type": "tool", "tool": "pay"}
-        ]
-    })
+    if not HAS_NANO_VM:
+        return None
+
+    program = Program.from_dict(
+        {
+            "name": "p",
+            "steps": [
+                {"id": "a", "type": "llm", "prompt": "yes/no", "output_key": "d"},
+                {"id": "p", "type": "tool", "tool": "pay"},
+            ],
+        }
+    )
 
     # Используем список как мутабельный контейнер для лямбды
     call_count = [0]
-    
+
     async def mock_pay():
         call_count[0] += 1
         return {"status": "ok"}
@@ -273,17 +320,26 @@ async def bench_nanovm_double_execution() -> BenchmarkResult | None:
             trace = await vm.run(program, context={})
             # Проверка по трейсу: шаг 'p' успешен ровно 1 раз
             p_steps = [s for s in trace.steps if s.step_id == "p" and s.status.name == "SUCCESS"]
-            if len(p_steps) > 1: double_exec += 1
+            if len(p_steps) > 1:
+                double_exec += 1
         runs.append(time.perf_counter() - t0)
 
-    return BenchmarkResult("nano-vm Safety", "BM-VM", runs, double_exec == 0, 
-                           {"double_execs": double_exec}, "Trace append-only invariant")
+    return BenchmarkResult(
+        "nano-vm Safety",
+        "BM-VM",
+        runs,
+        double_exec == 0,
+        {"double_execs": double_exec},
+        "Trace append-only invariant",
+    )
+
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # UI & RUNNER (остальные тесты bench_03, 04, 06-10, 12 остаются по аналогии)
 # ═══════════════════════════════════════════════════════════════════════════════
 
 # (Пропустим реализацию bench_03-04 и т.д. для краткости, они правятся по аналогии с BM-01)
+
 
 async def main():
     random.seed(SEED)
@@ -295,10 +351,11 @@ async def main():
     results.append(bench_02_duplicate_execution_attack())
     results.append(bench_05_tool_failure_cascade())
     results.append(await bench_11_reentrancy_stress())
-    
+
     if HAS_NANO_VM:
         res = await bench_nanovm_double_execution()
-        if res: results.append(res)
+        if res:
+            results.append(res)
 
     # Вывод таблицы
     table = Table(box=box.MINIMAL_DOUBLE_HEAD, header_style="bold cyan")
@@ -311,8 +368,9 @@ async def main():
     for r in results:
         status = "[bold green]PASS[/bold green]" if r.passed else "[bold red]FAIL[/bold red]"
         table.add_row(r.tag, r.name, status, f"{r.mean_ms:.2f}", r.invariant)
-    
+
     console.print(table)
+
 
 if __name__ == "__main__":
     asyncio.run(main())
