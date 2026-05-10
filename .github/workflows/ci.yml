@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: ["main"]
+    branches: ["main", "v0.7.0"]  # ✅ Добавил v0.7.0, чтобы CI запускался автоматически
   pull_request:
     branches: ["main"]
   workflow_dispatch:
@@ -26,6 +26,11 @@ on:
 permissions:
   contents: read
 
+# ✅ Предотвращает запуск нескольких одинаковых workflow одновременно
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   # -------------------------------------------------------------------------
   # Resolve: превращает строку "3.10,3.11,3.12" в JSON-массив для матрицы
@@ -41,16 +46,13 @@ jobs:
       - name: Build matrix and ref
         id: set
         run: |
-          # Для push/PR берём версии по умолчанию; для dispatch — из input
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            VERSIONS="${{ inputs.python_versions }}"
-            REF="${{ inputs.branch }}"
+            VERSIONS="${{ inputs.python_versions }}"            REF="${{ inputs.branch }}"
           else
             VERSIONS="3.10,3.11,3.12"
             REF="${{ github.ref_name }}"
           fi
 
-          # Превращаем "3.10,3.11,3.12" → ["3.10","3.11","3.12"]
           MATRIX=$(echo "$VERSIONS" | python3 -c "
           import sys, json
           raw = sys.stdin.read().strip()
@@ -92,9 +94,9 @@ jobs:
         run: python -m ruff check .
 
       - name: Mypy
-        if: ${{ !inputs.skip_mypy }}
+        # 🔧 Исправлено: GH Actions передаёт boolean как строку "true"/"false"
+        if: ${{ github.event.inputs.skip_mypy != 'true' }}
         run: python -m mypy nano_vm/
-
   # -------------------------------------------------------------------------
   # Test: pytest на выбранных версиях Python
   # -------------------------------------------------------------------------
