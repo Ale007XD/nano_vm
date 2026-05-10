@@ -17,7 +17,6 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
-
 import pytest
 
 from nano_vm.ast_engine import (
@@ -30,14 +29,17 @@ from nano_vm.ast_engine import (
     NotNode,
     VarNode,
     eval_condition,
+    parse_condition,
 )
 from nano_vm.models import (
     CapabilityRef,
     PolicySnapshot,
     Program,
     StateContext,
+    StepStatus,
 )
-from nano_vm.vm import ExecutionVM
+from nano_vm.vm import ExecutionVM, VMError
+
 
 # ===========================================================================
 # 1. ASTEngine — RFC operators
@@ -144,7 +146,8 @@ class TestASTEngineOperators:
 
     def test_not_node(self):
         node = NotNode(
-            op="not", operand=BinaryNode(op="==", left=LitNode(value=1), right=LitNode(value=2))
+            op="not",
+            operand=BinaryNode(op="==", left=LitNode(value=1), right=LitNode(value=2))
         )
         assert self.engine.evaluate(node, {}) is True
 
@@ -368,8 +371,12 @@ class TestPolicySnapshot:
         assert snap1.policy_hash != snap2.policy_hash
 
     def test_policy_hash_changes_with_caps(self):
-        snap1 = PolicySnapshot(policy_id="p1", version="1.0", tool_capabilities={"t": ["a"]})
-        snap2 = PolicySnapshot(policy_id="p1", version="1.0", tool_capabilities={"t": ["b"]})
+        snap1 = PolicySnapshot(
+            policy_id="p1", version="1.0", tool_capabilities={"t": ["a"]}
+        )
+        snap2 = PolicySnapshot(
+            policy_id="p1", version="1.0", tool_capabilities={"t": ["b"]}
+        )
         assert snap1.policy_hash != snap2.policy_hash
 
     def test_allowed_tools(self):
@@ -414,27 +421,14 @@ class TestVMConditionNoEval:
         return asyncio.get_event_loop().run_until_complete(coro)
 
     def test_basic_condition_yes(self):
-        program = Program.from_dict(
-            {
-                "steps": [
-                    {
-                        "id": "classify",
-                        "type": "llm",
-                        "prompt": "Classify: $input",
-                        "output_key": "decision",
-                    },
-                    {
-                        "id": "guard",
-                        "type": "condition",
-                        "condition": "'yes' in $decision",
-                        "then": "approve",
-                        "otherwise": "reject",
-                    },
-                    {"id": "approve", "type": "tool", "tool": "do_approve"},
-                    {"id": "reject", "type": "tool", "tool": "do_reject"},
-                ]
-            }
-        )
+        program = Program.from_dict({
+            "steps": [
+                {"id": "classify", "type": "llm", "prompt": "Classify: $input", "output_key": "decision"},
+                {"id": "guard", "type": "condition", "condition": "'yes' in $decision", "then": "approve", "otherwise": "reject"},
+                {"id": "approve", "type": "tool", "tool": "do_approve"},
+                {"id": "reject", "type": "tool", "tool": "do_reject"},
+            ]
+        })
         vm = ExecutionVM(
             llm=MockAdapter({"Classify": "yes approved"}),
             tools={
@@ -447,27 +441,14 @@ class TestVMConditionNoEval:
         assert trace.final_output == "approved"
 
     def test_basic_condition_no(self):
-        program = Program.from_dict(
-            {
-                "steps": [
-                    {
-                        "id": "classify",
-                        "type": "llm",
-                        "prompt": "Classify: $input",
-                        "output_key": "decision",
-                    },
-                    {
-                        "id": "guard",
-                        "type": "condition",
-                        "condition": "'yes' in $decision",
-                        "then": "approve",
-                        "otherwise": "reject",
-                    },
-                    {"id": "approve", "type": "tool", "tool": "do_approve"},
-                    {"id": "reject", "type": "tool", "tool": "do_reject"},
-                ]
-            }
-        )
+        program = Program.from_dict({
+            "steps": [
+                {"id": "classify", "type": "llm", "prompt": "Classify: $input", "output_key": "decision"},
+                {"id": "guard", "type": "condition", "condition": "'yes' in $decision", "then": "approve", "otherwise": "reject"},
+                {"id": "approve", "type": "tool", "tool": "do_approve"},
+                {"id": "reject", "type": "tool", "tool": "do_reject"},
+            ]
+        })
         vm = ExecutionVM(
             llm=MockAdapter({"Classify": "no"}),
             tools={
@@ -482,31 +463,27 @@ class TestVMConditionNoEval:
     def test_no_eval_in_source(self):
         """Убеждаемся что eval() удалён из vm.py."""
         import inspect
-
         from nano_vm import vm as vm_module
-
         src = inspect.getsource(vm_module)
         # eval() с __builtins__ — старая реализация; нового быть не должно
-        assert "eval(condition" not in src, "eval() still present in vm._execute_condition"
+        assert 'eval(condition' not in src, "eval() still present in vm._execute_condition"
 
     def test_condition_bad_expression_raises_vmerror(self):
         """Невычислимое выражение → VMError, не падение интерпретатора."""
-        program = Program.from_dict(
-            {
-                "steps": [
-                    {
-                        "id": "guard",
-                        "type": "condition",
-                        # Оператор >= не поддерживается RFC — парсер вернёт ошибку
-                        "condition": "$score >= 100",
-                        "then": "ok",
-                        "otherwise": "fail_step",
-                    },
-                    {"id": "ok", "type": "tool", "tool": "noop"},
-                    {"id": "fail_step", "type": "tool", "tool": "noop"},
-                ]
-            }
-        )
+        program = Program.from_dict({
+            "steps": [
+                {
+                    "id": "guard",
+                    "type": "condition",
+                    # Оператор >= не поддерживается RFC — парсер вернёт ошибку
+                    "condition": "$score >= 100",
+                    "then": "ok",
+                    "otherwise": "fail_step",
+                },
+                {"id": "ok", "type": "tool", "tool": "noop"},
+                {"id": "fail_step", "type": "tool", "tool": "noop"},
+            ]
+        })
         vm = ExecutionVM(llm=MockAdapter({}), tools={"noop": lambda: None})
         trace = self._run(vm.run(program, context={"score": 50}))
         # >= пока не поддержан RFC — либо FAILED, либо условие вычислилось через fallback
@@ -544,8 +521,6 @@ class TestIdempotency:
 
     def test_tool_step_same_output(self):
         from nano_vm.models import Step, StepType
-
-        counter = {"n": 0}
 
         def my_tool():
             # Инструмент детерминирован — возвращает константу
