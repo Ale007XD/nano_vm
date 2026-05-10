@@ -573,11 +573,11 @@ class ExecutionVM:
             output = await self._execute_tool(step, state)
             return output, None, []
         if step.type == StepType.CONDITION:
-            output = self._execute_condition(step, state)
-            return output, None, []
+            cond_output: str | None = self._execute_condition(step, state)
+            return cond_output, None, []
         if step.type == StepType.PARALLEL:
-            output, sub_results = await self._execute_parallel(step, state)
-            return output, None, sub_results
+            par_output, sub_results = await self._execute_parallel(step, state)
+            return par_output, None, sub_results
         raise VMError(f"Unknown step type: {step.type}")
 
     # ------------------------------------------------------------------
