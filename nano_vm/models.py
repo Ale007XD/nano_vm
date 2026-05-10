@@ -563,10 +563,7 @@ class Trace(BaseModel):
             return hashlib.sha256(b"empty").hexdigest()
 
         # Шаг 1: вычислить листья
-        leaves = [
-            hashlib.sha256(f"{idx}:{fp}".encode()).hexdigest()
-            for idx, fp in snapshots
-        ]
+        leaves = [hashlib.sha256(f"{idx}:{fp}".encode()).hexdigest() for idx, fp in snapshots]
 
         # Шаг 2-3: Merkle reduction
         current = leaves
