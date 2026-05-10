@@ -31,9 +31,6 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  # -------------------------------------------------------------------------
-  # Resolve: превращает строку версий в JSON-массив для матрицы
-  # -------------------------------------------------------------------------
   resolve:
     name: Resolve inputs
     runs-on: ubuntu-latest
@@ -47,10 +44,10 @@ jobs:
         run: |
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
             VERSIONS="${{ inputs.python_versions }}"
-            REF="${{ inputs.branch }}"          else
+            REF="${{ inputs.branch }}"
+          else
             VERSIONS="3.10,3.11,3.12"
-            REF="${{ github.ref_name }}"
-          fi
+            REF="${{ github.ref_name }}"          fi
 
           MATRIX=$(echo "$VERSIONS" | python3 -c "
           import sys, json
@@ -60,15 +57,12 @@ jobs:
           ")
 
           echo "matrix=$MATRIX" >> "$GITHUB_OUTPUT"
-          echo "ref=$REF"       >> "$GITHUB_OUTPUT"
+          echo "ref=$REF" >> "$GITHUB_OUTPUT"
 
           echo "### CI targets" >> "$GITHUB_STEP_SUMMARY"
-          echo "- **Branch:** \`$REF\`"          >> "$GITHUB_STEP_SUMMARY"
-          echo "- **Python:** \`$VERSIONS\`"     >> "$GITHUB_STEP_SUMMARY"
+          echo "- **Branch:** \`$REF\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "- **Python:** \`$VERSIONS\`" >> "$GITHUB_STEP_SUMMARY"
 
-  # -------------------------------------------------------------------------
-  # Lint: ruff + mypy (один раз, на 3.12)
-  # -------------------------------------------------------------------------
   lint:
     name: Lint (ruff + mypy)
     runs-on: ubuntu-latest
@@ -92,21 +86,17 @@ jobs:
       - name: Ruff check
         run: python -m ruff check .
 
-      # 🔧 ИСПРАВЛЕНО: Разделено на 2 шага, чтобы YAML точно сохранил переносы
       - name: Install mypy
         run: pip install mypy
 
-      - name: Run Mypy        if: ${{ github.event.inputs.skip_mypy != 'true' }}
+      - name: Run Mypy
+        if: ${{ github.event.inputs.skip_mypy != 'true' }}
         run: python -m mypy nano_vm/
 
-  # -------------------------------------------------------------------------
-  # Test: pytest на выбранных версиях Python
-  # -------------------------------------------------------------------------
   test:
     name: Test (Python ${{ matrix.python-version }})
     runs-on: ubuntu-latest
-    needs: [resolve, lint]
-    strategy:
+    needs: [resolve, lint]    strategy:
       fail-fast: false
       matrix:
         python-version: ${{ fromJson(needs.resolve.outputs.python-matrix) }}
