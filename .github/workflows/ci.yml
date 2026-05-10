@@ -32,7 +32,7 @@ concurrency:
 
 jobs:
   # -------------------------------------------------------------------------
-  # Resolve: превращает строку "3.10,3.11,3.12" в JSON-массив для матрицы
+  # Resolve: превращает строку версий в JSON-массив для матрицы
   # -------------------------------------------------------------------------
   resolve:
     name: Resolve inputs
@@ -92,11 +92,12 @@ jobs:
       - name: Ruff check
         run: python -m ruff check .
 
-      # 🔧 ВАРИАНТ 2: Явно ставим mypy перед запуском
-      - name: Mypy
-        if: ${{ github.event.inputs.skip_mypy != 'true' }}
-        run: |
-          pip install mypy          python -m mypy nano_vm/
+      # 🔧 ИСПРАВЛЕНО: Разделено на 2 шага, чтобы YAML точно сохранил переносы
+      - name: Install mypy
+        run: pip install mypy
+
+      - name: Run Mypy        if: ${{ github.event.inputs.skip_mypy != 'true' }}
+        run: python -m mypy nano_vm/
 
   # -------------------------------------------------------------------------
   # Test: pytest на выбранных версиях Python
