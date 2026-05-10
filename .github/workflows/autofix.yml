@@ -4,31 +4,23 @@ on:
   workflow_dispatch:
     inputs:
       branch:
-        description: "Branch to fix"
+        description: "Branch to run auto-fix on"
         required: true
         default: "main"
         type: string
-      commit_message:
-        description: "Commit message"
-        required: false
-        default: "style: auto-fix linting issues [skip ci]"
-        type: string
 
+# Нужно разрешение на запись, чтобы закоммитить исправления обратно
 permissions:
   contents: write
 
 jobs:
   autofix:
-    name: Apply ruff fixes
     runs-on: ubuntu-latest
-
     steps:
       - name: Checkout
         uses: actions/checkout@v4
         with:
           ref: ${{ inputs.branch }}
-          token: ${{ secrets.GITHUB_TOKEN }}
-          fetch-depth: 0
 
       - name: Setup Python
         uses: actions/setup-python@v5
@@ -37,26 +29,17 @@ jobs:
           cache: "pip"
 
       - name: Install dependencies
+        run: pip install -e ".[dev]"
+
+      - name: Run Ruff fixes & format
         run: |
-          python -m pip install --upgrade pip
-          pip install -e ".[dev]"
+          # 1. Исправляем логику: импорты, неиспользуемые переменные и т.д.
+          ruff check . --fix
+          # 2. Форматируем код: перенос длинных строк, отступы (решает E501)
+          ruff format .
 
-      - name: Run ruff --fix
-        run: ruff check . --fix
-
-      - name: Check for changes
-        id: git-check
-        run: |
-          if [ -n "$(git status --porcelain)" ]; then
-            echo "changes=true" >> $GITHUB_OUTPUT
-          else
-            echo "changes=false" >> $GITHUB_OUTPUT
-          fi
-
-      - name: Commit and push
-        if: steps.git-check.outputs.changes == 'true'
+      - name: Commit and push if changed
         uses: stefanzweifel/git-auto-commit-action@v5
         with:
-          commit_message: ${{ inputs.commit_message }}
-          branch: ${{ inputs.branch }}
-          commit_options: "--no-verify"
+          commit_message: "style: auto-fix linting [skip ci]"
+          # [skip ci] критически важен, чтобы не запустить CI в бесконечном цикле
