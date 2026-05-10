@@ -236,8 +236,7 @@ class PolicySnapshot(BaseModel, frozen=True):
         """
         if not self.policy_hash:
             caps_repr = ";".join(
-                f"{k}:{','.join(sorted(v))}"
-                for k, v in sorted(self.tool_capabilities.items())
+                f"{k}:{','.join(sorted(v))}" for k, v in sorted(self.tool_capabilities.items())
             )
             raw = f"{self.policy_id}:{self.version}:{caps_repr}".encode()
             # Обходим frozen через object.__setattr__

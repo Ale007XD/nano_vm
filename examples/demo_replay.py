@@ -2,11 +2,11 @@ import asyncio
 import json
 import time
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from rich.console import Console
 from rich.panel import Panel
-from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, TimeElapsedColumn
+from rich.progress import BarColumn, Progress, SpinnerColumn, TextColumn, TimeElapsedColumn
 
 from nano_vm.adapters import MockLLMAdapter
 from nano_vm.models import Program, Step, StepType, TraceStatus
@@ -14,15 +14,16 @@ from nano_vm.vm import ExecutionVM
 
 # ─── Конфигурация ────────────────────────────────────────────────
 INCIDENT_DIR = Path(__file__).parent / "incidents" / "pocketos_cursor_db_delete"
-REPLAY_ITERATIONS = 10_000      # Количество повторов за прогон
-RUNS = 5                        # Количество независимых прогонов
-CONCURRENCY_LIMIT = 200         # Лимит параллельных задач (как в эталонном бенчмарке)
+REPLAY_ITERATIONS = 10_000  # Количество повторов за прогон
+RUNS = 5  # Количество независимых прогонов
+CONCURRENCY_LIMIT = 200  # Лимит параллельных задач (как в эталонном бенчмарке)
+
 
 # ─── Адаптер, возвращающий конкретные ответы для шагов ─────────
 class IncidentMockLLMAdapter(MockLLMAdapter):
     """Подменяет ответ LLM на основе поля mock_response в трассе инцидента."""
 
-    def __init__(self, step_responses: Dict[str, str]):
+    def __init__(self, step_responses: dict[str, str]):
         super().__init__()
         self.step_responses = step_responses  # ключ – step_id, значение – ответ
 
@@ -40,7 +41,7 @@ class IncidentMockLLMAdapter(MockLLMAdapter):
 
 # ─── Загрузка инцидента ─────────────────────────────────────────
 def load_incident(path: Path) -> dict:
-    with open(path / "incident.json", "r", encoding="utf-8") as f:
+    with open(path / "incident.json", encoding="utf-8") as f:
         return json.load(f)
 
 
@@ -71,17 +72,19 @@ def build_program(incident: dict) -> Program:
 
 
 # ─── Анализ инвариантов (заглушка под реальную логику) ─────────
-def check_invariants(incident: dict, trace) -> List[Dict[str, Any]]:
+def check_invariants(incident: dict, trace) -> list[dict[str, Any]]:
     """Возвращает список нарушенных инвариантов."""
     violations = []
     # Пока проверяем только наличие expected_violations в трассе и статус TraceStatus.FAILED
     if trace.status == TraceStatus.FAILED:
         for v in incident.get("expected_violations", []):
-            violations.append({
-                "invariant": v.split(":")[0].strip(),
-                "description": v,
-                "evidence": {"trace_status": "FAILED", "error": str(trace.error)[:200]}
-            })
+            violations.append(
+                {
+                    "invariant": v.split(":")[0].strip(),
+                    "description": v,
+                    "evidence": {"trace_status": "FAILED", "error": str(trace.error)[:200]},
+                }
+            )
     return violations
 
 
@@ -94,7 +97,8 @@ async def replay_incident(incident_dir: Path, iterations: int, runs: int, concur
     # Подготавливаем маппинг ответов LLM
     step_responses = {
         step["step_id"]: step["mock_response"]
-        for step in incident["steps"] if step["type"] == "llm"
+        for step in incident["steps"]
+        if step["type"] == "llm"
     }
 
     console.print(
@@ -164,8 +168,10 @@ async def replay_incident(incident_dir: Path, iterations: int, runs: int, concur
         duration = time.time() - start_time
         total_success += success_count
         total_violations += violation_count
-        console.print(f"  [{run_idx}] Успешно: {success_count}, Ошибок: {violation_count}, "
-                      f"Длительность: {duration:.1f}с")
+        console.print(
+            f"  [{run_idx}] Успешно: {success_count}, Ошибок: {violation_count}, "
+            f"Длительность: {duration:.1f}с"
+        )
 
     # Генерация forensic_report.json
     report = {
@@ -174,7 +180,7 @@ async def replay_incident(incident_dir: Path, iterations: int, runs: int, concur
         "total_success": total_success,
         "total_violations": total_violations,
         "deterministic_match": deterministic_match,
-        "violations": incident.get("expected_violations", [])
+        "violations": incident.get("expected_violations", []),
     }
     report_path = incident_dir / "forensic_report.json"
     with open(report_path, "w", encoding="utf-8") as f:
