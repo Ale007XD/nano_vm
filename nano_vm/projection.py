@@ -61,7 +61,7 @@ _DEFAULT_PII_PATTERNS: list[tuple[re.Pattern[str], str]] = [
 ]
 
 # Поля StateContext.data которые всегда маскируются в LLM target
-_SENSITIVE_FIELD_PREFIXES = (
+_SENSITIVE_FIELD_PREFIXES: tuple[str, ...] = (
     "password",
     "secret",
     "token",
