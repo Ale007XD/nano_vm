@@ -20,11 +20,19 @@ RFC v0.7.0: «Pure function evaluation, no I/O or global state access.»
   - Неизвестный оператор → ASTEvalError (не молчаливое игнорирование).
 
 Формат JSON-дерева:
-  {
+ json_tree = {
     "op": "and",
-    "left":  { "op": "in", "left": {"op": "lit", "value": "yes"}, "right": {"op": "var", "name": "decision"} },
-    "right": { "op": ">",  "left": {"op": "var", "name": "score"}, "right": {"op": "lit", "value": 0} }
-  }
+    "left": { 
+        "op": "in", 
+        "left": {"op": "lit", "value": "yes"}, 
+        "right": {"op": "var", "name": "decision"} 
+    },
+    "right": { 
+        "op": ">",  
+        "left": {"op": "var", "name": "score"}, 
+        "right": {"op": "lit", "value": 0} 
+    }
+}
 """
 
 from __future__ import annotations
