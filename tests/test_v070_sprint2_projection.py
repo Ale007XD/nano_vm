@@ -21,6 +21,7 @@ import re
 from typing import Any
 
 import pytest
+
 from nano_vm.models import CapabilityRef, PolicySnapshot, StateContext
 from nano_vm.projection import (
     _PII_SENTINEL,
@@ -75,9 +76,7 @@ def state_with_pii() -> StateContext:
 @pytest.fixture
 def state_with_capref() -> StateContext:
     ref_live = CapabilityRef(ref_id="vault://users/42/email", salt="fixed-salt")
-    ref_tomb = CapabilityRef(
-        ref_id="vault://users/99/ssn", salt="tomb-salt", is_tombstone=True
-    )
+    ref_tomb = CapabilityRef(ref_id="vault://users/99/ssn", salt="tomb-salt", is_tombstone=True)
     return StateContext(
         data={
             "email_ref": ref_live,
@@ -134,9 +133,7 @@ class TestLLMProjection:
         assert result["__step_outputs__"]["classify"] == "urgent"
 
     def test_webhook_field_redacted(self, sanitizer: DeterministicSanitizer) -> None:
-        state = StateContext(
-            data={"__webhook__": {"status": "confirmed"}, "ok": "yes"}
-        )
+        state = StateContext(data={"__webhook__": {"status": "confirmed"}, "ok": "yes"})
         result = sanitizer.project(state, ProjectionTarget.LLM)
         assert result["__webhook__"] == _PII_SENTINEL
 
@@ -155,9 +152,7 @@ class TestLLMProjection:
         assert result["ssn_ref"] == _TOMBSTONE_SENTINEL
 
     def test_nested_dict_sanitized(self, sanitizer: DeterministicSanitizer) -> None:
-        state = StateContext(
-            data={"nested": {"inner_email": "x@y.com", "safe": "ok"}}
-        )
+        state = StateContext(data={"nested": {"inner_email": "x@y.com", "safe": "ok"}})
         result = sanitizer.project(state, ProjectionTarget.LLM)
         assert result["nested"]["inner_email"] == _PII_SENTINEL
         assert result["nested"]["safe"] == "ok"
@@ -236,9 +231,7 @@ class TestToolProjection:
         assert "email.send" in result
         assert "unrelated" not in result
 
-    def test_no_policy_returns_all_data(
-        self, sanitizer: DeterministicSanitizer
-    ) -> None:
+    def test_no_policy_returns_all_data(self, sanitizer: DeterministicSanitizer) -> None:
         state = StateContext(data={"a": 1, "b": 2})
         result = sanitizer.project(state, ProjectionTarget.TOOL, policy=None)
         assert result["a"] == 1
@@ -248,9 +241,7 @@ class TestToolProjection:
         self, sanitizer: DeterministicSanitizer, policy: PolicySnapshot
     ) -> None:
         state = StateContext(data={"x": "y"})
-        result = sanitizer.project(
-            state, ProjectionTarget.TOOL, policy=policy, tool_name=None
-        )
+        result = sanitizer.project(state, ProjectionTarget.TOOL, policy=policy, tool_name=None)
         assert result["x"] == "y"
 
     def test_tool_not_in_policy_returns_empty(
@@ -296,9 +287,7 @@ class TestSanitizerExtensions:
 
     def test_extra_sensitive_prefix(self) -> None:
         sanitizer = DeterministicSanitizer(extra_sensitive_prefixes=("internal_",))
-        state = StateContext(
-            data={"internal_key": "classified", "public": "open"}
-        )
+        state = StateContext(data={"internal_key": "classified", "public": "open"})
         result = sanitizer.project(state, ProjectionTarget.LLM)
         assert result["internal_key"] == _PII_SENTINEL
         assert result["public"] == "open"
@@ -321,12 +310,8 @@ class TestProjectConvenience:
         assert result["email"] == "x@y.com"
 
     def test_project_tool(self, policy: PolicySnapshot) -> None:
-        state = StateContext(
-            data={"weather.read": "sunny", "other": "secret"}
-        )
-        result = project(
-            state, ProjectionTarget.TOOL, policy=policy, tool_name="get_weather"
-        )
+        state = StateContext(data={"weather.read": "sunny", "other": "secret"})
+        result = project(state, ProjectionTarget.TOOL, policy=policy, tool_name="get_weather")
         assert "weather.read" in result
         assert "other" not in result
 
@@ -375,9 +360,7 @@ class TestAbstractProjectionLayer:
 
 
 class TestProjectionFSMIntegration:
-    def test_project_after_step_output(
-        self, sanitizer: DeterministicSanitizer
-    ) -> None:
+    def test_project_after_step_output(self, sanitizer: DeterministicSanitizer) -> None:
         state = StateContext(
             data={"user_input": "hello"},
             step_outputs={"classify": "urgent", "summary": "ok"},
@@ -386,9 +369,7 @@ class TestProjectionFSMIntegration:
         assert result["__step_outputs__"]["classify"] == "urgent"
         assert result["__step_outputs__"]["summary"] == "ok"
 
-    def test_tombstone_propagation_in_llm(
-        self, sanitizer: DeterministicSanitizer
-    ) -> None:
+    def test_tombstone_propagation_in_llm(self, sanitizer: DeterministicSanitizer) -> None:
         dead_ref = CapabilityRef(ref_id="vault://x", salt="s", is_tombstone=True)
         state = StateContext(data={}, step_outputs={"extract": dead_ref})
         result = sanitizer.project_for_llm(state)
