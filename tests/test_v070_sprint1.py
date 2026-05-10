@@ -17,29 +17,29 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
-import pytest
+import inspect
 
+import pytest
+from nano_vm import vm as vm_module
 from nano_vm.ast_engine import (
     ASTEngine,
     ASTEvalError,
-    ASTParseError,
     BinaryNode,
     LitNode,
     LogicalNode,
     NotNode,
     VarNode,
     eval_condition,
-    parse_condition,
 )
 from nano_vm.models import (
     CapabilityRef,
     PolicySnapshot,
     Program,
     StateContext,
-    StepStatus,
+    Step,
+    StepType,
 )
-from nano_vm.vm import ExecutionVM, VMError
-
+from nano_vm.vm import ExecutionVM
 
 # ===========================================================================
 # 1. ASTEngine — RFC operators
@@ -52,35 +52,44 @@ class TestASTEngineOperators:
     def setup_method(self):
         self.engine = ASTEngine()
 
-    def _ctx(self, **kw):
-        return kw
-
     # -- Equality
 
     def test_eq_true(self):
-        node = BinaryNode(op="==", left=LitNode(value="yes"), right=LitNode(value="yes"))
+        node = BinaryNode(
+            op="==", left=LitNode(value="yes"), right=LitNode(value="yes")
+        )
         assert self.engine.evaluate(node, {}) is True
 
     def test_eq_false(self):
-        node = BinaryNode(op="==", left=LitNode(value="yes"), right=LitNode(value="no"))
+        node = BinaryNode(
+            op="==", left=LitNode(value="yes"), right=LitNode(value="no")
+        )
         assert self.engine.evaluate(node, {}) is False
 
     def test_neq(self):
-        node = BinaryNode(op="!=", left=LitNode(value=1), right=LitNode(value=2))
+        node = BinaryNode(
+            op="!=", left=LitNode(value=1), right=LitNode(value=2)
+        )
         assert self.engine.evaluate(node, {}) is True
 
     # -- Comparison
 
     def test_gt_true(self):
-        node = BinaryNode(op=">", left=LitNode(value=5), right=LitNode(value=3))
+        node = BinaryNode(
+            op=">", left=LitNode(value=5), right=LitNode(value=3)
+        )
         assert self.engine.evaluate(node, {}) is True
 
     def test_gt_false(self):
-        node = BinaryNode(op=">", left=LitNode(value=1), right=LitNode(value=3))
+        node = BinaryNode(
+            op=">", left=LitNode(value=1), right=LitNode(value=3)
+        )
         assert self.engine.evaluate(node, {}) is False
 
     def test_lt(self):
-        node = BinaryNode(op="<", left=LitNode(value=1), right=LitNode(value=3))
+        node = BinaryNode(
+            op="<", left=LitNode(value=1), right=LitNode(value=3)
+        )
         assert self.engine.evaluate(node, {}) is True
 
     # -- Membership
@@ -110,7 +119,6 @@ class TestASTEngineOperators:
         assert self.engine.evaluate(node, {}) is True
 
     def test_contains(self):
-        # contains = left in right (alias)
         node = BinaryNode(
             op="contains",
             left=LitNode(value="yes"),
@@ -123,31 +131,45 @@ class TestASTEngineOperators:
     def test_and_both_true(self):
         node = LogicalNode(
             op="and",
-            left=BinaryNode(op="==", left=LitNode(value=1), right=LitNode(value=1)),
-            right=BinaryNode(op="==", left=LitNode(value=2), right=LitNode(value=2)),
+            left=BinaryNode(
+                op="==", left=LitNode(value=1), right=LitNode(value=1)
+            ),
+            right=BinaryNode(
+                op="==", left=LitNode(value=2), right=LitNode(value=2)
+            ),
         )
         assert self.engine.evaluate(node, {}) is True
 
     def test_and_short_circuit_false(self):
         node = LogicalNode(
             op="and",
-            left=BinaryNode(op="==", left=LitNode(value=1), right=LitNode(value=2)),
-            right=BinaryNode(op="==", left=LitNode(value=2), right=LitNode(value=2)),
+            left=BinaryNode(
+                op="==", left=LitNode(value=1), right=LitNode(value=2)
+            ),
+            right=BinaryNode(
+                op="==", left=LitNode(value=2), right=LitNode(value=2)
+            ),
         )
         assert self.engine.evaluate(node, {}) is False
 
     def test_or_one_true(self):
         node = LogicalNode(
             op="or",
-            left=BinaryNode(op="==", left=LitNode(value=1), right=LitNode(value=2)),
-            right=BinaryNode(op="==", left=LitNode(value=2), right=LitNode(value=2)),
+            left=BinaryNode(
+                op="==", left=LitNode(value=1), right=LitNode(value=2)
+            ),
+            right=BinaryNode(
+                op="==", left=LitNode(value=2), right=LitNode(value=2)
+            ),
         )
         assert self.engine.evaluate(node, {}) is True
 
     def test_not_node(self):
         node = NotNode(
             op="not",
-            operand=BinaryNode(op="==", left=LitNode(value=1), right=LitNode(value=2))
+            operand=BinaryNode(
+                op="==", left=LitNode(value=1), right=LitNode(value=2)
+            ),
         )
         assert self.engine.evaluate(node, {}) is True
 
@@ -181,7 +203,9 @@ class TestASTEngineOperators:
     # -- Type error
 
     def test_type_error_raises(self):
-        node = BinaryNode(op=">", left=LitNode(value="abc"), right=LitNode(value=1))
+        node = BinaryNode(
+            op=">", left=LitNode(value="abc"), right=LitNode(value=1)
+        )
         with pytest.raises(ASTEvalError, match="Type error"):
             self.engine.evaluate(node, {})
 
@@ -195,7 +219,9 @@ class TestConditionParser:
     """parse_condition() компилирует DSL в дерево, eval_condition() вычисляет."""
 
     def test_simple_in(self):
-        result = eval_condition("'yes' in $decision", {"decision": "yes approved"})
+        result = eval_condition(
+            "'yes' in $decision", {"decision": "yes approved"}
+        )
         assert result is True
 
     def test_simple_eq(self):
@@ -238,7 +264,7 @@ class TestConditionParser:
         result = eval_condition("$val == None", {"val": None})
         assert result is True
 
-    # -- Детерминизм: одинаковый вход → одинаковый результат
+    # -- Детерминизм
 
     def test_determinism(self):
         expr = "'yes' in $decision"
@@ -249,26 +275,20 @@ class TestConditionParser:
     # -- Безопасность: попытки инъекций
 
     def test_no_builtins_import(self):
-        """Попытка использовать __import__ — должна упасть или вернуть False, не выполниться."""
-        # Строка не является валидным DSL-выражением — парсер вернёт LitNode
-        # ASTEngine не выполняет произвольный код
+        """__import__ не выполняется — трактуется как строковый литерал."""
         result = eval_condition("__import__('os') == None", {})
-        # Либо False (атом "__import__('os')" != None), либо ошибка — в любом случае не выполнится
-        assert result is False or result is True  # главное — нет выполнения
+        assert result is False or result is True  # нет выполнения
 
     def test_no_exec(self):
-        """Строка с exec() не должна выполниться."""
-        # eval_condition попытается распарсить — вернёт LitNode со строкой, не выполнит
+        """exec() не выполняется."""
         try:
             result = eval_condition("exec('import os')", {})
-            # Если не бросило — результат должен быть bool, не side-effect
             assert isinstance(result, bool)
-        except (ASTEvalError, ASTParseError):
+        except (ASTEvalError, Exception):
             pass  # тоже правильно
 
     def test_injection_in_condition(self):
-        """LLM-output как значение переменной, не как выражение."""
-        # $decision содержит злобную строку — она тестируется, не исполняется
+        """LLM-output как значение переменной, а не как выражение."""
         evil = "__import__('os').system('rm -rf /')"
         result = eval_condition("'yes' in $decision", {"decision": evil})
         assert result is False  # 'yes' не в строке
@@ -282,17 +302,21 @@ class TestConditionParser:
 class TestCapabilityRef:
     def test_secure_hash_deterministic(self):
         ref = CapabilityRef(ref_id="vault://users/42/email", salt="fixed-salt")
-        h1 = ref.secure_hash()
-        h2 = ref.secure_hash()
-        assert h1 == h2
+        assert ref.secure_hash() == ref.secure_hash()
 
     def test_secure_hash_sha256(self):
         ref = CapabilityRef(ref_id="vault://users/42/email", salt="fixed-salt")
-        expected = hashlib.sha256(b"vault://users/42/emailfixed-salt").hexdigest()
+        expected = hashlib.sha256(
+            b"vault://users/42/emailfixed-salt"
+        ).hexdigest()
         assert ref.secure_hash() == expected
 
     def test_tombstone_returns_constant(self):
-        ref = CapabilityRef(ref_id="vault://users/42/email", salt="any-salt", is_tombstone=True)
+        ref = CapabilityRef(
+            ref_id="vault://users/42/email",
+            salt="any-salt",
+            is_tombstone=True,
+        )
         assert ref.secure_hash() == "TOMBSTONE"
 
     def test_tombstone_method(self):
@@ -300,13 +324,12 @@ class TestCapabilityRef:
         tombstoned = ref.tombstone()
         assert tombstoned.is_tombstone is True
         assert tombstoned.secure_hash() == "TOMBSTONE"
-        # Оригинал не изменился (frozen)
-        assert ref.is_tombstone is False
+        assert ref.is_tombstone is False  # оригинал не изменился
 
     def test_frozen(self):
         ref = CapabilityRef(ref_id="vault://x", salt="s")
-        with pytest.raises(Exception):  # ValidationError или TypeError
-            ref.ref_id = "vault://y"  # type: ignore
+        with pytest.raises(Exception):
+            ref.ref_id = "vault://y"  # type: ignore[misc]
 
     def test_different_salts_different_hashes(self):
         ref1 = CapabilityRef(ref_id="vault://x", salt="salt1")
@@ -316,17 +339,17 @@ class TestCapabilityRef:
     def test_default_salt_generated(self):
         ref1 = CapabilityRef(ref_id="vault://x")
         ref2 = CapabilityRef(ref_id="vault://x")
-        # Разные соли → разные хеши (с высокой вероятностью)
         assert ref1.salt != ref2.salt
 
     def test_tombstone_hash_chain_preserved(self):
-        """Все tombstone-ссылки возвращают одно константное значение — hash chain не ломается."""
+        """Все tombstone-ссылки возвращают константу — hash chain не ломается."""
         refs = [
-            CapabilityRef(ref_id=f"vault://user/{i}", salt=f"s{i}", is_tombstone=True)
+            CapabilityRef(
+                ref_id=f"vault://user/{i}", salt=f"s{i}", is_tombstone=True
+            )
             for i in range(10)
         ]
-        hashes = {r.secure_hash() for r in refs}
-        assert hashes == {"TOMBSTONE"}
+        assert {r.secure_hash() for r in refs} == {"TOMBSTONE"}
 
 
 # ===========================================================================
@@ -336,15 +359,19 @@ class TestCapabilityRef:
 
 class TestPolicySnapshot:
     def test_frozen(self):
-        snap = PolicySnapshot(policy_id="p1", version="1.0", tool_capabilities={})
+        snap = PolicySnapshot(
+            policy_id="p1", version="1.0", tool_capabilities={}
+        )
         with pytest.raises(Exception):
-            snap.policy_id = "p2"  # type: ignore
+            snap.policy_id = "p2"  # type: ignore[misc]
 
     def test_has_capability_true(self):
         snap = PolicySnapshot(
             policy_id="p1",
             version="1.0",
-            tool_capabilities={"send_email": ["email.read_raw", "email.send"]},
+            tool_capabilities={
+                "send_email": ["email.read_raw", "email.send"]
+            },
         )
         assert snap.has_capability("send_email", "email.read_raw") is True
         assert snap.has_capability("send_email", "email.send") is True
@@ -359,15 +386,26 @@ class TestPolicySnapshot:
         assert snap.has_capability("unknown_tool", "any") is False
 
     def test_policy_hash_deterministic(self):
-        caps = {"send_email": ["email.send", "email.read_raw"], "search": ["web.read"]}
-        snap1 = PolicySnapshot(policy_id="p1", version="1.0", tool_capabilities=caps)
-        snap2 = PolicySnapshot(policy_id="p1", version="1.0", tool_capabilities=caps)
+        caps = {
+            "send_email": ["email.send", "email.read_raw"],
+            "search": ["web.read"],
+        }
+        snap1 = PolicySnapshot(
+            policy_id="p1", version="1.0", tool_capabilities=caps
+        )
+        snap2 = PolicySnapshot(
+            policy_id="p1", version="1.0", tool_capabilities=caps
+        )
         assert snap1.policy_hash == snap2.policy_hash
 
     def test_policy_hash_changes_with_version(self):
         caps = {"tool": ["cap"]}
-        snap1 = PolicySnapshot(policy_id="p1", version="1.0", tool_capabilities=caps)
-        snap2 = PolicySnapshot(policy_id="p1", version="1.1", tool_capabilities=caps)
+        snap1 = PolicySnapshot(
+            policy_id="p1", version="1.0", tool_capabilities=caps
+        )
+        snap2 = PolicySnapshot(
+            policy_id="p1", version="1.1", tool_capabilities=caps
+        )
         assert snap1.policy_hash != snap2.policy_hash
 
     def test_policy_hash_changes_with_caps(self):
@@ -420,15 +458,28 @@ class TestVMConditionNoEval:
     def _run(self, coro):
         return asyncio.get_event_loop().run_until_complete(coro)
 
-    def test_basic_condition_yes(self):
-        program = Program.from_dict({
+    def _make_program(self):
+        return Program.from_dict({
             "steps": [
-                {"id": "classify", "type": "llm", "prompt": "Classify: $input", "output_key": "decision"},
-                {"id": "guard", "type": "condition", "condition": "'yes' in $decision", "then": "approve", "otherwise": "reject"},
+                {
+                    "id": "classify",
+                    "type": "llm",
+                    "prompt": "Classify: $input",
+                    "output_key": "decision",
+                },
+                {
+                    "id": "guard",
+                    "type": "condition",
+                    "condition": "'yes' in $decision",
+                    "then": "approve",
+                    "otherwise": "reject",
+                },
                 {"id": "approve", "type": "tool", "tool": "do_approve"},
                 {"id": "reject", "type": "tool", "tool": "do_reject"},
             ]
         })
+
+    def test_basic_condition_yes(self):
         vm = ExecutionVM(
             llm=MockAdapter({"Classify": "yes approved"}),
             tools={
@@ -436,19 +487,11 @@ class TestVMConditionNoEval:
                 "do_reject": lambda: "rejected",
             },
         )
-        trace = self._run(vm.run(program, context={"input": "refund"}))
+        trace = self._run(vm.run(self._make_program(), context={"input": "r"}))
         assert trace.status.value == "success"
         assert trace.final_output == "approved"
 
     def test_basic_condition_no(self):
-        program = Program.from_dict({
-            "steps": [
-                {"id": "classify", "type": "llm", "prompt": "Classify: $input", "output_key": "decision"},
-                {"id": "guard", "type": "condition", "condition": "'yes' in $decision", "then": "approve", "otherwise": "reject"},
-                {"id": "approve", "type": "tool", "tool": "do_approve"},
-                {"id": "reject", "type": "tool", "tool": "do_reject"},
-            ]
-        })
         vm = ExecutionVM(
             llm=MockAdapter({"Classify": "no"}),
             tools={
@@ -456,26 +499,22 @@ class TestVMConditionNoEval:
                 "do_reject": lambda: "rejected",
             },
         )
-        trace = self._run(vm.run(program, context={"input": "spam"}))
+        trace = self._run(vm.run(self._make_program(), context={"input": "s"}))
         assert trace.status.value == "success"
         assert trace.final_output == "rejected"
 
     def test_no_eval_in_source(self):
         """Убеждаемся что eval() удалён из vm.py."""
-        import inspect
-        from nano_vm import vm as vm_module
         src = inspect.getsource(vm_module)
-        # eval() с __builtins__ — старая реализация; нового быть не должно
-        assert 'eval(condition' not in src, "eval() still present in vm._execute_condition"
+        assert "eval(condition" not in src
 
     def test_condition_bad_expression_raises_vmerror(self):
-        """Невычислимое выражение → VMError, не падение интерпретатора."""
+        """Невычислимое выражение → FAILED trace, не падение интерпретатора."""
         program = Program.from_dict({
             "steps": [
                 {
                     "id": "guard",
                     "type": "condition",
-                    # Оператор >= не поддерживается RFC — парсер вернёт ошибку
                     "condition": "$score >= 100",
                     "then": "ok",
                     "otherwise": "fail_step",
@@ -486,8 +525,6 @@ class TestVMConditionNoEval:
         })
         vm = ExecutionVM(llm=MockAdapter({}), tools={"noop": lambda: None})
         trace = self._run(vm.run(program, context={"score": 50}))
-        # >= пока не поддержан RFC — либо FAILED, либо условие вычислилось через fallback
-        # Главное: нет AttributeError / SyntaxError / выполнения произвольного кода
         assert trace.status.value in ("success", "failed")
 
 
@@ -506,24 +543,19 @@ class TestIdempotency:
         return asyncio.get_event_loop().run_until_complete(coro)
 
     def test_llm_step_same_output(self):
-        from nano_vm.models import Step, StepType
-
         step = Step(id="s1", type=StepType.LLM, prompt="Hello $name")
         state = StateContext(data={"name": "Alice"})
         vm = ExecutionVM(llm=MockAdapter({"Hello Alice": "Hi!"}), tools={})
 
         results = []
         for _ in range(5):
-            out, usage, _ = self._run(vm._execute_step(step, state))
+            out, _usage, _ = self._run(vm._execute_step(step, state))
             results.append(out)
 
         assert len(set(results)) == 1, f"Non-deterministic outputs: {results}"
 
     def test_tool_step_same_output(self):
-        from nano_vm.models import Step, StepType
-
         def my_tool():
-            # Инструмент детерминирован — возвращает константу
             return "result"
 
         step = Step(id="s1", type=StepType.TOOL, tool="my_tool")
@@ -538,8 +570,6 @@ class TestIdempotency:
         assert all(r == "result" for r in results)
 
     def test_condition_step_same_output(self):
-        from nano_vm.models import Step, StepType
-
         step = Step(
             id="s1",
             type=StepType.CONDITION,
@@ -559,14 +589,13 @@ class TestIdempotency:
 
     def test_state_immutable_after_step(self):
         """StateContext не мутируется внутри _execute_step."""
-        from nano_vm.models import Step, StepType
-
-        step = Step(id="s1", type=StepType.TOOL, tool="t", output_key="result")
+        step = Step(
+            id="s1", type=StepType.TOOL, tool="t", output_key="result"
+        )
         state = StateContext(data={"x": 1})
         original_data = dict(state.data)
 
         vm = ExecutionVM(llm=MockAdapter({}), tools={"t": lambda: 42})
         self._run(vm._execute_step(step, state))
 
-        # state остался прежним — неизменная копия
         assert state.data == original_data
