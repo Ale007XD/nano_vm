@@ -61,7 +61,7 @@ _DEFAULT_PII_PATTERNS: list[tuple[re.Pattern[str], str]] = [
 ]
 
 # Поля StateContext.data которые всегда маскируются в LLM target
-_SENSITIVE_FIELD_PREFIXES: tuple[str, ...] = (
+_SENSITIVE_FIELD_PREFIXES = (
     "password",
     "secret",
     "token",
@@ -128,7 +128,9 @@ class AbstractProjectionLayer(ABC):
         policy: PolicySnapshot | None = None,
     ) -> dict[str, Any]:
         """Удобный алиас: project(state, TOOL, policy, tool_name)."""
-        return self.project(state, ProjectionTarget.TOOL, policy=policy, tool_name=tool_name)
+        return self.project(
+            state, ProjectionTarget.TOOL, policy=policy, tool_name=tool_name
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -172,7 +174,9 @@ class DeterministicSanitizer(AbstractProjectionLayer):
             self._pii_patterns.extend(extra_pii_patterns)
         self._sensitive_prefixes = _SENSITIVE_FIELD_PREFIXES
         if extra_sensitive_prefixes:
-            self._sensitive_prefixes = _SENSITIVE_FIELD_PREFIXES + extra_sensitive_prefixes
+            self._sensitive_prefixes = (
+                _SENSITIVE_FIELD_PREFIXES + extra_sensitive_prefixes
+            )
 
     # ------------------------------------------------------------------
     # project() — главная точка входа
@@ -201,7 +205,12 @@ class DeterministicSanitizer(AbstractProjectionLayer):
         result: dict[str, Any] = {}
 
         for key, value in state.data.items():
-            if self._is_sensitive_field(key):
+            # CapabilityRef проверяется первым: tombstone имеет приоритет
+            # над sensitive-prefix редактированием (иначе ssn_ref → PII_SENTINEL,
+            # а не TOMBSTONE_SENTINEL, что ломает hash chain инвариант).
+            if isinstance(value, CapabilityRef):
+                result[key] = self._sanitize_value_llm(value)
+            elif self._is_sensitive_field(key):
                 result[key] = _PII_SENTINEL
             else:
                 result[key] = self._sanitize_value_llm(value)
@@ -241,7 +250,9 @@ class DeterministicSanitizer(AbstractProjectionLayer):
     ) -> dict[str, Any]:
         # Без policy или tool_name — возвращаем всё data (backward compat)
         if policy is None or tool_name is None:
-            return {k: self._sanitize_value_trace(v) for k, v in state.data.items()}
+            return {
+                k: self._sanitize_value_trace(v) for k, v in state.data.items()
+            }
 
         allowed_caps = policy.tool_capabilities.get(tool_name, [])
 
@@ -276,7 +287,10 @@ class DeterministicSanitizer(AbstractProjectionLayer):
         return value
 
     def _sanitize_value_trace(self, value: Any) -> Any:
-        """TRACE/TOOL: CapabilityRef → hash (tombstone sentinel), остальное без изменений."""
+        """TRACE/TOOL: CapabilityRef → hash (tombstone sentinel).
+
+        Остальное без изменений.
+        """
         if isinstance(value, CapabilityRef):
             return _TOMBSTONE_SENTINEL if value.is_tombstone else value.secure_hash()
         if isinstance(value, dict):
