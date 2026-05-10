@@ -19,6 +19,7 @@ import hashlib
 
 import pytest
 
+from nano_vm.adapters.mock_adapter import MockLLMAdapter
 from nano_vm.models import (
     CapabilityRef,
     GdprEraseEvent,
@@ -26,9 +27,7 @@ from nano_vm.models import (
     StateContext,
     Trace,
 )
-from nano_vm.adapters.mock_adapter import MockLLMAdapter
 from nano_vm.vm import ExecutionVM
-
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -130,12 +129,8 @@ class TestVmErase:
         assert new_state.data["username"] == "alice"
         assert new_state.data["score"] == 42
 
-    def test_erase_multiple_targets(
-        self, vm: ExecutionVM, state_with_refs: StateContext
-    ) -> None:
-        event = GdprEraseEvent(
-            target_ref_ids=("vault://users/42/email", "vault://users/42/phone")
-        )
+    def test_erase_multiple_targets(self, vm: ExecutionVM, state_with_refs: StateContext) -> None:
+        event = GdprEraseEvent(target_ref_ids=("vault://users/42/email", "vault://users/42/phone"))
         new_state, count = vm.erase(event, state_with_refs)
 
         assert count == 2
@@ -161,9 +156,7 @@ class TestVmErase:
         assert isinstance(original_ref, CapabilityRef)
         assert original_ref.is_tombstone is False
 
-    def test_erase_step_outputs_untouched(
-        self, vm: ExecutionVM, ref_email: CapabilityRef
-    ) -> None:
+    def test_erase_step_outputs_untouched(self, vm: ExecutionVM, ref_email: CapabilityRef) -> None:
         state = StateContext(
             data={"email_ref": ref_email},
             step_outputs={"step1": "some output"},
@@ -174,9 +167,7 @@ class TestVmErase:
         assert count == 1
         assert new_state.step_outputs == {"step1": "some output"}
 
-    def test_erase_deterministic(
-        self, vm: ExecutionVM, state_with_refs: StateContext
-    ) -> None:
+    def test_erase_deterministic(self, vm: ExecutionVM, state_with_refs: StateContext) -> None:
         event = GdprEraseEvent(target_ref_ids=("vault://users/42/email",))
         state_a, count_a = vm.erase(event, state_with_refs)
         state_b, count_b = vm.erase(event, state_with_refs)
@@ -243,7 +234,10 @@ class TestCanonicalSnapshotHash:
         for i, fp in enumerate(["aa", "bb", "cc", "dd"]):
             trace = trace.add_snapshot(i, fp)
 
-        leaves = [hashlib.sha256(f"{i}:{fp}".encode()).digest() for i, fp in enumerate(["aa","bb","cc","dd"])]
+        leaves = [
+            hashlib.sha256(f"{i}:{fp}".encode()).digest()
+            for i, fp in enumerate(["aa", "bb", "cc", "dd"])
+        ]
         n01 = hashlib.sha256(leaves[0] + leaves[1]).digest()
         n23 = hashlib.sha256(leaves[2] + leaves[3]).digest()
         assert trace.canonical_snapshot_hash() == hashlib.sha256(n01 + n23).hexdigest()
