@@ -35,9 +35,9 @@ from .models import CapabilityRef, PolicySnapshot, StateContext
 class ProjectionTarget(str, Enum):
     """Целевое представление StateContext."""
 
-    LLM = "LLM"      # промпт для LLM: максимальная фильтрация PII
+    LLM = "LLM"  # промпт для LLM: максимальная фильтрация PII
     TRACE = "TRACE"  # аудит-лог: tombstone-маскировка, полная структура
-    TOOL = "TOOL"    # аргументы tool-вызова: только capabilities из PolicySnapshot
+    TOOL = "TOOL"  # аргументы tool-вызова: только capabilities из PolicySnapshot
 
 
 # ---------------------------------------------------------------------------
@@ -62,8 +62,15 @@ _DEFAULT_PII_PATTERNS: list[tuple[re.Pattern[str], str]] = [
 
 # Поля StateContext.data которые всегда маскируются в LLM target
 _SENSITIVE_FIELD_PREFIXES = (
-    "password", "secret", "token", "api_key", "auth",
-    "ssn", "credit_card", "card_number", "cvv",
+    "password",
+    "secret",
+    "token",
+    "api_key",
+    "auth",
+    "ssn",
+    "credit_card",
+    "card_number",
+    "cvv",
     "__webhook__",  # payload от внешней системы — не в LLM промпт
 )
 
@@ -104,7 +111,9 @@ class AbstractProjectionLayer(ABC):
             Никогда не мутирует state.
         """
 
-    def project_for_llm(self, state: StateContext, policy: PolicySnapshot | None = None) -> dict[str, Any]:
+    def project_for_llm(
+        self, state: StateContext, policy: PolicySnapshot | None = None
+    ) -> dict[str, Any]:
         """Удобный алиас: project(state, LLM, policy)."""
         return self.project(state, ProjectionTarget.LLM, policy=policy)
 
@@ -199,8 +208,7 @@ class DeterministicSanitizer(AbstractProjectionLayer):
 
         # step_outputs нужны для $var резолвинга — включаем с sanitize
         result["__step_outputs__"] = {
-            k: self._sanitize_value_llm(v)
-            for k, v in state.step_outputs.items()
+            k: self._sanitize_value_llm(v) for k, v in state.step_outputs.items()
         }
 
         return result
@@ -216,8 +224,7 @@ class DeterministicSanitizer(AbstractProjectionLayer):
             result[key] = self._sanitize_value_trace(value)
 
         result["__step_outputs__"] = {
-            k: self._sanitize_value_trace(v)
-            for k, v in state.step_outputs.items()
+            k: self._sanitize_value_trace(v) for k, v in state.step_outputs.items()
         }
 
         return result

@@ -40,20 +40,20 @@ from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-
-from nano_vm.models import CapabilityRef, PolicySnapshot, StateContext
-from nano_vm.projection import (
-    AbstractProjectionLayer,
-    DeterministicSanitizer,
-    ProjectionTarget,
-    _PII_SENTINEL,
-    _TOMBSTONE_SENTINEL,
-    project,
-)
 from nano_vm_mcp.handlers import (
     CapabilityDeniedError,
     GovernedRunProgramHandler,
     GovernedToolExecutor,
+)
+
+from nano_vm.models import CapabilityRef, PolicySnapshot, StateContext
+from nano_vm.projection import (
+    _PII_SENTINEL,
+    _TOMBSTONE_SENTINEL,
+    AbstractProjectionLayer,
+    DeterministicSanitizer,
+    ProjectionTarget,
+    project,
 )
 
 # ---------------------------------------------------------------------------
@@ -117,29 +117,41 @@ def state_with_capref() -> StateContext:
 
 
 class TestLLMProjection:
-    def test_email_redacted(self, sanitizer: DeterministicSanitizer, state_with_pii: StateContext) -> None:
+    def test_email_redacted(
+        self, sanitizer: DeterministicSanitizer, state_with_pii: StateContext
+    ) -> None:
         result = sanitizer.project(state_with_pii, ProjectionTarget.LLM)
         assert result["user_email"] == _PII_SENTINEL
 
-    def test_email_in_string_redacted(self, sanitizer: DeterministicSanitizer, state_with_pii: StateContext) -> None:
+    def test_email_in_string_redacted(
+        self, sanitizer: DeterministicSanitizer, state_with_pii: StateContext
+    ) -> None:
         result = sanitizer.project(state_with_pii, ProjectionTarget.LLM)
         assert "bob@test.org" not in result["message"]
         assert _PII_SENTINEL in result["message"]
 
-    def test_non_pii_string_preserved(self, sanitizer: DeterministicSanitizer, state_with_pii: StateContext) -> None:
+    def test_non_pii_string_preserved(
+        self, sanitizer: DeterministicSanitizer, state_with_pii: StateContext
+    ) -> None:
         result = sanitizer.project(state_with_pii, ProjectionTarget.LLM)
         assert result["safe_field"] == "hello world"
 
-    def test_numeric_preserved(self, sanitizer: DeterministicSanitizer, state_with_pii: StateContext) -> None:
+    def test_numeric_preserved(
+        self, sanitizer: DeterministicSanitizer, state_with_pii: StateContext
+    ) -> None:
         result = sanitizer.project(state_with_pii, ProjectionTarget.LLM)
         assert result["score"] == 42
 
-    def test_sensitive_field_prefix_redacted(self, sanitizer: DeterministicSanitizer, state_with_pii: StateContext) -> None:
+    def test_sensitive_field_prefix_redacted(
+        self, sanitizer: DeterministicSanitizer, state_with_pii: StateContext
+    ) -> None:
         result = sanitizer.project(state_with_pii, ProjectionTarget.LLM)
         assert result["password"] == _PII_SENTINEL
         assert result["token"] == _PII_SENTINEL
 
-    def test_step_outputs_included(self, sanitizer: DeterministicSanitizer, state_with_pii: StateContext) -> None:
+    def test_step_outputs_included(
+        self, sanitizer: DeterministicSanitizer, state_with_pii: StateContext
+    ) -> None:
         result = sanitizer.project(state_with_pii, ProjectionTarget.LLM)
         assert "__step_outputs__" in result
         assert result["__step_outputs__"]["classify"] == "urgent"
@@ -149,13 +161,17 @@ class TestLLMProjection:
         result = sanitizer.project(state, ProjectionTarget.LLM)
         assert result["__webhook__"] == _PII_SENTINEL
 
-    def test_capability_ref_live_hashed(self, sanitizer: DeterministicSanitizer, state_with_capref: StateContext) -> None:
+    def test_capability_ref_live_hashed(
+        self, sanitizer: DeterministicSanitizer, state_with_capref: StateContext
+    ) -> None:
         result = sanitizer.project(state_with_capref, ProjectionTarget.LLM)
         ref = CapabilityRef(ref_id="vault://users/42/email", salt="fixed-salt")
         assert result["email_ref"] == ref.secure_hash()
         assert result["email_ref"] != "vault://users/42/email"
 
-    def test_capability_ref_tombstone(self, sanitizer: DeterministicSanitizer, state_with_capref: StateContext) -> None:
+    def test_capability_ref_tombstone(
+        self, sanitizer: DeterministicSanitizer, state_with_capref: StateContext
+    ) -> None:
         result = sanitizer.project(state_with_capref, ProjectionTarget.LLM)
         assert result["ssn_ref"] == _TOMBSTONE_SENTINEL
 
@@ -179,25 +195,35 @@ class TestLLMProjection:
 
 
 class TestTraceProjection:
-    def test_email_not_redacted(self, sanitizer: DeterministicSanitizer, state_with_pii: StateContext) -> None:
+    def test_email_not_redacted(
+        self, sanitizer: DeterministicSanitizer, state_with_pii: StateContext
+    ) -> None:
         result = sanitizer.project(state_with_pii, ProjectionTarget.TRACE)
         # TRACE сохраняет всё кроме CapabilityRef
         assert result["user_email"] == "alice@example.com"
 
-    def test_sensitive_field_not_redacted(self, sanitizer: DeterministicSanitizer, state_with_pii: StateContext) -> None:
+    def test_sensitive_field_not_redacted(
+        self, sanitizer: DeterministicSanitizer, state_with_pii: StateContext
+    ) -> None:
         result = sanitizer.project(state_with_pii, ProjectionTarget.TRACE)
         assert result["password"] == "s3cr3t"
 
-    def test_tombstone_sentinel_in_trace(self, sanitizer: DeterministicSanitizer, state_with_capref: StateContext) -> None:
+    def test_tombstone_sentinel_in_trace(
+        self, sanitizer: DeterministicSanitizer, state_with_capref: StateContext
+    ) -> None:
         result = sanitizer.project(state_with_capref, ProjectionTarget.TRACE)
         assert result["ssn_ref"] == _TOMBSTONE_SENTINEL
 
-    def test_live_capref_hashed_in_trace(self, sanitizer: DeterministicSanitizer, state_with_capref: StateContext) -> None:
+    def test_live_capref_hashed_in_trace(
+        self, sanitizer: DeterministicSanitizer, state_with_capref: StateContext
+    ) -> None:
         result = sanitizer.project(state_with_capref, ProjectionTarget.TRACE)
         ref = CapabilityRef(ref_id="vault://users/42/email", salt="fixed-salt")
         assert result["email_ref"] == ref.secure_hash()
 
-    def test_step_outputs_included(self, sanitizer: DeterministicSanitizer, state_with_pii: StateContext) -> None:
+    def test_step_outputs_included(
+        self, sanitizer: DeterministicSanitizer, state_with_pii: StateContext
+    ) -> None:
         result = sanitizer.project(state_with_pii, ProjectionTarget.TRACE)
         assert "__step_outputs__" in result
 
@@ -216,12 +242,16 @@ class TestToolProjection:
     def test_only_capability_keys_returned(
         self, sanitizer: DeterministicSanitizer, policy: PolicySnapshot
     ) -> None:
-        state = StateContext(data={
-            "email.read_raw": "raw content",
-            "email.send": True,
-            "unrelated": "secret",
-        })
-        result = sanitizer.project(state, ProjectionTarget.TOOL, policy=policy, tool_name="send_email")
+        state = StateContext(
+            data={
+                "email.read_raw": "raw content",
+                "email.send": True,
+                "unrelated": "secret",
+            }
+        )
+        result = sanitizer.project(
+            state, ProjectionTarget.TOOL, policy=policy, tool_name="send_email"
+        )
         assert "email.read_raw" in result
         assert "email.send" in result
         assert "unrelated" not in result
@@ -243,7 +273,9 @@ class TestToolProjection:
         self, sanitizer: DeterministicSanitizer, policy: PolicySnapshot
     ) -> None:
         state = StateContext(data={"a": 1})
-        result = sanitizer.project(state, ProjectionTarget.TOOL, policy=policy, tool_name="unknown_tool")
+        result = sanitizer.project(
+            state, ProjectionTarget.TOOL, policy=policy, tool_name="unknown_tool"
+        )
         assert result == {}
 
     def test_tombstone_in_tool_output(
@@ -251,7 +283,9 @@ class TestToolProjection:
     ) -> None:
         ref_tomb = CapabilityRef(ref_id="vault://x", salt="s", is_tombstone=True)
         state = StateContext(data={"weather.read": ref_tomb})
-        result = sanitizer.project(state, ProjectionTarget.TOOL, policy=policy, tool_name="get_weather")
+        result = sanitizer.project(
+            state, ProjectionTarget.TOOL, policy=policy, tool_name="get_weather"
+        )
         assert result["weather.read"] == _TOMBSTONE_SENTINEL
 
     def test_alias_project_for_tool(
@@ -410,8 +444,7 @@ class TestGovernedRunProgramHandler:
     def _make_program_data(self, tool_names: list[str]) -> dict[str, Any]:
         return {
             "steps": [
-                {"id": f"s{i}", "type": "tool", "tool": name}
-                for i, name in enumerate(tool_names)
+                {"id": f"s{i}", "type": "tool", "tool": name} for i, name in enumerate(tool_names)
             ]
         }
 
@@ -428,6 +461,7 @@ class TestGovernedRunProgramHandler:
 
         assert result is not None
         import json
+
         payload = json.loads(result[0].text)
         assert "error" not in payload or payload.get("error") is None
         mock_run.assert_awaited_once()
@@ -444,6 +478,7 @@ class TestGovernedRunProgramHandler:
 
         assert result is not None
         import json
+
         payload = json.loads(result[0].text)
         assert payload["error"] == "capability_denied"
         assert "exec_shell" in payload["denied_tools"]
@@ -477,20 +512,23 @@ class TestGovernedRunProgramHandler:
         store = MagicMock()
 
         program_data = {
-            "steps": [{
-                "id": "p1",
-                "type": "parallel",
-                "parallel_steps": [
-                    {"id": "s1", "type": "tool", "tool": "get_weather"},
-                    {"id": "s2", "type": "tool", "tool": "forbidden_tool"},
-                ],
-            }]
+            "steps": [
+                {
+                    "id": "p1",
+                    "type": "parallel",
+                    "parallel_steps": [
+                        {"id": "s1", "type": "tool", "tool": "get_weather"},
+                        {"id": "s2", "type": "tool", "tool": "forbidden_tool"},
+                    ],
+                }
+            ]
         }
 
         with patch("nano_vm_mcp.handlers._tools.run_program", new_callable=AsyncMock) as mock_run:
             result = await handler._try_handle("run_program", {"program": program_data}, store)
 
         import json
+
         payload = json.loads(result[0].text)  # type: ignore[index]
         assert payload["error"] == "capability_denied"
         assert "forbidden_tool" in payload["denied_tools"]
