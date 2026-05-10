@@ -1,0 +1,58 @@
+name: Export Repo Structure to JSON
+
+on:
+  push:
+    branches: [ main, master ]
+  workflow_dispatch: # позволяет запускать вручную из вкладки Actions
+
+jobs:
+  generate-structure:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Generate JSON structure
+        run: |
+          python3 << 'EOF'
+          import os
+          import json
+
+          # Директории, которые будут исключены из сканирования
+          IGNORE_DIRS = {
+              ".git", ".github", "__pycache__", "node_modules",
+              ".venv", ".idea", ".vscode", "dist", "build"
+          }
+
+          structure = []
+
+          for root, dirs, files in os.walk("."):
+              # Фильтруем папки "на лету", чтобы os.walk не заходил в игнорируемые
+              dirs[:] = [d for d in dirs if d not in IGNORE_DIRS]
+
+              rel_root = os.path.relpath(root, ".")
+
+              # Добавляем директорию (кроме корня репо)
+              if rel_root != ".":
+                  structure.append({"path": rel_root, "type": "dir"})
+
+              # Добавляем файлы
+              for file in files:
+                  file_path = os.path.join(rel_root, file) if rel_root != "." else file
+                  structure.append({"path": file_path, "type": "file"})
+
+          # Сортируем для детерминированного вывода (удобно для diff и кэша)
+          structure.sort(key=lambda x: x["path"])
+
+          with open("repo-structure.json", "w", encoding="utf-8") as f:
+              json.dump(structure, f, indent=2, ensure_ascii=False)
+
+          print(f"✅ Сгенерировано {len(structure)} записей")
+          EOF
+
+      - name: Upload JSON as artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: repo-structure
+          path: repo-structure.json
+          retention-days: 30
