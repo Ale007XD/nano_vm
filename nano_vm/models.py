@@ -25,9 +25,13 @@ import hashlib
 import uuid
 from datetime import datetime, timezone
 from enum import Enum
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from pydantic import BaseModel, Field, model_validator
+
+if TYPE_CHECKING:
+    # types-PyYAML provides stubs; runtime import is lazy inside from_yaml()
+    import yaml as _yaml_types  # noqa: F401
 
 # ---------------------------------------------------------------------------
 # Enums
