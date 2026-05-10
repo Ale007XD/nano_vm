@@ -57,7 +57,7 @@ class LiteLLMAdapter:
         self,
         messages: list[dict[str, str]],
         **kwargs: Any,
-    ) -> tuple[str, dict | None]:
+    ) -> tuple[str, dict[str, Any] | None]:
         """Вызов LLM через litellm. Возвращает (text, usage_dict) или (text, None)."""
         params: dict[str, Any] = {
             "model": self.model,
@@ -75,7 +75,7 @@ class LiteLLMAdapter:
         response = await acompletion(**params)
         text = response.choices[0].message.content
 
-        usage_dict: dict | None = None
+        usage_dict: dict[str, Any] | None = None
         raw_usage = getattr(response, "usage", None)
         if raw_usage is not None:
             prompt_tokens = getattr(raw_usage, "prompt_tokens", 0) or 0
