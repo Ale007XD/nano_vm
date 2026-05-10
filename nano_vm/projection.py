@@ -128,9 +128,7 @@ class AbstractProjectionLayer(ABC):
         policy: PolicySnapshot | None = None,
     ) -> dict[str, Any]:
         """Удобный алиас: project(state, TOOL, policy, tool_name)."""
-        return self.project(
-            state, ProjectionTarget.TOOL, policy=policy, tool_name=tool_name
-        )
+        return self.project(state, ProjectionTarget.TOOL, policy=policy, tool_name=tool_name)
 
 
 # ---------------------------------------------------------------------------
@@ -174,9 +172,7 @@ class DeterministicSanitizer(AbstractProjectionLayer):
             self._pii_patterns.extend(extra_pii_patterns)
         self._sensitive_prefixes = _SENSITIVE_FIELD_PREFIXES
         if extra_sensitive_prefixes:
-            self._sensitive_prefixes = (
-                _SENSITIVE_FIELD_PREFIXES + extra_sensitive_prefixes
-            )
+            self._sensitive_prefixes = _SENSITIVE_FIELD_PREFIXES + extra_sensitive_prefixes
 
     # ------------------------------------------------------------------
     # project() — главная точка входа
@@ -250,9 +246,7 @@ class DeterministicSanitizer(AbstractProjectionLayer):
     ) -> dict[str, Any]:
         # Без policy или tool_name — возвращаем всё data (backward compat)
         if policy is None or tool_name is None:
-            return {
-                k: self._sanitize_value_trace(v) for k, v in state.data.items()
-            }
+            return {k: self._sanitize_value_trace(v) for k, v in state.data.items()}
 
         allowed_caps = policy.tool_capabilities.get(tool_name, [])
 
