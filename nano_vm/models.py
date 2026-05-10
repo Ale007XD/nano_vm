@@ -17,6 +17,8 @@ v0.6.0 additions (vault-layer primitives):
 v0.7.0 additions (RFC: Deterministic Execution Architecture):
   - CapabilityRef   — replaces raw PII in CanonicalState; supports tombstoning (GDPR)
   - PolicySnapshot  — immutable rule snapshot per session; frozen=True
+  - GdprEraseEvent  — typed GDPR erasure event; frozen=True
+  - Trace.canonical_snapshot_hash() — Merkle root over state_snapshots
 """
 
 from __future__ import annotations
@@ -254,6 +256,43 @@ class PolicySnapshot(BaseModel, frozen=True):
     def allowed_tools(self) -> frozenset[str]:
         """Возвращает frozenset имён инструментов с хотя бы одной capability."""
         return frozenset(self.tool_capabilities.keys())
+
+
+# ---------------------------------------------------------------------------
+# v0.7.0: GdprEraseEvent — typed GDPR erasure event
+# ---------------------------------------------------------------------------
+
+
+class GdprEraseEvent(BaseModel, frozen=True):
+    """
+    Типизированное событие GDPR-стирания.
+
+    RFC v0.7.0:
+      event_id       — уникальный идентификатор события (uuid)
+      target_ref_ids — tuple ref_id CapabilityRef'ов, подлежащих tombstoning
+      issued_at      — UTC-время выпуска события
+      issued_by      — идентификатор инициатора (user/service)
+
+    Инварианты:
+      - frozen=True: событие иммутабельно после создания.
+      - target_ref_ids — tuple (совместимо с frozen).
+      - VM.erase(event) обходит state.data и tombstones CapabilityRef с ref_id ∈ target_ref_ids.
+
+    Использование:
+      event = GdprEraseEvent(
+          target_ref_ids=("vault://users/42/email", "vault://users/42/phone"),
+          issued_by="gdpr-service",
+      )
+      new_state = vm.erase(state, event)
+    """
+
+    event_id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    target_ref_ids: tuple[str, ...] = Field(default_factory=tuple)
+    issued_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    issued_by: str = "unknown"
+
+
+GdprEraseEvent.model_rebuild()
 
 
 # ---------------------------------------------------------------------------
@@ -506,3 +545,38 @@ class Trace(BaseModel):
     def total_cost_usd(self) -> float | None:
         costs = [s.usage.cost_usd for s in self.steps if s.usage and s.usage.cost_usd is not None]
         return round(sum(costs), 8) if costs else None
+
+    def canonical_snapshot_hash(self) -> str:
+        """
+        Merkle root над state_snapshots.
+
+        Алгоритм:
+          1. leaf_i = sha256(f"{idx}:{fp}") для каждого (idx, fp) в state_snapshots
+          2. Нечётный последний лист дублируется (стандартный Bitcoin-Merkle)
+          3. Рекурсивно попарно хешируем до одного корня
+          4. Пустой список → sha256("empty")
+
+        Pure function, no IO, детерминирован.
+        """
+        snapshots = self.state_snapshots
+        if not snapshots:
+            return hashlib.sha256(b"empty").hexdigest()
+
+        # Шаг 1: вычислить листья
+        leaves = [
+            hashlib.sha256(f"{idx}:{fp}".encode()).hexdigest()
+            for idx, fp in snapshots
+        ]
+
+        # Шаг 2-3: Merkle reduction
+        current = leaves
+        while len(current) > 1:
+            if len(current) % 2 == 1:
+                current.append(current[-1])  # дублируем нечётный лист
+            next_level = []
+            for i in range(0, len(current), 2):
+                combined = (current[i] + current[i + 1]).encode()
+                next_level.append(hashlib.sha256(combined).hexdigest())
+            current = next_level
+
+        return current[0]
