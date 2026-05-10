@@ -22,15 +22,15 @@ RFC v0.7.0: «Pure function evaluation, no I/O or global state access.»
 Формат JSON-дерева:
  json_tree = {
     "op": "and",
-    "left": { 
-        "op": "in", 
-        "left": {"op": "lit", "value": "yes"}, 
-        "right": {"op": "var", "name": "decision"} 
+    "left": {
+        "op": "in",
+        "left": {"op": "lit", "value": "yes"},
+        "right": {"op": "var", "name": "decision"}
     },
-    "right": { 
-        "op": ">",  
-        "left": {"op": "var", "name": "score"}, 
-        "right": {"op": "lit", "value": 0} 
+    "right": {
+        "op": ">",
+        "left": {"op": "var", "name": "score"},
+        "right": {"op": "lit", "value": 0}
     }
 }
 """
