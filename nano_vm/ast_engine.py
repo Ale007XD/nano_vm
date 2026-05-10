@@ -29,10 +29,9 @@ RFC v0.7.0: «Pure function evaluation, no I/O or global state access.»
 
 from __future__ import annotations
 
-import re
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel
 
 # ---------------------------------------------------------------------------
 # Exceptions
@@ -252,7 +251,7 @@ def parse_condition(expr_str: str) -> ConditionExpr:
         idx = _find_logical_split(expr_str, logical_op)
         if idx != -1:
             left_str = expr_str[:idx].strip()
-            right_str = expr_str[idx + len(logical_op):].strip()
+            right_str = expr_str[idx + len(logical_op) :].strip()
             left = parse_condition(left_str)
             right = parse_condition(right_str)
             op_key = logical_op.strip()
@@ -263,7 +262,7 @@ def parse_condition(expr_str: str) -> ConditionExpr:
         idx = _find_op(expr_str, op)
         if idx != -1:
             left_str = expr_str[:idx].strip()
-            right_str = expr_str[idx + len(op):].strip()
+            right_str = expr_str[idx + len(op) :].strip()
             left = _parse_atom(left_str)
             right = _parse_atom(right_str)
             # Нормализуем ' in ' → 'in'
@@ -288,7 +287,7 @@ def _find_logical_split(expr: str, logical_op: str) -> int:
         elif ch == '"' and not in_single:
             in_double = not in_double
         if not in_single and not in_double:
-            if expr[i:i + len(logical_op)] == logical_op:
+            if expr[i : i + len(logical_op)] == logical_op:
                 return i
     return -1
 
@@ -303,7 +302,7 @@ def _find_op(expr: str, op: str) -> int:
         elif ch == '"' and not in_single:
             in_double = not in_double
         if not in_single and not in_double:
-            if expr[i:i + len(op)] == op:
+            if expr[i : i + len(op)] == op:
                 return i
     return -1
 

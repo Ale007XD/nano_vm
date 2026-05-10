@@ -20,6 +20,7 @@ import hashlib
 import inspect
 
 import pytest
+
 from nano_vm import vm as vm_module
 from nano_vm.ast_engine import (
     ASTEngine,
@@ -55,41 +56,29 @@ class TestASTEngineOperators:
     # -- Equality
 
     def test_eq_true(self):
-        node = BinaryNode(
-            op="==", left=LitNode(value="yes"), right=LitNode(value="yes")
-        )
+        node = BinaryNode(op="==", left=LitNode(value="yes"), right=LitNode(value="yes"))
         assert self.engine.evaluate(node, {}) is True
 
     def test_eq_false(self):
-        node = BinaryNode(
-            op="==", left=LitNode(value="yes"), right=LitNode(value="no")
-        )
+        node = BinaryNode(op="==", left=LitNode(value="yes"), right=LitNode(value="no"))
         assert self.engine.evaluate(node, {}) is False
 
     def test_neq(self):
-        node = BinaryNode(
-            op="!=", left=LitNode(value=1), right=LitNode(value=2)
-        )
+        node = BinaryNode(op="!=", left=LitNode(value=1), right=LitNode(value=2))
         assert self.engine.evaluate(node, {}) is True
 
     # -- Comparison
 
     def test_gt_true(self):
-        node = BinaryNode(
-            op=">", left=LitNode(value=5), right=LitNode(value=3)
-        )
+        node = BinaryNode(op=">", left=LitNode(value=5), right=LitNode(value=3))
         assert self.engine.evaluate(node, {}) is True
 
     def test_gt_false(self):
-        node = BinaryNode(
-            op=">", left=LitNode(value=1), right=LitNode(value=3)
-        )
+        node = BinaryNode(op=">", left=LitNode(value=1), right=LitNode(value=3))
         assert self.engine.evaluate(node, {}) is False
 
     def test_lt(self):
-        node = BinaryNode(
-            op="<", left=LitNode(value=1), right=LitNode(value=3)
-        )
+        node = BinaryNode(op="<", left=LitNode(value=1), right=LitNode(value=3))
         assert self.engine.evaluate(node, {}) is True
 
     # -- Membership
@@ -131,45 +120,31 @@ class TestASTEngineOperators:
     def test_and_both_true(self):
         node = LogicalNode(
             op="and",
-            left=BinaryNode(
-                op="==", left=LitNode(value=1), right=LitNode(value=1)
-            ),
-            right=BinaryNode(
-                op="==", left=LitNode(value=2), right=LitNode(value=2)
-            ),
+            left=BinaryNode(op="==", left=LitNode(value=1), right=LitNode(value=1)),
+            right=BinaryNode(op="==", left=LitNode(value=2), right=LitNode(value=2)),
         )
         assert self.engine.evaluate(node, {}) is True
 
     def test_and_short_circuit_false(self):
         node = LogicalNode(
             op="and",
-            left=BinaryNode(
-                op="==", left=LitNode(value=1), right=LitNode(value=2)
-            ),
-            right=BinaryNode(
-                op="==", left=LitNode(value=2), right=LitNode(value=2)
-            ),
+            left=BinaryNode(op="==", left=LitNode(value=1), right=LitNode(value=2)),
+            right=BinaryNode(op="==", left=LitNode(value=2), right=LitNode(value=2)),
         )
         assert self.engine.evaluate(node, {}) is False
 
     def test_or_one_true(self):
         node = LogicalNode(
             op="or",
-            left=BinaryNode(
-                op="==", left=LitNode(value=1), right=LitNode(value=2)
-            ),
-            right=BinaryNode(
-                op="==", left=LitNode(value=2), right=LitNode(value=2)
-            ),
+            left=BinaryNode(op="==", left=LitNode(value=1), right=LitNode(value=2)),
+            right=BinaryNode(op="==", left=LitNode(value=2), right=LitNode(value=2)),
         )
         assert self.engine.evaluate(node, {}) is True
 
     def test_not_node(self):
         node = NotNode(
             op="not",
-            operand=BinaryNode(
-                op="==", left=LitNode(value=1), right=LitNode(value=2)
-            ),
+            operand=BinaryNode(op="==", left=LitNode(value=1), right=LitNode(value=2)),
         )
         assert self.engine.evaluate(node, {}) is True
 
@@ -203,9 +178,7 @@ class TestASTEngineOperators:
     # -- Type error
 
     def test_type_error_raises(self):
-        node = BinaryNode(
-            op=">", left=LitNode(value="abc"), right=LitNode(value=1)
-        )
+        node = BinaryNode(op=">", left=LitNode(value="abc"), right=LitNode(value=1))
         with pytest.raises(ASTEvalError, match="Type error"):
             self.engine.evaluate(node, {})
 
@@ -219,9 +192,7 @@ class TestConditionParser:
     """parse_condition() компилирует DSL в дерево, eval_condition() вычисляет."""
 
     def test_simple_in(self):
-        result = eval_condition(
-            "'yes' in $decision", {"decision": "yes approved"}
-        )
+        result = eval_condition("'yes' in $decision", {"decision": "yes approved"})
         assert result is True
 
     def test_simple_eq(self):
@@ -306,9 +277,7 @@ class TestCapabilityRef:
 
     def test_secure_hash_sha256(self):
         ref = CapabilityRef(ref_id="vault://users/42/email", salt="fixed-salt")
-        expected = hashlib.sha256(
-            b"vault://users/42/emailfixed-salt"
-        ).hexdigest()
+        expected = hashlib.sha256(b"vault://users/42/emailfixed-salt").hexdigest()
         assert ref.secure_hash() == expected
 
     def test_tombstone_returns_constant(self):
@@ -344,9 +313,7 @@ class TestCapabilityRef:
     def test_tombstone_hash_chain_preserved(self):
         """Все tombstone-ссылки возвращают константу — hash chain не ломается."""
         refs = [
-            CapabilityRef(
-                ref_id=f"vault://user/{i}", salt=f"s{i}", is_tombstone=True
-            )
+            CapabilityRef(ref_id=f"vault://user/{i}", salt=f"s{i}", is_tombstone=True)
             for i in range(10)
         ]
         assert {r.secure_hash() for r in refs} == {"TOMBSTONE"}
@@ -359,9 +326,7 @@ class TestCapabilityRef:
 
 class TestPolicySnapshot:
     def test_frozen(self):
-        snap = PolicySnapshot(
-            policy_id="p1", version="1.0", tool_capabilities={}
-        )
+        snap = PolicySnapshot(policy_id="p1", version="1.0", tool_capabilities={})
         with pytest.raises(Exception):
             snap.policy_id = "p2"  # type: ignore[misc]
 
@@ -369,9 +334,7 @@ class TestPolicySnapshot:
         snap = PolicySnapshot(
             policy_id="p1",
             version="1.0",
-            tool_capabilities={
-                "send_email": ["email.read_raw", "email.send"]
-            },
+            tool_capabilities={"send_email": ["email.read_raw", "email.send"]},
         )
         assert snap.has_capability("send_email", "email.read_raw") is True
         assert snap.has_capability("send_email", "email.send") is True
@@ -390,31 +353,19 @@ class TestPolicySnapshot:
             "send_email": ["email.send", "email.read_raw"],
             "search": ["web.read"],
         }
-        snap1 = PolicySnapshot(
-            policy_id="p1", version="1.0", tool_capabilities=caps
-        )
-        snap2 = PolicySnapshot(
-            policy_id="p1", version="1.0", tool_capabilities=caps
-        )
+        snap1 = PolicySnapshot(policy_id="p1", version="1.0", tool_capabilities=caps)
+        snap2 = PolicySnapshot(policy_id="p1", version="1.0", tool_capabilities=caps)
         assert snap1.policy_hash == snap2.policy_hash
 
     def test_policy_hash_changes_with_version(self):
         caps = {"tool": ["cap"]}
-        snap1 = PolicySnapshot(
-            policy_id="p1", version="1.0", tool_capabilities=caps
-        )
-        snap2 = PolicySnapshot(
-            policy_id="p1", version="1.1", tool_capabilities=caps
-        )
+        snap1 = PolicySnapshot(policy_id="p1", version="1.0", tool_capabilities=caps)
+        snap2 = PolicySnapshot(policy_id="p1", version="1.1", tool_capabilities=caps)
         assert snap1.policy_hash != snap2.policy_hash
 
     def test_policy_hash_changes_with_caps(self):
-        snap1 = PolicySnapshot(
-            policy_id="p1", version="1.0", tool_capabilities={"t": ["a"]}
-        )
-        snap2 = PolicySnapshot(
-            policy_id="p1", version="1.0", tool_capabilities={"t": ["b"]}
-        )
+        snap1 = PolicySnapshot(policy_id="p1", version="1.0", tool_capabilities={"t": ["a"]})
+        snap2 = PolicySnapshot(policy_id="p1", version="1.0", tool_capabilities={"t": ["b"]})
         assert snap1.policy_hash != snap2.policy_hash
 
     def test_allowed_tools(self):
@@ -459,25 +410,27 @@ class TestVMConditionNoEval:
         return asyncio.get_event_loop().run_until_complete(coro)
 
     def _make_program(self):
-        return Program.from_dict({
-            "steps": [
-                {
-                    "id": "classify",
-                    "type": "llm",
-                    "prompt": "Classify: $input",
-                    "output_key": "decision",
-                },
-                {
-                    "id": "guard",
-                    "type": "condition",
-                    "condition": "'yes' in $decision",
-                    "then": "approve",
-                    "otherwise": "reject",
-                },
-                {"id": "approve", "type": "tool", "tool": "do_approve"},
-                {"id": "reject", "type": "tool", "tool": "do_reject"},
-            ]
-        })
+        return Program.from_dict(
+            {
+                "steps": [
+                    {
+                        "id": "classify",
+                        "type": "llm",
+                        "prompt": "Classify: $input",
+                        "output_key": "decision",
+                    },
+                    {
+                        "id": "guard",
+                        "type": "condition",
+                        "condition": "'yes' in $decision",
+                        "then": "approve",
+                        "otherwise": "reject",
+                    },
+                    {"id": "approve", "type": "tool", "tool": "do_approve"},
+                    {"id": "reject", "type": "tool", "tool": "do_reject"},
+                ]
+            }
+        )
 
     def test_basic_condition_yes(self):
         vm = ExecutionVM(
@@ -510,19 +463,21 @@ class TestVMConditionNoEval:
 
     def test_condition_bad_expression_raises_vmerror(self):
         """Невычислимое выражение → FAILED trace, не падение интерпретатора."""
-        program = Program.from_dict({
-            "steps": [
-                {
-                    "id": "guard",
-                    "type": "condition",
-                    "condition": "$score >= 100",
-                    "then": "ok",
-                    "otherwise": "fail_step",
-                },
-                {"id": "ok", "type": "tool", "tool": "noop"},
-                {"id": "fail_step", "type": "tool", "tool": "noop"},
-            ]
-        })
+        program = Program.from_dict(
+            {
+                "steps": [
+                    {
+                        "id": "guard",
+                        "type": "condition",
+                        "condition": "$score >= 100",
+                        "then": "ok",
+                        "otherwise": "fail_step",
+                    },
+                    {"id": "ok", "type": "tool", "tool": "noop"},
+                    {"id": "fail_step", "type": "tool", "tool": "noop"},
+                ]
+            }
+        )
         vm = ExecutionVM(llm=MockAdapter({}), tools={"noop": lambda: None})
         trace = self._run(vm.run(program, context={"score": 50}))
         assert trace.status.value in ("success", "failed")
@@ -589,9 +544,7 @@ class TestIdempotency:
 
     def test_state_immutable_after_step(self):
         """StateContext не мутируется внутри _execute_step."""
-        step = Step(
-            id="s1", type=StepType.TOOL, tool="t", output_key="result"
-        )
+        step = Step(id="s1", type=StepType.TOOL, tool="t", output_key="result")
         state = StateContext(data={"x": 1})
         original_data = dict(state.data)
 
