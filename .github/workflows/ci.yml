@@ -87,10 +87,7 @@ jobs:
       - name: Ruff check
         run: python -m ruff check .
 
-      - name: Install mypy
-        run: pip install mypy
-
-      - name: Run Mypy
+      - name: Run mypy
         if: ${{ github.event.inputs.skip_mypy != 'true' }}
         run: python -m mypy nano_vm/
 
