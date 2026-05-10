@@ -1,6 +1,11 @@
 name: Auto-fix Code Style
 
 on:
+  # Автозапуск при пуше (но не при пуше от самого себя, благодаря [skip ci])
+  push:
+    branches-ignore:
+      - 'dependabot/**'  # Опционально: игнорировать dependabot
+  # Ручной запуск для любой ветки
   workflow_dispatch:
     inputs:
       branch:
@@ -19,7 +24,8 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
         with:
-          ref: ${{ inputs.branch }}
+          # При push берём ветку из события, при dispatch — из input
+          ref: ${{ github.event_name == 'push' && github.ref_name || inputs.branch }}
 
       - name: Setup Python
         uses: actions/setup-python@v5
@@ -31,12 +37,10 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -e ".[dev]"
-          pip install ruff  # На случай, если ruff не указан в dev-зависимостях
+          pip install ruff
 
       - name: Fix lint issues (safe fixes)
-        # || true критически важен: ruff check --fix возвращает exit code 1,
-        # если остаются ошибки типа E501, которые он не умеет чинить сам.
-        # Это не даст воркфлоу упасть до запуска форматтера.
+        # || true важен: ruff check --fix возвращает 1, если остались ошибки вроде E501
         run: ruff check . --fix || true
 
       - name: Format code (fix line lengths & style)
@@ -45,4 +49,8 @@ jobs:
       - name: Commit and push if changed
         uses: stefanzweifel/git-auto-commit-action@v5
         with:
+          # [skip ci] критически важен — предотвращает бесконечный цикл:
+          # push → workflow → fix → push → workflow → ...
           commit_message: "style: auto-fix linting [skip ci]"
+          # Пушим в ту же ветку, из которой взяли код
+          branch: ${{ github.event_name == 'push' && github.ref_name || inputs.branch }}
