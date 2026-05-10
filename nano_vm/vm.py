@@ -191,14 +191,14 @@ class ExecutionVM:
     def __init__(
         self,
         llm: LLMAdapter,
-        tools: dict[str, Callable] | None = None,
+        tools: dict[str, Callable[..., Any]] | None = None,
         cursor_repository: CursorRepository | None = None,
     ) -> None:
         self._llm = llm
-        self._tools: dict[str, Callable] = tools or {}
+        self._tools: dict[str, Callable[..., Any]] = tools or {}
         self._cursor_repo: CursorRepository = cursor_repository or InMemoryCursorRepository()
 
-    def register_tool(self, name: str, fn: Callable) -> None:
+    def register_tool(self, name: str, fn: Callable[..., Any]) -> None:
         self._tools[name] = fn
 
     # ------------------------------------------------------------------
@@ -637,7 +637,7 @@ class ExecutionVM:
           - __step_outputs__ → служебный ключ для VarNode resolver ($step_id.output)
         """
         condition = self._resolve(step.condition, state)
-        ctx: dict = {**state.data, "__step_outputs__": dict(state.step_outputs)}
+        ctx: dict[str, Any] = {**state.data, "__step_outputs__": dict(state.step_outputs)}
         try:
             result = eval_condition(condition, ctx)
         except (ASTEvalError, ASTParseError) as exc:
@@ -734,7 +734,7 @@ class ExecutionVM:
 
         _MISSING = object()
 
-        def replace(match: re.Match) -> str:
+        def replace(match: re.Match[str]) -> str:
             expr = match.group(1)
 
             if "." in expr:

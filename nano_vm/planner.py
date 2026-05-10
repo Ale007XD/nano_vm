@@ -236,8 +236,8 @@ class Planner:
         result = await self._llm.complete(messages, temperature=self._temperature)
         # LiteLLMAdapter returns tuple[str, dict|None]; Protocol returns str
         if isinstance(result, tuple):
-            return result[0]
-        return result
+            return str(result[0])
+        return str(result)
 
     @staticmethod
     def _build_user_prompt(

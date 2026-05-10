@@ -37,7 +37,7 @@ RFC v0.7.0: «Pure function evaluation, no I/O or global state access.»
 
 from __future__ import annotations
 
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
 from pydantic import BaseModel
 
@@ -169,20 +169,20 @@ class ASTEngine:
 
         try:
             if op == "==":
-                return left == right
+                return cast(bool, left == right)
             if op == "!=":
-                return left != right
+                return cast(bool, left != right)
             if op == ">":
-                return left > right  # type: ignore[operator]
+                return cast(bool, left > right)
             if op == "<":
-                return left < right  # type: ignore[operator]
+                return cast(bool, left < right)
             if op == "in":
-                return left in right  # type: ignore[operator]
+                return bool(left in right)
             if op == "not in":
-                return left not in right  # type: ignore[operator]
+                return bool(left not in right)
             if op == "contains":
                 # contains: right contains left  (e.g. "$text contains 'yes'")
-                return left in right  # type: ignore[operator]
+                return bool(left in right)
         except TypeError as exc:
             raise ASTEvalError(
                 f"Type error in '{op}': left={left!r} ({type(left).__name__}), "

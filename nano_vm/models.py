@@ -334,7 +334,7 @@ class Program(BaseModel):
     max_tokens: int | None = None
 
     @classmethod
-    def from_dict(cls, data: dict) -> Program:
+    def from_dict(cls, data: dict[str, Any]) -> Program:
         return cls.model_validate(data)
 
     @classmethod
