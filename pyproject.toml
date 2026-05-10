@@ -31,9 +31,11 @@ yaml    = ["pyyaml>=6.0"]
 dev     = [
     "pytest>=8.0",
     "pytest-asyncio>=0.23",
+    "mypy>=1.9",
     "ruff>=0.4",
     "litellm>=1.40",
     "pyyaml>=6.0",
+    "types-PyYAML>=6.0",
 ]
 
 [project.urls]
@@ -62,3 +64,11 @@ known-first-party = ["nano_vm"]
 [tool.hatch.build.targets.wheel]
 packages = ["nano_vm"]
 
+[tool.mypy]
+python_version      = "3.10"
+strict              = true
+warn_unused_ignores = true
+
+[[tool.mypy.overrides]]
+module                 = ["yaml", "yaml.*"]
+ignore_missing_imports = true
