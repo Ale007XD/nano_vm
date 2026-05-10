@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: ["main", "v0.7.0"]  # ✅ Добавил v0.7.0, чтобы CI запускался автоматически
+    branches: ["main", "v0.7.0"]
   pull_request:
     branches: ["main"]
   workflow_dispatch:
@@ -26,7 +26,6 @@ on:
 permissions:
   contents: read
 
-# ✅ Предотвращает запуск нескольких одинаковых workflow одновременно
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
@@ -47,8 +46,8 @@ jobs:
         id: set
         run: |
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            VERSIONS="${{ inputs.python_versions }}"            REF="${{ inputs.branch }}"
-          else
+            VERSIONS="${{ inputs.python_versions }}"
+            REF="${{ inputs.branch }}"          else
             VERSIONS="3.10,3.11,3.12"
             REF="${{ github.ref_name }}"
           fi
@@ -93,10 +92,12 @@ jobs:
       - name: Ruff check
         run: python -m ruff check .
 
+      # 🔧 ВАРИАНТ 2: Явно ставим mypy перед запуском
       - name: Mypy
-        # 🔧 Исправлено: GH Actions передаёт boolean как строку "true"/"false"
         if: ${{ github.event.inputs.skip_mypy != 'true' }}
-        run: python -m mypy nano_vm/
+        run: |
+          pip install mypy          python -m mypy nano_vm/
+
   # -------------------------------------------------------------------------
   # Test: pytest на выбранных версиях Python
   # -------------------------------------------------------------------------
