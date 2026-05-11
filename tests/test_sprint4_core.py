@@ -7,12 +7,9 @@ Sprint4 / P9: рекурсивный обход nested dict/list в ExecutionVM.
 
 from __future__ import annotations
 
-import pytest
-
 from nano_vm.adapters import MockLLMAdapter
 from nano_vm.models import CapabilityRef, GdprEraseEvent, StateContext
 from nano_vm.vm import ExecutionVM
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -66,12 +63,14 @@ class TestEraseNested:
 
     def test_deep_list_of_dicts(self) -> None:
         """list[dict] с CapabilityRef на глубине 2+."""
-        state = StateContext(data={
-            "users": [
-                {"id": 1, "ssn": _ref("vault://u/4/ssn")},
-                {"id": 2, "ssn": None},
-            ]
-        })
+        state = StateContext(
+            data={
+                "users": [
+                    {"id": 1, "ssn": _ref("vault://u/4/ssn")},
+                    {"id": 2, "ssn": None},
+                ]
+            }
+        )
         new_state, count = _vm().erase(_erase("vault://u/4/ssn"), state)
 
         assert count == 1
@@ -80,10 +79,12 @@ class TestEraseNested:
 
     def test_multiple_refs_same_id(self) -> None:
         """Один ref_id встречается несколько раз — все tombstoned."""
-        state = StateContext(data={
-            "primary": _ref("vault://u/5/email", salt="s1"),
-            "backup": {"email": _ref("vault://u/5/email", salt="s2")},
-        })
+        state = StateContext(
+            data={
+                "primary": _ref("vault://u/5/email", salt="s1"),
+                "backup": {"email": _ref("vault://u/5/email", salt="s2")},
+            }
+        )
         new_state, count = _vm().erase(_erase("vault://u/5/email"), state)
 
         assert count == 2
@@ -92,11 +93,13 @@ class TestEraseNested:
 
     def test_multiple_targets(self) -> None:
         """Несколько ref_id в одном событии."""
-        state = StateContext(data={
-            "email": _ref("vault://u/6/email"),
-            "phone": _ref("vault://u/6/phone"),
-            "other": _ref("vault://u/6/other"),
-        })
+        state = StateContext(
+            data={
+                "email": _ref("vault://u/6/email"),
+                "phone": _ref("vault://u/6/phone"),
+                "other": _ref("vault://u/6/other"),
+            }
+        )
         new_state, count = _vm().erase(_erase("vault://u/6/email", "vault://u/6/phone"), state)
 
         assert count == 2
@@ -133,13 +136,15 @@ class TestEraseNested:
 
     def test_scalars_unchanged(self) -> None:
         """Скалярные значения (str, int, None, bool) не затрагиваются."""
-        state = StateContext(data={
-            "name": "Alice",
-            "age": 30,
-            "active": True,
-            "score": None,
-            "tags": ["a", "b"],
-        })
+        state = StateContext(
+            data={
+                "name": "Alice",
+                "age": 30,
+                "active": True,
+                "score": None,
+                "tags": ["a", "b"],
+            }
+        )
         new_state, count = _vm().erase(_erase("vault://u/10/email"), state)
 
         assert count == 0
