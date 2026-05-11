@@ -10,6 +10,11 @@ v0.6.0 changes:
   - CursorRepository protocol для persisted suspend cursor
   - WebhookEvent — типизированный входной контракт resume()
 
+v0.7.0 changes:
+  - erase(): рекурсивный обход state.data dict/list/nested (Sprint4/P9)
+    Tombstone-ит все CapabilityRef с ref_id ∈ event.target_ref_ids
+    на произвольной глубине вложенности.
+
 Key properties (unchanged):
   - VM has no knowledge of providers; receives LLMAdapter via __init__
   - Same Program + StateContext + deterministic adapter -> reproducible result
@@ -714,7 +719,7 @@ class ExecutionVM:
         raise VMError(f"Sub-step '{step.id}': type '{step.type}' not allowed inside parallel")
 
     # ------------------------------------------------------------------
-    # v0.7.0: GDPR erasure
+    # v0.7.0: GDPR erasure — Sprint4/P9: рекурсивный обход nested dict/list
     # ------------------------------------------------------------------
 
     def erase(
@@ -725,21 +730,48 @@ class ExecutionVM:
         """
         Tombstone CapabilityRef в state.data по ref_id из GdprEraseEvent.
 
-        Обходит один уровень state.data (nested dict/list — Sprint4/P9).
-        step_outputs не затрагивается.
+        Sprint4/P9: рекурсивный обход dict/list на любой глубине вложенности.
+        step_outputs не затрагивается (содержит outputs шагов, не PII-ref'ы).
+
+        Алгоритм:
+          - Обходит state.data рекурсивно (_erase_node).
+          - Для каждого CapabilityRef с ref_id ∈ target_ref_ids → tombstone().
+          - dict/list обходятся рекурсивно; все прочие типы возвращаются as-is.
+          - Иммутабельно: создаёт новые dict/list на каждом затронутом уровне.
 
         Returns:
-          (new_state, erased_count) — иммутабельное новое состояние + количество tombstoned refs.
+          (new_state, erased_count) — новое иммутабельное состояние + кол-во tombstoned refs.
+
+        Инварианты:
+          - erased_count считает только конечные CapabilityRef (не контейнеры).
+          - Одинаковый (state, event) → одинаковый результат (pure function).
+          - state не мутируется; все промежуточные структуры — новые объекты.
         """
-        target_ids = set(event.target_ref_ids)
-        new_data = dict(state.data)
+        target_ids = frozenset(event.target_ref_ids)
         count = 0
 
-        for key, val in new_data.items():
-            if isinstance(val, CapabilityRef) and val.ref_id in target_ids:
-                new_data[key] = val.tombstone()
-                count += 1
+        def _erase_node(node: Any) -> Any:
+            nonlocal count
 
+            if isinstance(node, CapabilityRef):
+                if node.ref_id in target_ids:
+                    count += 1
+                    return node.tombstone()
+                return node
+
+            if isinstance(node, dict):
+                result: dict[str, Any] = {}
+                for k, v in node.items():
+                    result[k] = _erase_node(v)
+                return result
+
+            if isinstance(node, list):
+                return [_erase_node(item) for item in node]
+
+            # Прочие типы (str, int, float, bool, None, etc.) — без изменений
+            return node
+
+        new_data = _erase_node(state.data)
         new_state = state.model_copy(update={"data": new_data})
         return new_state, count
 
