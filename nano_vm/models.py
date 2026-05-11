@@ -571,8 +571,7 @@ class Trace(BaseModel):
 
         # Шаг 1: листья как bytes (sha256.digest())
         current_b: list[bytes] = [
-            hashlib.sha256(f"{idx}:{fp}".encode()).digest()
-            for idx, fp in snapshots
+            hashlib.sha256(f"{idx}:{fp}".encode()).digest() for idx, fp in snapshots
         ]
 
         # Единственный лист: возвращаем hex напрямую

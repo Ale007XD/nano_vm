@@ -713,7 +713,6 @@ class ExecutionVM:
             return output, None
         raise VMError(f"Sub-step '{step.id}': type '{step.type}' not allowed inside parallel")
 
-
     # ------------------------------------------------------------------
     # v0.7.0: GDPR erasure
     # ------------------------------------------------------------------
