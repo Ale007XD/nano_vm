@@ -290,6 +290,13 @@ class GdprEraseEvent(BaseModel, frozen=True):
     target_ref_ids: tuple[str, ...] = Field(default_factory=tuple)
     issued_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     issued_by: str = "unknown"
+    reason: str = "gdpr_erasure"
+
+    @model_validator(mode="after")
+    def _validate_target_ref_ids(self) -> GdprEraseEvent:
+        if not self.target_ref_ids:
+            raise ValueError("GdprEraseEvent.target_ref_ids cannot be empty")
+        return self
 
 
 GdprEraseEvent.model_rebuild()
@@ -562,18 +569,23 @@ class Trace(BaseModel):
         if not snapshots:
             return hashlib.sha256(b"empty").hexdigest()
 
-        # Шаг 1: вычислить листья
-        leaves = [hashlib.sha256(f"{idx}:{fp}".encode()).hexdigest() for idx, fp in snapshots]
+        # Шаг 1: листья как bytes (sha256.digest())
+        current_b: list[bytes] = [
+            hashlib.sha256(f"{idx}:{fp}".encode()).digest()
+            for idx, fp in snapshots
+        ]
 
-        # Шаг 2-3: Merkle reduction
-        current = leaves
-        while len(current) > 1:
-            if len(current) % 2 == 1:
-                current.append(current[-1])  # дублируем нечётный лист
-            next_level = []
-            for i in range(0, len(current), 2):
-                combined = (current[i] + current[i + 1]).encode()
-                next_level.append(hashlib.sha256(combined).hexdigest())
-            current = next_level
+        # Единственный лист: возвращаем hex напрямую
+        if len(current_b) == 1:
+            return current_b[0].hex()
 
-        return current[0]
+        # Шаг 2-3: Merkle reduction — bytes конкатенация на каждом уровне
+        while len(current_b) > 1:
+            if len(current_b) % 2 == 1:
+                current_b.append(current_b[-1])  # дублируем нечётный лист
+            next_b: list[bytes] = []
+            for i in range(0, len(current_b), 2):
+                next_b.append(hashlib.sha256(current_b[i] + current_b[i + 1]).digest())
+            current_b = next_b
+
+        return current_b[0].hex()

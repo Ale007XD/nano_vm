@@ -31,6 +31,8 @@ from typing import Any, Protocol
 from .adapters.base import LLMAdapter
 from .ast_engine import ASTEvalError, ASTParseError, eval_condition
 from .models import (
+    CapabilityRef,
+    GdprEraseEvent,
     InterruptType,
     LLMUsage,
     OnError,
@@ -710,6 +712,37 @@ class ExecutionVM:
             output = await self._execute_tool(step, state)
             return output, None
         raise VMError(f"Sub-step '{step.id}': type '{step.type}' not allowed inside parallel")
+
+
+    # ------------------------------------------------------------------
+    # v0.7.0: GDPR erasure
+    # ------------------------------------------------------------------
+
+    def erase(
+        self,
+        event: GdprEraseEvent,
+        state: StateContext,
+    ) -> tuple[StateContext, int]:
+        """
+        Tombstone CapabilityRef в state.data по ref_id из GdprEraseEvent.
+
+        Обходит один уровень state.data (nested dict/list — Sprint4/P9).
+        step_outputs не затрагивается.
+
+        Returns:
+          (new_state, erased_count) — иммутабельное новое состояние + количество tombstoned refs.
+        """
+        target_ids = set(event.target_ref_ids)
+        new_data = dict(state.data)
+        count = 0
+
+        for key, val in new_data.items():
+            if isinstance(val, CapabilityRef) and val.ref_id in target_ids:
+                new_data[key] = val.tombstone()
+                count += 1
+
+        new_state = state.model_copy(update={"data": new_data})
+        return new_state, count
 
     # ------------------------------------------------------------------
     # Fingerprint
