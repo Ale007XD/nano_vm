@@ -364,11 +364,14 @@ Four step types:
 | `$step_id.output` | output of a previous step |
 
 > **⚠ Security note — condition expressions:**  
-> `condition` strings are evaluated by the **ASTEngine** — a deterministic, sandboxed
-> evaluator. No Python builtins are accessible. **Do not interpolate raw user input
-> into condition expressions.** Condition logic should be authored by you (the developer).
-> LLM output used as a branching signal should only appear in context variables that your
-> condition *tests* (e.g. `'yes' in '$decision'`), never as the condition expression itself.
+> `condition` strings are parsed and evaluated by the built-in **ASTEngine** —
+> a deterministic, sandboxed interpreter that supports a fixed operator set
+> (`==`, `!=`, `>`, `<`, `in`, `not in`, `and`, `or`, `not`, `contains`).
+> `eval()` is not used. **Do not interpolate raw user input into condition
+> expressions.** Condition logic should be authored by you (the developer), not
+> constructed from untrusted data at runtime. LLM output used as a branching
+> signal should only appear in context variables that your condition *tests*
+> (e.g. `'yes' in '$decision'`), never as the condition expression itself.
 
 ### Example — multi-step pipeline
 
