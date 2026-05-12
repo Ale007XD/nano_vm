@@ -15,7 +15,7 @@ Design invariants (from RFC / AGENTS.md):
 from __future__ import annotations
 
 import hashlib
-from typing import Annotated, Any, Union
+from typing import Annotated, Any
 
 from pydantic import BaseModel, Field, model_validator
 
@@ -23,11 +23,10 @@ from pydantic import BaseModel, Field, model_validator
 # Defined here (not inline) so mypy resolves the Union cleanly
 # regardless of --strict / overload resolution mode.
 _Payload = Annotated[
-    Union[dict[str, Any], list[Any]],
+    dict[str, Any] | list[Any],
     Field(
         description=(
-            "Projected (sanitised) step result"
-            " — safe for TRACE storage and external delivery."
+            "Projected (sanitised) step result — safe for TRACE storage and external delivery."
         )
     ),
 ]
@@ -81,7 +80,7 @@ class CapabilityRef(BaseModel):
         payload = (self.ref_id + self.salt).encode("utf-8")
         return hashlib.sha256(payload).hexdigest()
 
-    def tombstone(self) -> "CapabilityRef":
+    def tombstone(self) -> CapabilityRef:
         """Return a new CapabilityRef with is_tombstone=True (model is frozen).
 
         Triggered by the E_gdpr_erase system event.  The original ref_id and
@@ -147,7 +146,7 @@ class PolicySnapshot(BaseModel):
         *,
         policy_id: str,
         version: str,
-    ) -> "PolicySnapshot":
+    ) -> PolicySnapshot:
         """Build a PolicySnapshot from a raw config dict.
 
         The ``policy_hash`` is computed deterministically from the JSON
@@ -175,7 +174,7 @@ class PolicySnapshot(BaseModel):
         )
 
     @model_validator(mode="after")
-    def _validate_policy_hash_format(self) -> "PolicySnapshot":
+    def _validate_policy_hash_format(self) -> PolicySnapshot:
         if len(self.policy_hash) != 64 or not all(  # noqa: PLR2004
             c in "0123456789abcdef" for c in self.policy_hash
         ):
