@@ -200,7 +200,10 @@ class GovernanceEnvelope(BaseModel):
     )
     payload: dict[str, Any] | list[Any] = Field(
         ...,
-        description="Projected (sanitised) step result — safe for TRACE storage and external delivery.",
+        description=(
+            "Projected (sanitised) step result"
+            "— safe for TRACE storage and external delivery.",
+        ),
     )
 
     model_config = {"frozen": True}
