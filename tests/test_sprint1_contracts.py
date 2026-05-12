@@ -29,7 +29,6 @@ from nano_vm.projection import (
     ProjectionTarget,
 )
 
-
 # ===========================================================================
 # Fixtures
 # ===========================================================================
@@ -76,9 +75,7 @@ def sanitizer() -> DeterministicSanitizer:
 
 class TestCapabilityRef:
     def test_secure_hash_is_sha256_of_ref_plus_salt(self, ref: CapabilityRef) -> None:
-        expected = hashlib.sha256(
-            (ref.ref_id + ref.salt).encode("utf-8")
-        ).hexdigest()
+        expected = hashlib.sha256((ref.ref_id + ref.salt).encode("utf-8")).hexdigest()
         assert ref.secure_hash() == expected
 
     def test_secure_hash_is_64_char_hex(self, ref: CapabilityRef) -> None:
@@ -86,9 +83,7 @@ class TestCapabilityRef:
         assert len(h) == 64
         assert all(c in "0123456789abcdef" for c in h)
 
-    def test_tombstone_returns_tombstone_string(
-        self, tombstoned_ref: CapabilityRef
-    ) -> None:
+    def test_tombstone_returns_tombstone_string(self, tombstoned_ref: CapabilityRef) -> None:
         assert tombstoned_ref.secure_hash() == "TOMBSTONE"
 
     def test_tombstone_preserves_ref_id_and_salt(
@@ -98,9 +93,7 @@ class TestCapabilityRef:
         assert tombstoned_ref.salt == ref.salt
         assert tombstoned_ref.is_tombstone is True
 
-    def test_original_ref_unmodified_after_tombstone(
-        self, ref: CapabilityRef
-    ) -> None:
+    def test_original_ref_unmodified_after_tombstone(self, ref: CapabilityRef) -> None:
         _ = ref.tombstone()
         assert ref.is_tombstone is False
 
@@ -128,16 +121,12 @@ class TestCapabilityRef:
 
 
 class TestPolicySnapshot:
-    def test_from_config_produces_valid_snapshot(
-        self, snapshot: PolicySnapshot
-    ) -> None:
+    def test_from_config_produces_valid_snapshot(self, snapshot: PolicySnapshot) -> None:
         assert snapshot.policy_id == "pol-001"
         assert snapshot.version == "1.0.0"
         assert len(snapshot.policy_hash) == 64
 
-    def test_from_config_hash_is_deterministic(
-        self, policy_config: dict
-    ) -> None:
+    def test_from_config_hash_is_deterministic(self, policy_config: dict) -> None:
         s1 = PolicySnapshot.from_config(policy_config, policy_id="p", version="1")
         s2 = PolicySnapshot.from_config(policy_config, policy_id="p", version="1")
         assert s1.policy_hash == s2.policy_hash
@@ -161,9 +150,7 @@ class TestPolicySnapshot:
         assert "email.read_raw" in caps
         assert "email.send" in caps
 
-    def test_required_capabilities_empty_for_unknown(
-        self, snapshot: PolicySnapshot
-    ) -> None:
+    def test_required_capabilities_empty_for_unknown(self, snapshot: PolicySnapshot) -> None:
         assert snapshot.required_capabilities("unknown_tool") == []
 
     def test_frozen_model_rejects_mutation(self, snapshot: PolicySnapshot) -> None:
@@ -216,9 +203,7 @@ class TestGovernanceEnvelope:
         )
         assert env.verify_policy(snapshot) is True
 
-    def test_verify_policy_false_for_wrong_snapshot(
-        self, snapshot: PolicySnapshot
-    ) -> None:
+    def test_verify_policy_false_for_wrong_snapshot(self, snapshot: PolicySnapshot) -> None:
         other = PolicySnapshot.from_config(
             {"tool_capabilities": {}},
             policy_id="other",
@@ -272,9 +257,7 @@ class TestSanitizerCapabilityRef:
         sanitizer: DeterministicSanitizer,
         tombstoned_ref: CapabilityRef,
     ) -> None:
-        result = sanitizer.project_value(
-            tombstoned_ref, target=ProjectionTarget.LLM
-        )
+        result = sanitizer.project_value(tombstoned_ref, target=ProjectionTarget.LLM)
         assert result == TOMBSTONE_PLACEHOLDER
 
     def test_trace_target_returns_secure_hash(
@@ -289,9 +272,7 @@ class TestSanitizerCapabilityRef:
         sanitizer: DeterministicSanitizer,
         tombstoned_ref: CapabilityRef,
     ) -> None:
-        result = sanitizer.project_value(
-            tombstoned_ref, target=ProjectionTarget.TRACE
-        )
+        result = sanitizer.project_value(tombstoned_ref, target=ProjectionTarget.TRACE)
         assert result == TOMBSTONE_PLACEHOLDER
 
     def test_tool_target_returns_ref_id(
@@ -305,9 +286,7 @@ class TestSanitizerCapabilityRef:
         sanitizer: DeterministicSanitizer,
         tombstoned_ref: CapabilityRef,
     ) -> None:
-        result = sanitizer.project_value(
-            tombstoned_ref, target=ProjectionTarget.TOOL
-        )
+        result = sanitizer.project_value(tombstoned_ref, target=ProjectionTarget.TOOL)
         assert result == TOMBSTONE_PLACEHOLDER
 
 
@@ -325,25 +304,19 @@ class TestSanitizerPIIRegex:
             "SSN: 123-45-6789",
         ],
     )
-    def test_llm_redacts_pii_patterns(
-        self, sanitizer: DeterministicSanitizer, raw: str
-    ) -> None:
+    def test_llm_redacts_pii_patterns(self, sanitizer: DeterministicSanitizer, raw: str) -> None:
         result = sanitizer.project_value(raw, target=ProjectionTarget.LLM)
         assert MASKED_PLACEHOLDER in result
         # Original PII should not survive
         assert "user@example.com" not in result
         assert "867-5309" not in result or "123-45-6789" not in result or True
 
-    def test_trace_does_not_redact_email(
-        self, sanitizer: DeterministicSanitizer
-    ) -> None:
+    def test_trace_does_not_redact_email(self, sanitizer: DeterministicSanitizer) -> None:
         raw = "user@example.com"
         result = sanitizer.project_value(raw, target=ProjectionTarget.TRACE)
         assert result == raw  # TRACE does not regex-scan plain strings
 
-    def test_tool_does_not_redact_email(
-        self, sanitizer: DeterministicSanitizer
-    ) -> None:
+    def test_tool_does_not_redact_email(self, sanitizer: DeterministicSanitizer) -> None:
         raw = "user@example.com"
         result = sanitizer.project_value(raw, target=ProjectionTarget.TOOL)
         assert result == raw
@@ -381,9 +354,7 @@ class TestSanitizerSensitiveFields:
         )
         assert result == MASKED_PLACEHOLDER
 
-    def test_tool_does_not_redact_sensitive_field(
-        self, sanitizer: DeterministicSanitizer
-    ) -> None:
+    def test_tool_does_not_redact_sensitive_field(self, sanitizer: DeterministicSanitizer) -> None:
         # TOOL target: JIT provider resolves; sanitizer passes through.
         result = sanitizer.project_value(
             "super_secret_value",
@@ -420,9 +391,7 @@ class TestSanitizerRecursive:
         assert projected["email_ref"] == MASKED_PLACEHOLDER
         assert projected["meta"]["note"] == "ok"
 
-    def test_projects_list(
-        self, sanitizer: DeterministicSanitizer, ref: CapabilityRef
-    ) -> None:
+    def test_projects_list(self, sanitizer: DeterministicSanitizer, ref: CapabilityRef) -> None:
         state = [ref, "plain_string", 42]
         projected = sanitizer.project(state, target=ProjectionTarget.TRACE)
         assert projected[0] == ref.secure_hash()
@@ -478,17 +447,12 @@ class TestIdempotency:
         self, sanitizer: DeterministicSanitizer, ref: CapabilityRef
     ) -> None:
         state = {"email_ref": ref, "msg": "hello user@example.com"}
-        results = [
-            sanitizer.project(state, target=ProjectionTarget.LLM)
-            for _ in range(100)
-        ]
+        results = [sanitizer.project(state, target=ProjectionTarget.LLM) for _ in range(100)]
         assert all(r == results[0] for r in results)
 
     def test_policy_snapshot_hash_idempotent(self, policy_config: dict) -> None:
         hashes = {
-            PolicySnapshot.from_config(
-                policy_config, policy_id="p", version="1"
-            ).policy_hash
+            PolicySnapshot.from_config(policy_config, policy_id="p", version="1").policy_hash
             for _ in range(100)
         }
         assert len(hashes) == 1
