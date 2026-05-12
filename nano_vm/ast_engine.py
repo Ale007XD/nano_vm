@@ -22,9 +22,8 @@ Design invariants:
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any, Union
-
 
 # ---------------------------------------------------------------------------
 # Errors
@@ -40,14 +39,13 @@ class ASTEvalError(Exception):
 # ---------------------------------------------------------------------------
 
 # Forward reference for recursive type alias
-ConditionExpr = Union[
-    "BinaryNode", "LogicalNode", "NotNode", "LitNode", "VarNode"
-]
+ConditionExpr = Union["BinaryNode", "LogicalNode", "NotNode", "LitNode", "VarNode"]
 
 
 @dataclass(frozen=True)
 class LitNode:
     """Literal value node."""
+
     value: Any
 
 
@@ -59,6 +57,7 @@ class VarNode:
       "key"              -> ctx["key"]
       "step_id.output"   -> ctx["__step_outputs__"]["step_id"]
     """
+
     name: str
 
 
@@ -68,6 +67,7 @@ class BinaryNode:
 
     Supported operators: ==, !=, >, <, in, not in, contains
     """
+
     op: str
     left: ConditionExpr
     right: ConditionExpr
@@ -79,6 +79,7 @@ class LogicalNode:
 
     Supported operators: and, or
     """
+
     op: str
     left: ConditionExpr
     right: ConditionExpr
@@ -87,6 +88,7 @@ class LogicalNode:
 @dataclass(frozen=True)
 class NotNode:
     """Logical negation node."""
+
     op: str  # always "not"
     operand: ConditionExpr
 
@@ -215,9 +217,7 @@ _TOKEN_PATTERNS = [
     ("WS", r"\s+"),
 ]
 
-_TOKEN_RE = re.compile(
-    "|".join(f"(?P<{name}>{pat})" for name, pat in _TOKEN_PATTERNS)
-)
+_TOKEN_RE = re.compile("|".join(f"(?P<{name}>{pat})" for name, pat in _TOKEN_PATTERNS))
 
 
 def _tokenise(expr: str) -> list[tuple[str, str]]:
@@ -260,7 +260,9 @@ def _parse_binary(tokens: list[tuple[str, str]], pos: int) -> tuple[ConditionExp
     if kind in ("OP", "IN", "NOT_IN", "CONTAINS"):
         # Map token to operator string
         op_map = {
-            "IN": "in", "NOT_IN": "not in", "CONTAINS": "contains",
+            "IN": "in",
+            "NOT_IN": "not in",
+            "CONTAINS": "contains",
         }
         op = op_map.get(kind, val)
         # Filter unsupported ops
@@ -299,9 +301,7 @@ def parse_condition(expr: str) -> ConditionExpr:
         raise ASTEvalError("Empty condition expression")
     node, pos = _parse_expr(tokens, 0)
     if pos < len(tokens):
-        raise ASTEvalError(
-            f"Unexpected token at position {pos}: {tokens[pos]!r}"
-        )
+        raise ASTEvalError(f"Unexpected token at position {pos}: {tokens[pos]!r}")
     return node
 
 

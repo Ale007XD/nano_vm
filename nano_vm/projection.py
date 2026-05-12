@@ -64,9 +64,19 @@ _DEFAULT_PII_PATTERNS: list[tuple[re.Pattern[str], str]] = [
 ]
 
 _DEFAULT_SENSITIVE_PREFIXES: tuple[str, ...] = (
-    "password", "passwd", "secret", "token", "api_key", "apikey",
-    "access_token", "refresh_token", "private_key", "credential",
-    "ssn", "credit_card", "card_number",
+    "password",
+    "passwd",
+    "secret",
+    "token",
+    "api_key",
+    "apikey",
+    "access_token",
+    "refresh_token",
+    "private_key",
+    "credential",
+    "ssn",
+    "credit_card",
+    "card_number",
 )
 
 # StateContext field always redacted for LLM target.
@@ -139,9 +149,7 @@ class AbstractProjectionLayer(ABC):
         policy: PolicySnapshot | None = None,
     ) -> dict[str, Any]:
         """Project *state* for tool execution (capability-filtered)."""
-        return self.project(
-            state, ProjectionTarget.TOOL, policy=policy, tool_name=tool_name
-        )
+        return self.project(state, ProjectionTarget.TOOL, policy=policy, tool_name=tool_name)
 
 
 # ---------------------------------------------------------------------------
@@ -247,9 +255,7 @@ class DeterministicSanitizer(AbstractProjectionLayer):
     ) -> dict[str, Any]:
         result: dict[str, Any] = {k: _sanitize_trace(v) for k, v in data.items()}
         if step_outputs:
-            result["__step_outputs__"] = {
-                k: _sanitize_trace(v) for k, v in step_outputs.items()
-            }
+            result["__step_outputs__"] = {k: _sanitize_trace(v) for k, v in step_outputs.items()}
         return result
 
     def _project_tool(
