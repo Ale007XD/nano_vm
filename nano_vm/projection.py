@@ -100,15 +100,9 @@ class AbstractProjectionLayer(ABC):
         :meth:`project_value`.
         """
         if isinstance(state, dict):
-            return {
-                k: self.project(v, target=target, field_name=k)
-                for k, v in state.items()
-            }
+            return {k: self.project(v, target=target, field_name=k) for k, v in state.items()}
         if isinstance(state, list):
-            return [
-                self.project(item, target=target, field_name=field_name)
-                for item in state
-            ]
+            return [self.project(item, target=target, field_name=field_name) for item in state]
         return self.project_value(state, target=target, field_name=field_name)
 
 
@@ -119,9 +113,19 @@ class AbstractProjectionLayer(ABC):
 # Field names that are always treated as sensitive regardless of value type.
 _SENSITIVE_FIELD_NAMES: frozenset[str] = frozenset(
     {
-        "password", "passwd", "secret", "token", "api_key", "apikey",
-        "access_token", "refresh_token", "private_key", "credential",
-        "ssn", "credit_card", "card_number",
+        "password",
+        "passwd",
+        "secret",
+        "token",
+        "api_key",
+        "apikey",
+        "access_token",
+        "refresh_token",
+        "private_key",
+        "credential",
+        "ssn",
+        "credit_card",
+        "card_number",
     }
 )
 
