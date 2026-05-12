@@ -299,9 +299,10 @@ Four step types:
 | `$step_id.output` | output of a previous step |
 
 > **⚠ Security note — condition expressions:**  
-> `condition` strings are evaluated via `eval()` with `__builtins__` cleared.
-> This is a partial sandbox — it prevents direct builtin access but does not
-> provide full isolation. **Do not interpolate raw user input into condition
+> `condition` strings are parsed and evaluated by the built-in **ASTEngine** —
+> a deterministic, sandboxed interpreter that supports a fixed operator set
+> (`==`, `!=`, `>`, `<`, `in`, `not in`, `and`, `or`, `not`, `contains`).
+> `eval()` is not used. **Do not interpolate raw user input into condition
 > expressions.** Condition logic should be authored by you (the developer), not
 > constructed from untrusted data at runtime. LLM output used as a branching
 > signal should only appear in context variables that your condition *tests*
