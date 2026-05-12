@@ -82,9 +82,7 @@ class ExecutionVM:
         )
         return trace
 
-    async def _execute_step(
-        self, step: Step, state: StateContext
-    ) -> tuple[Any, Any, str | None]:
+    async def _execute_step(self, step: Step, state: StateContext) -> tuple[Any, Any, str | None]:
         if step.type == StepType.LLM:
             return await self._execute_llm(step, state)
         if step.type == StepType.TOOL:
@@ -93,9 +91,7 @@ class ExecutionVM:
             return await self._execute_condition(step, state)
         raise VMError(f"Unknown step type: {step.type}")
 
-    async def _execute_llm(
-        self, step: Step, state: StateContext
-    ) -> tuple[Any, Any, str | None]:
+    async def _execute_llm(self, step: Step, state: StateContext) -> tuple[Any, Any, str | None]:
         ctx = {**state.data, "__step_outputs__": state.step_outputs}
         prompt = step.prompt
         for k, v in ctx.items():
@@ -105,9 +101,7 @@ class ExecutionVM:
         output = await self._llm.complete(messages)
         return output, None, None
 
-    async def _execute_tool(
-        self, step: Step, state: StateContext
-    ) -> tuple[Any, Any, str | None]:
+    async def _execute_tool(self, step: Step, state: StateContext) -> tuple[Any, Any, str | None]:
         tool = self._tools.get(step.tool)
         if tool is None:
             raise VMError(f"Tool not registered: {step.tool!r}")
@@ -133,9 +127,7 @@ class ExecutionVM:
     # erase() — Sprint 3
     # ------------------------------------------------------------------
 
-    def erase(
-        self, event: GdprEraseEvent, state: StateContext
-    ) -> tuple[StateContext, int]:
+    def erase(self, event: GdprEraseEvent, state: StateContext) -> tuple[StateContext, int]:
         target_ids = set(event.target_ref_ids)
         counter = [0]
 

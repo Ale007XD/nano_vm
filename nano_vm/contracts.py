@@ -15,7 +15,7 @@ Design invariants (from RFC / AGENTS.md):
 from __future__ import annotations
 
 import hashlib
-from typing import Annotated, Any, Union
+from typing import Annotated, Any
 
 from pydantic import BaseModel, Field, model_validator
 
@@ -23,11 +23,10 @@ from pydantic import BaseModel, Field, model_validator
 # Defined here (not inline) so mypy resolves the Union cleanly
 # regardless of --strict / overload resolution mode.
 _Payload = Annotated[
-    Union[dict[str, Any], list[Any]],
+    dict[str, Any] | list[Any],
     Field(
         description=(
-            "Projected (sanitised) step result"
-            " — safe for TRACE storage and external delivery."
+            "Projected (sanitised) step result — safe for TRACE storage and external delivery."
         )
     ),
 ]
@@ -70,6 +69,7 @@ class CapabilityRef(BaseModel):
     def _auto_salt(cls, values: dict[str, Any] | Any) -> dict[str, Any] | Any:
         """Auto-generate salt if not provided."""
         import secrets
+
         if isinstance(values, dict) and not values.get("salt"):
             values["salt"] = secrets.token_hex(16)
         return values
@@ -90,7 +90,7 @@ class CapabilityRef(BaseModel):
         payload = (self.ref_id + self.salt).encode("utf-8")
         return hashlib.sha256(payload).hexdigest()
 
-    def tombstone(self) -> "CapabilityRef":
+    def tombstone(self) -> CapabilityRef:
         """Return a new CapabilityRef with is_tombstone=True (model is frozen).
 
         Triggered by the E_gdpr_erase system event.  The original ref_id and
@@ -164,7 +164,7 @@ class PolicySnapshot(BaseModel):
         *,
         policy_id: str,
         version: str,
-    ) -> "PolicySnapshot":
+    ) -> PolicySnapshot:
         """Build a PolicySnapshot from a raw config dict.
 
         The ``policy_hash`` is computed deterministically from the JSON
@@ -201,6 +201,7 @@ class PolicySnapshot(BaseModel):
         If an explicit policy_hash is provided it is accepted as-is.
         """
         import json
+
         if "policy_hash" not in values or not values.get("policy_hash"):
             payload = {
                 "policy_id": values.get("policy_id", ""),
