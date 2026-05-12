@@ -201,8 +201,7 @@ class GovernanceEnvelope(BaseModel):
     payload: dict[str, Any] | list[Any] = Field(
         ...,
         description=(
-            "Projected (sanitised) step result"
-            "— safe for TRACE storage and external delivery.",
+            "Projected (sanitised) step result— safe for TRACE storage and external delivery.",
         ),
     )
 
