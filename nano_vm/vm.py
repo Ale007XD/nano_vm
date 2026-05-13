@@ -13,6 +13,7 @@ import asyncio
 import hashlib
 import re
 from collections.abc import Callable
+from typing import Any
 from datetime import datetime, timezone
 from typing import Any, Protocol
 
@@ -84,7 +85,9 @@ class InMemoryCursorRepository:
     def __init__(self) -> None:
         self._store: dict[str, tuple[str, StateContext, Trace]] = {}
 
-    async def save(self, trace_id: str, step_id: str, state: StateContext, trace: Trace) -> None:
+    async def save(
+        self, trace_id: str, step_id: str, state: StateContext, trace: Trace
+    ) -> None:
         self._store[trace_id] = (step_id, state, trace)
 
     async def load(self, trace_id: str) -> tuple[str, StateContext, Trace] | None:
@@ -103,14 +106,14 @@ class ExecutionVM:
     def __init__(
         self,
         llm: LLMAdapter,
-        tools: dict[str, Callable] | None = None,
+        tools: dict[str, Callable[..., Any]] | None = None,
         cursor_repository: CursorRepository | None = None,
     ) -> None:
         self._llm = llm
-        self._tools: dict[str, Callable] = tools or {}
+        self._tools: dict[str, Callable[..., Any]] = tools or {}
         self._cursor_repo: CursorRepository = cursor_repository or InMemoryCursorRepository()
 
-    def register_tool(self, name: str, fn: Callable) -> None:
+    def register_tool(self, name: str, fn: Callable[..., Any]) -> None:
         self._tools[name] = fn
 
     # ------------------------------------------------------------------
@@ -157,7 +160,9 @@ class ExecutionVM:
     # erase() — Sprint 3: GDPR tombstoning
     # ------------------------------------------------------------------
 
-    def erase(self, event: GdprEraseEvent, state: StateContext) -> tuple[StateContext, int]:
+    def erase(
+        self, event: GdprEraseEvent, state: StateContext
+    ) -> tuple[StateContext, int]:
         target_ids = set(event.target_ref_ids)
         counter = [0]
 
@@ -242,7 +247,10 @@ class ExecutionVM:
                 stalled_count = 0
             last_fingerprint = current_fp
 
-            if program.max_stalled_steps is not None and stalled_count >= program.max_stalled_steps:
+            if (
+                program.max_stalled_steps is not None
+                and stalled_count >= program.max_stalled_steps
+            ):
                 return trace.finish(
                     TraceStatus.STALLED,
                     error=(
@@ -394,7 +402,9 @@ class ExecutionVM:
     # LLM step
     # ------------------------------------------------------------------
 
-    async def _execute_llm(self, step: Step, state: StateContext) -> tuple[str, LLMUsage | None]:
+    async def _execute_llm(
+        self, step: Step, state: StateContext
+    ) -> tuple[str, LLMUsage | None]:
         prompt = self._resolve(step.prompt, state)
         messages: list[dict[str, str]] = []
         if step.system:
@@ -433,9 +443,10 @@ class ExecutionVM:
     # ------------------------------------------------------------------
 
     def _execute_condition(self, step: Step, state: StateContext) -> str | None:
-        condition = self._resolve(step.condition, state)
+        condition = self._resolve(step.condition or "", state)
+        ctx: dict[str, Any] = {**state.step_outputs, **state.data}
         try:
-            result = bool(eval_condition(condition, {**state.step_outputs, **state.data}))
+            result = bool(eval_condition(condition, ctx))
         except Exception as exc:
             raise VMError(f"Condition eval error '{condition}': {exc}") from exc
         return step.then if result else step.otherwise
@@ -493,7 +504,9 @@ class ExecutionVM:
 
         return outputs, sub_results
 
-    async def _dispatch_leaf(self, step: Step, state: StateContext) -> tuple[Any, LLMUsage | None]:
+    async def _dispatch_leaf(
+        self, step: Step, state: StateContext
+    ) -> tuple[Any, LLMUsage | None]:
         if step.type == StepType.LLM:
             return await self._execute_llm(step, state)
         if step.type == StepType.TOOL:
@@ -524,20 +537,20 @@ class ExecutionVM:
 
         _MISSING = object()
 
-        def replace(match: re.Match) -> str:
+        def replace(match: re.Match[str]) -> str:
             expr = match.group(1)
             if "." in expr:
                 step_id, field = expr.split(".", 1)
                 step_out = state.step_outputs.get(step_id, _MISSING)
                 if step_out is _MISSING:
-                    return match.group(0)
+                    return str(match.group(0))
                 if field == "output":
                     return str(step_out)
                 if isinstance(step_out, dict):
                     val = step_out.get(field, _MISSING)
-                    return str(val) if val is not _MISSING else match.group(0)
-                return match.group(0)
+                    return str(val) if val is not _MISSING else str(match.group(0))
+                return str(match.group(0))
             val = state.data.get(expr, _MISSING)
-            return str(val) if val is not _MISSING else match.group(0)
+            return str(val) if val is not _MISSING else str(match.group(0))
 
         return re.sub(r"\$(\w+(?:\.\w+)?)", replace, value)
