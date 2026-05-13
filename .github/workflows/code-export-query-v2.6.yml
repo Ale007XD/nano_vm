@@ -31,12 +31,6 @@ jobs:
       - name: Install tools
         run: sudo apt-get update && sudo apt-get install -y ripgrep jq zip
 
-      - name: Download indexes (optional)
-        uses: actions/download-artifact@v4
-        continue-on-error: true
-        with:
-          name: repo-indexes
-
       - name: LLM Decision (Markdown)
         id: llm
         env:
@@ -69,7 +63,7 @@ jobs:
             -H "Content-Type: application/json" \
             -d @prompt.json > raw_response.json
 
-          jq -r '.choices[0].message.content' raw_response.json > agent_plan.md || echo "Ошибка извлечения ответа модели" > agent_plan.md
+          jq -r '.choices[0].message.content' raw_response.json > agent_plan.md || echo "Ошибка извлечения ответа" > agent_plan.md
 
       - name: Execute Export
         run: |
@@ -77,15 +71,15 @@ jobs:
           cp agent_plan.md raw_response.json query_result/ 2>/dev/null || true
 
           echo "=== Ответ модели ==="
-          head -n 80 agent_plan.md
+          head -n 100 agent_plan.md
 
-          # Извлекаем файлы из Markdown
+          # Извлекаем файлы
           > files_to_process.txt
           sed -n '/FILES_TO_EXPORT:/,$p' agent_plan.md | grep '^- ' | sed 's/^- //' | head -15 > files_to_process.txt
 
           if [[ ! -s files_to_process.txt ]]; then
-            echo "⚠️ Не найдено FILES_TO_EXPORT → fallback"
-            rg --files --glob '!.github/**' --glob '!query_result/**' --glob '!node_modules/**' | head -10 > files_to_process.txt
+            echo "⚠️ Fallback поиск"
+            rg --files --glob '!.github/**' --glob '!query_result/**' --glob '!node_modules/**' | head -12 > files_to_process.txt
           fi
 
           echo "📄 Файлы для экспорта:"
@@ -135,7 +129,7 @@ jobs:
         with:
           script: |
             const fs = require('fs');
-            const response = fs.readFileSync('query_result/agent_plan.md', 'utf8').substring(0, 700);
+            const response = fs.readFileSync('query_result/agent_plan.md', 'utf8').substring(0, 600);
             await github.rest.issues.createComment({
               issue_number: context.issue.number,
               owner: context.repo.owner,
