@@ -1,1 +1,143 @@
+name: Code Query & Export v2.1 (OpenRouter)
 
+on:
+  workflow_dispatch:
+    inputs:
+      query:
+        description: 'Запрос (на русском/английском)'
+        required: true
+      mode:
+        description: 'Режим'
+        required: true
+        default: 'smart'
+        type: choice
+        options: [smart, snippets, files, full_project]
+
+  issue_comment:
+    types: [created]
+
+jobs:
+  intelligent-export:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install tools
+        run: sudo apt-get update && sudo apt-get install -y ripgrep jq zip
+
+      - name: Download indexes
+        uses: actions/download-artifact@v4
+        continue-on-error: true
+        with:
+          name: repo-indexes
+
+      - name: LLM Decision (OpenRouter)
+        id: llm
+        env:
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+        run: |
+          cat > prompt.json << 'EOP'
+          {
+            "model": "qwen/qwen3-coder:free",
+            "messages": [
+              {
+                "role": "system",
+                "content": "Ты — эксперт по поиску в большом репозитории. Используй repo-structure.json. Работай retrieval-first. Всегда возвращай строго валидный JSON."
+              },
+              {
+                "role": "user",
+                "content": "Запрос пользователя: ${{ github.event.inputs.query || github.event.comment.body }}\nРежим: \( {{ github.event.inputs.mode || 'smart' }}\n\nСтруктура проекта:\n \)(cat repo-structure.json 2>/dev/null | head -c 20000 || echo 'Структура недоступна')"
+              }
+            ],
+            "response_format": { "type": "json_object" },
+            "temperature": 0.2,
+            "max_tokens": 2500
+          }
+          EOP
+
+          curl -s https://openrouter.ai/api/v1/chat/completions \
+            -H "Authorization: Bearer $OPENROUTER_API_KEY" \
+            -H "HTTP-Referer: https://github.com/${{ github.repository }}" \
+            -H "X-OpenRouter-Title: Code Export v2.1" \
+            -H "Content-Type: application/json" \
+            -d @prompt.json > raw_response.json
+
+          # Надёжное извлечение JSON
+          jq -r '.choices[0].message.content' raw_response.json > agent_plan.json || \
+          (echo '{"error": "Failed to parse JSON", "raw": "'"$(cat raw_response.json | head -c 1000)"'"}' > agent_plan.json)
+
+      - name: Execute Export Plan
+        run: |
+          mkdir -p query_result
+          cp agent_plan.json query_result/
+
+          echo "📋 План агента:"
+          cat agent_plan.json | jq . || echo "Invalid JSON"
+
+          # Парсинг файлов и диапазонов
+          jq -r '.files_to_export[]? // empty' query_result/agent_plan.json > files_to_process.txt || true
+
+          while IFS= read -r item || [ -n "$item" ]; do
+            if [[ -z "$item" ]]; then continue; fi
+            
+            FILE=$(echo "$item" | cut -d':' -f1)
+            RANGE=$(echo "$item" | cut -d':' -f2-)
+            
+            if [[ -f "$FILE" ]]; then
+              mkdir -p "query_result/$(dirname "$FILE")"
+              
+              if [[ "\( RANGE" =\~ ^[0-9]+-[0-9]+ \) ]]; then
+                # Диапазон строк
+                START=$(echo "$RANGE" | cut -d'-' -f1)
+                END=$(echo "$RANGE" | cut -d'-' -f2)
+                sed -n "\( {START}, \){END}p" "\( FILE" > "query_result/ \){FILE}.snippet"
+                cp "\( FILE" "query_result/ \){FILE}.full" 2>/dev/null || true
+                echo "✅ Диапазон $START-$END из $FILE"
+              else
+                # Полный файл
+                cp "$FILE" "query_result/$FILE"
+                echo "✅ Полный файл $FILE"
+              fi
+            fi
+          done < files_to_process.txt
+
+          # Full project
+          if [[ "${{ github.event.inputs.mode }}" == "full_project" ]]; then
+            zip -r query_result/full_project.zip . \
+              -x "*.git*" "query_result/*" "node_modules/*" "dist/*" "__pycache__/*" "*.zip" > /dev/null
+          fi
+
+          echo "✅ Экспорт завершён"
+
+      - name: Upload Results
+        uses: actions/upload-artifact@v4
+        with:
+          name: query-result-${{ github.run_id }}
+          path: query_result/
+          retention-days: 14
+
+      - name: Comment in Issue/PR
+        if: github.event_name == 'issue_comment'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            let plan;
+            try {
+              plan = JSON.parse(fs.readFileSync('query_result/agent_plan.json', 'utf8'));
+            } catch(e) {
+              plan = { reasoning: "Ошибка парсинга ответа модели" };
+            }
+            
+            await github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: `**🔍 Code Query v2.1**\n\n**Запрос:** ${context.payload.comment.body}\n\n**Рассуждение:** ${plan.reasoning || plan.explanation || '—'}\n\nРезультаты — в артефактах Actions.`
+            });
