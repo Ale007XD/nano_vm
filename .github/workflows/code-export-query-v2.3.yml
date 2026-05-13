@@ -1,13 +1,13 @@
-name: Code Query & Export v2.2 (Robust)
+name: Code Query & Export v2.3 (Stable)
 
 on:
   workflow_dispatch:
     inputs:
       query:
-        description: 'Запрос'
+        description: 'Запрос к кодовой базе'
         required: true
       mode:
-        description: 'Режим'
+        description: 'Режим вывода'
         required: true
         default: 'smart'
         type: choice
@@ -31,7 +31,8 @@ jobs:
       - name: Install tools
         run: sudo apt-get update && sudo apt-get install -y ripgrep jq zip
 
-      - name: Download indexes
+      # === Скачиваем индексы (не критично) ===
+      - name: Download indexes (optional)
         uses: actions/download-artifact@v4
         continue-on-error: true
         with:
@@ -50,83 +51,86 @@ jobs:
             "messages": [
               {
                 "role": "system",
-                "content": "Ты эксперт по кодовой базе. Всегда отвечай ТОЛЬКО валидным JSON. Никогда не добавляй markdown, объяснения вне JSON."
+                "content": "Ты — помощник по поиску в репозитории. Отвечай **только** валидным JSON объектом. Не добавляй ничего кроме JSON."
               },
               {
                 "role": "user",
-                "content": "Запрос: ${{ github.event.inputs.query || github.event.comment.body }}\nРежим: \( {{ github.event.inputs.mode || 'smart' }}\n\nСтруктура репозитория:\n \)(cat repo-structure.json 2>/dev/null | head -c 18000 || echo 'Структура недоступна')"
+                "content": "Запрос: ${{ github.event.inputs.query || github.event.comment.body }}\nРежим: \( {{ github.event.inputs.mode || 'smart' }}\n\nСтруктура проекта (если есть):\n \)(cat repo-structure.json 2>/dev/null | head -c 15000 || echo 'Структура отсутствует')"
               }
             ],
-            "temperature": 0.2,
-            "max_tokens": 2000
+            "temperature": 0.3,
+            "max_tokens": 1800
           }
           EOP
 
           curl -s https://openrouter.ai/api/v1/chat/completions \
             -H "Authorization: Bearer $OPENROUTER_API_KEY" \
             -H "HTTP-Referer: https://github.com/${{ github.repository }}" \
-            -H "X-OpenRouter-Title: Code Export v2.2" \
+            -H "X-OpenRouter-Title: Code Export v2.3" \
             -H "Content-Type: application/json" \
             -d @prompt.json > raw_response.json
 
-          # Надёжное извлечение JSON
-          if jq -e '.choices[0].message.content' raw_response.json > /dev/null; then
+          # Очень устойчивое извлечение JSON
+          if jq -e '.choices[0].message.content' raw_response.json >/dev/null 2>&1; then
             jq -r '.choices[0].message.content' raw_response.json > agent_plan.json
           else
-            echo '{"error": true, "reasoning": "Модель не вернула JSON", "files_to_export": []}' > agent_plan.json
+            echo '{"reasoning": "Модель не вернула JSON", "files_to_export": []}' > agent_plan.json
           fi
 
-      - name: Execute Export Plan
+      - name: Execute Export
         run: |
           mkdir -p query_result
           cp agent_plan.json raw_response.json query_result/ 2>/dev/null || true
 
-          echo "📋 План агента:"
-          cat agent_plan.json | jq . || echo "❌ Не удалось распарсить JSON"
+          echo "=== План агента ==="
+          cat agent_plan.json | jq . || echo "Не удалось распарсить JSON"
 
-          # Безопасное чтение файлов
+          # Безопасное получение списка файлов
+          > files_to_process.txt
           jq -r '.files_to_export[]? // empty' query_result/agent_plan.json > files_to_process.txt 2>/dev/null || true
 
+          # Fallback, если ничего не нашлось
           if [[ ! -s files_to_process.txt ]]; then
-            echo "⚠️ Файлы не найдены. Пробуем fallback-поиск..."
-            # Простой fallback
-            rg --files | head -15 > files_to_process.txt || true
+            echo "⚠️ LLM ничего не нашёл → fallback поиск"
+            rg --files | head -20 >> files_to_process.txt || echo "." > files_to_process.txt
           fi
 
+          # Основной цикл — максимально безопасный
           while IFS= read -r item || [ -n "$item" ]; do
             [[ -z "$item" ]] && continue
-            
-            # Безопасное разделение
+            # Убираем возможные кавычки
+            item=$(echo "$item" | tr -d '"')
+
             FILE="${item%%:*}"
             RANGE="${item#*:}"
-            
+
             if [[ "$FILE" == "$RANGE" ]]; then
-              RANGE=""  # нет диапазона
+              RANGE=""
             fi
 
             if [[ -f "$FILE" ]]; then
               mkdir -p "query_result/$(dirname "$FILE")"
-              
+
               if [[ -n "$RANGE" && "\( RANGE" =\~ ^[0-9]+-[0-9]+ \) ]]; then
                 START="${RANGE%-*}"
                 END="${RANGE#*-}"
                 sed -n "\( {START}, \){END}p" "\( FILE" > "query_result/ \){FILE}.snippet"
-                echo "✅ Диапазон \( {START}- \){END} из $FILE"
+                echo "✅ Диапазон \( {START}- \){END} ← $FILE"
               else
                 cp "$FILE" "query_result/$FILE"
-                echo "✅ Полный файл: $FILE"
+                echo "✅ Полный файл ← $FILE"
               fi
             fi
           done < files_to_process.txt
 
           # Full project
           if [[ "${{ github.event.inputs.mode }}" == "full_project" ]]; then
+            echo "📦 Создаём full_project.zip..."
             zip -r query_result/full_project.zip . \
               -x "*.git*" "query_result/*" "node_modules/*" "dist/*" "__pycache__/*" > /dev/null
-            echo "✅ Создан full_project.zip"
           fi
 
-          echo "✅ Задача завершена"
+          echo "✅ Экспорт завершён"
 
       - name: Upload Results
         uses: actions/upload-artifact@v4
@@ -141,14 +145,12 @@ jobs:
         with:
           script: |
             const fs = require('fs');
-            let plan = { reasoning: "Ошибка обработки" };
-            try {
-              plan = JSON.parse(fs.readFileSync('query_result/agent_plan.json', 'utf8'));
-            } catch(e) {}
+            let plan = { reasoning: "—" };
+            try { plan = JSON.parse(fs.readFileSync('query_result/agent_plan.json', 'utf8')); } catch(e){}
             
             await github.rest.issues.createComment({
               issue_number: context.issue.number,
               owner: context.repo.owner,
               repo: context.repo.repo,
-              body: `**🔍 Code Query v2.2**\n\n**Запрос:** ${context.payload.comment.body}\n\n**Результат:** ${plan.reasoning || plan.explanation || 'Смотри артефакты'}`
+              body: `**✅ Code Query v2.3 выполнен**\n\n**Запрос:** ${context.payload.comment.body}\n\n**Рассуждение:** ${plan.reasoning || plan.explanation || '—'}\n\nРезультаты в артефактах.`
             });
