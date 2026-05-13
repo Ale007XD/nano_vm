@@ -433,7 +433,7 @@ class ExecutionVM:
     # ------------------------------------------------------------------
 
     def _execute_condition(self, step: Step, state: StateContext) -> str | None:
-        condition = self._resolve(step.condition or "", state)
+        condition = step.condition or ""
         ctx: dict[str, Any] = {**state.step_outputs, **state.data}
         try:
             result = bool(eval_condition(condition, ctx))
