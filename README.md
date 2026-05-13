@@ -21,7 +21,7 @@
 
 ---
 
-## The Problem with LLM Agents
+## The Problem with LLM Agents 
 
 | | Prompting | LLM Agents | **llm-nano-vm** |
 | :--- | :---: | :---: | :---: |
