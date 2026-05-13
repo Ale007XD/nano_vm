@@ -2,9 +2,11 @@ name: CI
 
 on:
   push:
-    branches: ["**"] # Запускается на любой ветке при пуше
+    branches:
+      - "**"
   pull_request:
-    branches: ["main"] # Запускается на PR в main
+    branches:
+      - "main"
   workflow_dispatch:
     inputs:
       branch:
