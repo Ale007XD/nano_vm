@@ -13,7 +13,6 @@ import asyncio
 import hashlib
 import re
 from collections.abc import Callable
-from typing import Any
 from datetime import datetime, timezone
 from typing import Any, Protocol
 
@@ -85,9 +84,7 @@ class InMemoryCursorRepository:
     def __init__(self) -> None:
         self._store: dict[str, tuple[str, StateContext, Trace]] = {}
 
-    async def save(
-        self, trace_id: str, step_id: str, state: StateContext, trace: Trace
-    ) -> None:
+    async def save(self, trace_id: str, step_id: str, state: StateContext, trace: Trace) -> None:
         self._store[trace_id] = (step_id, state, trace)
 
     async def load(self, trace_id: str) -> tuple[str, StateContext, Trace] | None:
@@ -160,9 +157,7 @@ class ExecutionVM:
     # erase() — Sprint 3: GDPR tombstoning
     # ------------------------------------------------------------------
 
-    def erase(
-        self, event: GdprEraseEvent, state: StateContext
-    ) -> tuple[StateContext, int]:
+    def erase(self, event: GdprEraseEvent, state: StateContext) -> tuple[StateContext, int]:
         target_ids = set(event.target_ref_ids)
         counter = [0]
 
@@ -247,10 +242,7 @@ class ExecutionVM:
                 stalled_count = 0
             last_fingerprint = current_fp
 
-            if (
-                program.max_stalled_steps is not None
-                and stalled_count >= program.max_stalled_steps
-            ):
+            if program.max_stalled_steps is not None and stalled_count >= program.max_stalled_steps:
                 return trace.finish(
                     TraceStatus.STALLED,
                     error=(
@@ -402,9 +394,7 @@ class ExecutionVM:
     # LLM step
     # ------------------------------------------------------------------
 
-    async def _execute_llm(
-        self, step: Step, state: StateContext
-    ) -> tuple[str, LLMUsage | None]:
+    async def _execute_llm(self, step: Step, state: StateContext) -> tuple[str, LLMUsage | None]:
         prompt = self._resolve(step.prompt, state)
         messages: list[dict[str, str]] = []
         if step.system:
@@ -504,9 +494,7 @@ class ExecutionVM:
 
         return outputs, sub_results
 
-    async def _dispatch_leaf(
-        self, step: Step, state: StateContext
-    ) -> tuple[Any, LLMUsage | None]:
+    async def _dispatch_leaf(self, step: Step, state: StateContext) -> tuple[Any, LLMUsage | None]:
         if step.type == StepType.LLM:
             return await self._execute_llm(step, state)
         if step.type == StepType.TOOL:
