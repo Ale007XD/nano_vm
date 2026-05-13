@@ -32,7 +32,6 @@ from pydantic import BaseModel, Field, model_validator
 #   from nano_vm.models import CapabilityRef, PolicySnapshot
 from nano_vm.contracts import CapabilityRef, GovernanceEnvelope, PolicySnapshot
 
-
 # ---------------------------------------------------------------------------
 # GdprEraseEvent
 # ---------------------------------------------------------------------------
@@ -316,15 +315,12 @@ class Trace(BaseModel):
         snapshots = list(self.state_snapshots)
         if not snapshots:
             return hashlib.sha256(b"empty").hexdigest()
-        leaves = [
-            hashlib.sha256(f"{idx}:{fp}".encode()).digest() for idx, fp in snapshots
-        ]
+        leaves = [hashlib.sha256(f"{idx}:{fp}".encode()).digest() for idx, fp in snapshots]
         while len(leaves) > 1:
             if len(leaves) % 2 == 1:
                 leaves.append(leaves[-1])
             leaves = [
-                hashlib.sha256(leaves[i] + leaves[i + 1]).digest()
-                for i in range(0, len(leaves), 2)
+                hashlib.sha256(leaves[i] + leaves[i + 1]).digest() for i in range(0, len(leaves), 2)
             ]
         return leaves[0].hex()
 
