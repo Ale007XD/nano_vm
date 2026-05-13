@@ -1,4 +1,4 @@
-name: Code Query & Export v2.3 (Stable)
+name: Code Query & Export v2.4 (Ultra Stable)
 
 on:
   workflow_dispatch:
@@ -31,14 +31,13 @@ jobs:
       - name: Install tools
         run: sudo apt-get update && sudo apt-get install -y ripgrep jq zip
 
-      # === Скачиваем индексы (не критично) ===
       - name: Download indexes (optional)
         uses: actions/download-artifact@v4
         continue-on-error: true
         with:
           name: repo-indexes
 
-      - name: LLM Decision (OpenRouter)
+      - name: LLM Decision
         id: llm
         env:
           OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
@@ -51,30 +50,30 @@ jobs:
             "messages": [
               {
                 "role": "system",
-                "content": "Ты — помощник по поиску в репозитории. Отвечай **только** валидным JSON объектом. Не добавляй ничего кроме JSON."
+                "content": "Отвечай СТРОГО только JSON. Никакого markdown, никакого дополнительного текста. Формат: {\"reasoning\": \"...\", \"files_to_export\": [\"path/to/file.py\", \"another/file.py:10-50\", ...]}"
               },
               {
                 "role": "user",
-                "content": "Запрос: ${{ github.event.inputs.query || github.event.comment.body }}\nРежим: \( {{ github.event.inputs.mode || 'smart' }}\n\nСтруктура проекта (если есть):\n \)(cat repo-structure.json 2>/dev/null | head -c 15000 || echo 'Структура отсутствует')"
+                "content": "Запрос: ${{ github.event.inputs.query || github.event.comment.body }}\nРежим: \( {{ github.event.inputs.mode || 'smart' }}\n\nСтруктура проекта:\n \)(cat repo-structure.json 2>/dev/null | head -c 12000 || echo 'нет структуры')"
               }
             ],
-            "temperature": 0.3,
-            "max_tokens": 1800
+            "temperature": 0.2,
+            "max_tokens": 1500
           }
           EOP
 
           curl -s https://openrouter.ai/api/v1/chat/completions \
             -H "Authorization: Bearer $OPENROUTER_API_KEY" \
             -H "HTTP-Referer: https://github.com/${{ github.repository }}" \
-            -H "X-OpenRouter-Title: Code Export v2.3" \
+            -H "X-OpenRouter-Title: Code Export v2.4" \
             -H "Content-Type: application/json" \
             -d @prompt.json > raw_response.json
 
-          # Очень устойчивое извлечение JSON
-          if jq -e '.choices[0].message.content' raw_response.json >/dev/null 2>&1; then
+          # Супер-устойчивое извлечение
+          if jq -e '.choices[0].message.content' raw_response.json > /dev/null 2>&1; then
             jq -r '.choices[0].message.content' raw_response.json > agent_plan.json
           else
-            echo '{"reasoning": "Модель не вернула JSON", "files_to_export": []}' > agent_plan.json
+            echo '{"reasoning": "Не удалось получить JSON от модели", "files_to_export": []}' > agent_plan.json
           fi
 
       - name: Execute Export
@@ -83,28 +82,31 @@ jobs:
           cp agent_plan.json raw_response.json query_result/ 2>/dev/null || true
 
           echo "=== План агента ==="
-          cat agent_plan.json | jq . || echo "Не удалось распарсить JSON"
+          cat agent_plan.json | jq . || echo "JSON не распарсился"
 
-          # Безопасное получение списка файлов
+          # === Fallback + обработка ===
           > files_to_process.txt
-          jq -r '.files_to_export[]? // empty' query_result/agent_plan.json > files_to_process.txt 2>/dev/null || true
+          jq -r '.files_to_export[]? // empty' query_result/agent_plan.json 2>/dev/null > files_to_process.txt || true
 
-          # Fallback, если ничего не нашлось
           if [[ ! -s files_to_process.txt ]]; then
-            echo "⚠️ LLM ничего не нашёл → fallback поиск"
-            rg --files | head -20 >> files_to_process.txt || echo "." > files_to_process.txt
+            echo "⚠️ Fallback поиск по rg"
+            rg --files | head -15 > files_to_process.txt || echo "README.md" > files_to_process.txt
           fi
 
-          # Основной цикл — максимально безопасный
-          while IFS= read -r item || [ -n "$item" ]; do
-            [[ -z "$item" ]] && continue
-            # Убираем возможные кавычки
-            item=$(echo "$item" | tr -d '"')
+          echo "Файлы для обработки:"
+          cat files_to_process.txt
 
-            FILE="${item%%:*}"
-            RANGE="${item#*:}"
+          # === Безопасная обработка ===
+          while IFS= read -r line || [ -n "$line" ]; do
+            [[ -z "$line" ]] && continue
+            item=$(echo "$line" | tr -d '"')
 
-            if [[ "$FILE" == "$RANGE" ]]; then
+            # Разделяем file:range
+            if [[ "$item" == *:* ]]; then
+              FILE="${item%%:*}"
+              RANGE="${item#*:}"
+            else
+              FILE="$item"
               RANGE=""
             fi
 
@@ -115,22 +117,20 @@ jobs:
                 START="${RANGE%-*}"
                 END="${RANGE#*-}"
                 sed -n "\( {START}, \){END}p" "\( FILE" > "query_result/ \){FILE}.snippet"
-                echo "✅ Диапазон \( {START}- \){END} ← $FILE"
+                echo "✅ Диапазон \( {START}- \){END} из $FILE"
               else
                 cp "$FILE" "query_result/$FILE"
-                echo "✅ Полный файл ← $FILE"
+                echo "✅ Полный файл: $FILE"
               fi
             fi
           done < files_to_process.txt
 
-          # Full project
           if [[ "${{ github.event.inputs.mode }}" == "full_project" ]]; then
-            echo "📦 Создаём full_project.zip..."
-            zip -r query_result/full_project.zip . \
-              -x "*.git*" "query_result/*" "node_modules/*" "dist/*" "__pycache__/*" > /dev/null
+            echo "📦 Создаём ZIP всего проекта..."
+            zip -r query_result/full_project.zip . -x "*.git*" "query_result/*" "node_modules/*" "dist/*" "__pycache__/*" "*.zip" > /dev/null
           fi
 
-          echo "✅ Экспорт завершён"
+          echo "✅ Workflow завершён успешно"
 
       - name: Upload Results
         uses: actions/upload-artifact@v4
@@ -145,12 +145,15 @@ jobs:
         with:
           script: |
             const fs = require('fs');
-            let plan = { reasoning: "—" };
-            try { plan = JSON.parse(fs.readFileSync('query_result/agent_plan.json', 'utf8')); } catch(e){}
+            let reasoning = "Результат в артефактах";
+            try {
+              const plan = JSON.parse(fs.readFileSync('query_result/agent_plan.json', 'utf8'));
+              reasoning = plan.reasoning || reasoning;
+            } catch(e) {}
             
             await github.rest.issues.createComment({
               issue_number: context.issue.number,
               owner: context.repo.owner,
               repo: context.repo.repo,
-              body: `**✅ Code Query v2.3 выполнен**\n\n**Запрос:** ${context.payload.comment.body}\n\n**Рассуждение:** ${plan.reasoning || plan.explanation || '—'}\n\nРезультаты в артефактах.`
+              body: `**✅ Code Query v2.4**\n\n**Запрос:** ${context.payload.comment.body}\n\n**Рассуждение:** ${reasoning}`
             });
