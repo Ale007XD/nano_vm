@@ -10,6 +10,11 @@ v0.6.0 changes:
   - CursorRepository protocol для persisted suspend cursor
   - WebhookEvent — типизированный входной контракт resume()
 
+v0.7.0 changes:
+  - erase(): рекурсивный обход state.data dict/list/nested (Sprint4/P9)
+    Tombstone-ит все CapabilityRef с ref_id ∈ event.target_ref_ids
+    на произвольной глубине вложенности.
+
 Key properties (unchanged):
   - VM has no knowledge of providers; receives LLMAdapter via __init__
   - Same Program + StateContext + deterministic adapter -> reproducible result
@@ -29,7 +34,10 @@ from datetime import datetime, timezone
 from typing import Any, Protocol
 
 from .adapters.base import LLMAdapter
+from .ast_engine import ASTEvalError, ASTParseError, eval_condition
 from .models import (
+    CapabilityRef,
+    GdprEraseEvent,
     InterruptType,
     LLMUsage,
     OnError,
@@ -190,14 +198,14 @@ class ExecutionVM:
     def __init__(
         self,
         llm: LLMAdapter,
-        tools: dict[str, Callable] | None = None,
+        tools: dict[str, Callable[..., Any]] | None = None,
         cursor_repository: CursorRepository | None = None,
     ) -> None:
         self._llm = llm
-        self._tools: dict[str, Callable] = tools or {}
+        self._tools: dict[str, Callable[..., Any]] = tools or {}
         self._cursor_repo: CursorRepository = cursor_repository or InMemoryCursorRepository()
 
-    def register_tool(self, name: str, fn: Callable) -> None:
+    def register_tool(self, name: str, fn: Callable[..., Any]) -> None:
         self._tools[name] = fn
 
     # ------------------------------------------------------------------
@@ -572,11 +580,11 @@ class ExecutionVM:
             output = await self._execute_tool(step, state)
             return output, None, []
         if step.type == StepType.CONDITION:
-            output = self._execute_condition(step, state)
-            return output, None, []
+            cond_output: str | None = self._execute_condition(step, state)
+            return cond_output, None, []
         if step.type == StepType.PARALLEL:
-            output, sub_results = await self._execute_parallel(step, state)
-            return output, None, sub_results
+            par_output, sub_results = await self._execute_parallel(step, state)
+            return par_output, None, sub_results
         raise VMError(f"Unknown step type: {step.type}")
 
     # ------------------------------------------------------------------
@@ -628,9 +636,19 @@ class ExecutionVM:
     # ------------------------------------------------------------------
 
     def _execute_condition(self, step: Step, state: StateContext) -> str | None:
+        """
+        v0.7.0: eval() заменён на детерминированный ASTEngine.
+
+        Контекст для ASTEngine строится из state:
+          - data keys        → прямой доступ по имени ($key)
+          - __step_outputs__ → служебный ключ для VarNode resolver ($step_id.output)
+        """
         condition = self._resolve(step.condition, state)
+        ctx: dict[str, Any] = {**state.data, "__step_outputs__": dict(state.step_outputs)}
         try:
-            result = bool(eval(condition, {"__builtins__": {}}, {}))  # noqa: S307
+            result = eval_condition(condition, ctx)
+        except (ASTEvalError, ASTParseError) as exc:
+            raise VMError(f"Condition eval error '{condition}': {exc}") from exc
         except Exception as exc:
             raise VMError(f"Condition eval error '{condition}': {exc}") from exc
         return step.then if result else step.otherwise
@@ -701,6 +719,63 @@ class ExecutionVM:
         raise VMError(f"Sub-step '{step.id}': type '{step.type}' not allowed inside parallel")
 
     # ------------------------------------------------------------------
+    # v0.7.0: GDPR erasure — Sprint4/P9: рекурсивный обход nested dict/list
+    # ------------------------------------------------------------------
+
+    def erase(
+        self,
+        event: GdprEraseEvent,
+        state: StateContext,
+    ) -> tuple[StateContext, int]:
+        """
+        Tombstone CapabilityRef в state.data по ref_id из GdprEraseEvent.
+
+        Sprint4/P9: рекурсивный обход dict/list на любой глубине вложенности.
+        step_outputs не затрагивается (содержит outputs шагов, не PII-ref'ы).
+
+        Алгоритм:
+          - Обходит state.data рекурсивно (_erase_node).
+          - Для каждого CapabilityRef с ref_id ∈ target_ref_ids → tombstone().
+          - dict/list обходятся рекурсивно; все прочие типы возвращаются as-is.
+          - Иммутабельно: создаёт новые dict/list на каждом затронутом уровне.
+
+        Returns:
+          (new_state, erased_count) — новое иммутабельное состояние + кол-во tombstoned refs.
+
+        Инварианты:
+          - erased_count считает только конечные CapabilityRef (не контейнеры).
+          - Одинаковый (state, event) → одинаковый результат (pure function).
+          - state не мутируется; все промежуточные структуры — новые объекты.
+        """
+        target_ids = frozenset(event.target_ref_ids)
+        count = 0
+
+        def _erase_node(node: Any) -> Any:
+            nonlocal count
+
+            if isinstance(node, CapabilityRef):
+                if node.ref_id in target_ids:
+                    count += 1
+                    return node.tombstone()
+                return node
+
+            if isinstance(node, dict):
+                result: dict[str, Any] = {}
+                for k, v in node.items():
+                    result[k] = _erase_node(v)
+                return result
+
+            if isinstance(node, list):
+                return [_erase_node(item) for item in node]
+
+            # Прочие типы (str, int, float, bool, None, etc.) — без изменений
+            return node
+
+        new_data = _erase_node(state.data)
+        new_state = state.model_copy(update={"data": new_data})
+        return new_state, count
+
+    # ------------------------------------------------------------------
     # Fingerprint
     # ------------------------------------------------------------------
 
@@ -723,7 +798,7 @@ class ExecutionVM:
 
         _MISSING = object()
 
-        def replace(match: re.Match) -> str:
+        def replace(match: re.Match[str]) -> str:
             expr = match.group(1)
 
             if "." in expr:

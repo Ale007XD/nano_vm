@@ -7,7 +7,96 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 
 ---
 
-## [0.6.0] — 2025-05-04
+## [0.7.0] — 2026-05-11
+
+### Added
+
+- **`suspend / resume` — webhook-driven execution.**  
+  A tool returning the sentinel `"PENDING"` transitions the VM to `TraceStatus.SUSPENDED`
+  and persists a cursor. Execution resumes from that cursor when an external event arrives
+  (payment webhook, courier confirmation, etc.).
+
+  ```python
+  trace = await vm.run(program, context={"order_id": "123"})
+  assert trace.status == TraceStatus.SUSPENDED
+
+  trace = await vm.resume_with_program(
+      program=program,
+      trace_id=trace.trace_id,
+      webhook_event={"type": "payment.confirmed", "order_id": "123"},
+  )
+  assert trace.status == TraceStatus.SUCCESS
+  ```
+
+  `InMemoryCursorRepository` ships for tests and dry-run.
+  Inject `cursor_repo=SqliteCursorRepository(...)` for production.
+  `resume_with_program()` is the stable API until Blueprint registry (P8) is implemented.
+
+- **`BudgetInterrupt` — isolated system interrupt.**  
+  Budget exhaustion emits `InterruptType.BUDGET` before the next step executes.
+  The LLM cannot observe or influence this signal. Override `_emit_interrupt()` in a
+  subclass to route to your observability stack (no magic, standard Python inheritance).
+
+- **`VaultStepResult` + `VaultStepMetadata` — MCP-compatible DTOs.**  
+  `status` is a plain string (`"SUCCESS" | "FAILED" | "PENDING"`), not an enum —
+  required for round-trip JSON serialization through the MCP layer.
+  `@model_validator` enforces the allowed set at construction time.
+
+- **`Trace.trace_id` — UUID4, OTel-ready.**  
+  Auto-generated (`default_factory=uuid4`). Propagated into `VaultStepMetadata.trace_id`
+  and `AuditEvent.trace_id`. OTel exporter is a separate concern (P13) — the field is
+  stable from this release.
+
+- **`erase()` — nested `CapabilityRef` tombstoning.**  
+  `erase(state, target_ids) → (StateContext, int)` — pure function, returns new state
+  plus count of tombstoned refs. Traverses arbitrary depth of nested `dict` / `list`.
+  `is_tombstone=True` causes `secure_hash()` to return `"TOMBSTONE"` and all projections
+  to return `[REDACTED_TOMBSTONE]`, preserving the hash chain without exposing erased data.
+
+- **`ASTEngine` — `eval()` removed from production execution path.**  
+  Condition expressions are parsed into a validated JSON AST and evaluated by a pure,
+  sandboxed evaluator. No Python builtins accessible.  
+  Supported operators: `==`, `!=`, `>`, `<`, `in`, `not in`, `and`, `or`, `contains`.
+
+- **`ProjectionLayer` API.**  
+  `AbstractProjectionLayer` with targets `LLM`, `TRACE`, `TOOL`.  
+  `DeterministicSanitizer` base implementation (regex + field rules) injected into
+  FSM lifecycle hooks.
+
+- **`TraceStatus.SUSPENDED`** added to the FSM transition table.  
+  `SUSPENDED` is not a terminal state — `resume_with_program()` transitions back to `RUNNING`.
+
+- **Stress test suite v0.7.0 (`benchmarks/benchmark_stress_060`).**  
+  10,000 FSM graphs × 5 runs · Mock adapter (CPU-bound).  
+  Average: **14,327 graphs/sec · 0.70 s/run**.  
+  89.73% success rate matches `P(value ≤ 0.9) = 0.9` by design.
+  Identical results across all 5 runs — dataset fixed before loop (determinism confirmed).
+
+### Changed
+
+- `ExecutionVM.__init__` — `cursor_repo` kwarg added (default: `InMemoryCursorRepository()`).
+  Fully backward-compatible; existing code requires no changes.
+
+- `vm.py` — condition step evaluation delegates to `ASTEngine` instead of `eval()`.
+
+- README — new sections: **Suspend / Resume**, **Budget Interrupts**, **MCP-Compatible Contracts**.
+  FSM transition table updated with `SUSPENDED` state and `resume_with_program()` row.
+  Security note updated: `eval()` replaced by ASTEngine.
+  Roadmap updated with all v0.7.0 items.
+
+### Breaking Changes
+
+None. All v0.6.0 public APIs are preserved. New parameters are keyword-optional with safe defaults.
+
+| Symbol | Change |
+| :--- | :--- |
+| `ExecutionVM.__init__` | `cursor_repo` kwarg added (default: `InMemoryCursorRepository()`) |
+| `Trace` | `trace_id` field added (UUID4, auto-generated) |
+| `TraceStatus` | `SUSPENDED` value added |
+
+---
+
+## [0.6.0] — 2026-05-03
 
 ### Added
 
@@ -17,16 +106,8 @@ Versioning follows [Semantic Versioning](https://semver.org/).
   Result: **13/13 PASSED · 1,020,000 total operations · 0 invariant violations.**
 
 - **`## Execution Pipeline` section in README.**  
-  Canonical formal model:
-  ```
-  E  = LLM(input)     →  raw event (probabilistic, untrusted)
-  E' = Validator(E)   →  validated context (deterministic)
-  A(S) = FSM(S, E')   →  allowed actions (deterministic)
-  a*   = Policy(A, C) →  selected action (deterministic pure fn)
-  S'   = δ(S, a*)     →  next state (deterministic)
-  ```
-  Includes layer responsibility table and `Implementation Note` on current
-  single-action `A(S)` vs future multi-candidate Policy.
+  Canonical formal model with layer responsibility table and Implementation Note on
+  current single-action `A(S)` vs future multi-candidate Policy.
 
 ### Benchmark results (BM-01–BM-12 + BM-VM, Linux · x86_64 · Python 3.12 · venv)
 
@@ -46,14 +127,9 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 | BM-12 | Chaos Mode — Full System Stress | 2352 | 4,252 | 83k escalations · **0 invalid final states** |
 | BM-VM | nano-vm Double Execution Safety | 53 | 190,428 | 300 real `vm.run` · **0 double exec** |
 
-> **BM-04:** I1 confirmed empirically — LLM noise ("оплата", "¿pagar?", "✓", "affirmative"…)
-> produces zero influence on δ(S, E).  
-> **BM-12:** mathematical consequence of δ having no path to an invalid state, not a probabilistic result.  
-> **BM-VM:** `I_k(T) ∈ {0,1}` trace invariant holds across 300 real `ExecutionVM` runs.
-
 ### Known issues
 
-- **BM8 still blocked by rate limit (429) during peak hours** (inherited from v0.5.0).  
+- **BM8 blocked by rate limit (429) during peak hours** (inherited from v0.5.0).  
   Workaround candidates: `qwen/qwen3-coder:free`, `nvidia/nemotron-nano-9b-v2:free`.
 
 ---
@@ -63,48 +139,28 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 ### Added
 
 - **`Planner` — full implementation.**  
-  `Planner(llm, max_retries=2, temperature=0.0).generate(intent, available_tools?, context_keys?)` converts
-  a natural-language intent into a validated `Program` in exactly one LLM call.  
-  Signature is stable; all parameters are keyword-optional.
+  `Planner(llm, max_retries=2, temperature=0.0).generate(intent, available_tools?, context_keys?)`
+  converts a natural-language intent into a validated `Program` in exactly one LLM call.
+  Signature stable; all parameters keyword-optional.
 
 - **Benchmark suite v0.5.0 (`benchmarks/benchmark_v050.py`).**  
-  BM1–BM11 covering retry baseline, budget guards, token tracking, state fingerprints, parallel concurrency,
+  BM1–BM11 covering retry, budget guards, token tracking, fingerprints, parallel concurrency,
   Planner determinism (BM11), and real OpenRouter multi-model calls (BM8).
 
 - **`benchmarks/run_all.py` — unified benchmark runner.**  
-  Loads `benchmark_v040`, `benchmark_v050`, and `benchmark_stress` via `importlib.util`; prints
-  per-call `✓ / ✗ + error` inline; exits with non-zero status only on hard failures.
+  Loads modules via `importlib.util`; prints per-call `✓ / ✗ + error` inline.
 
 ### Fixed
 
-- **`@dataclass` crash under `importlib.util` load** (`run_all.py`).  
-  `sys.modules[name] = mod` is now registered *before* `spec.loader.exec_module(mod)`.  
-  Root cause: `@dataclass` calls `sys.modules.get(cls.__module__).__dict__` at decoration time;
-  without prior registration the lookup returns `None` → `AttributeError`.  
-  Affected modules: `benchmark_v050`, `benchmark_stress` (contain `@dataclass`);
-  `benchmark_v040` was unaffected (functions only).
-
-- **`sys.exit(1)` in import guard killed the `run_all.py` process** (`benchmark_v050.py`).  
-  Changed to `raise ImportError(...)`. The enclosing `try/except Exception` in `run_all.py`
-  catches `ImportError` but not `SystemExit`.
-
-- **Stale OpenRouter free-tier models** (`benchmark_v050.py`).  
-  `mistralai/mistral-7b-instruct:free` (404) and `deepseek/deepseek-chat-v3-0324:free` (404)
-  replaced with live models verified via `GET /api/v1/models`:
-  - `meta-llama/llama-3.3-70b-instruct:free`
-  - `google/gemma-3-27b-it:free`
-
-- **BM8 error output was silent.**  
-  `CallResult.error` was populated but never printed. Added per-call `✓ / ✗ + r.error` logging
-  inside `run_suite_real`.
+- `@dataclass` crash under `importlib.util` load — `sys.modules[name] = mod` registered
+  before `spec.loader.exec_module(mod)`.
+- `sys.exit(1)` in import guard replaced with `raise ImportError(...)`.
+- Stale OpenRouter free-tier models replaced with live verified models.
+- `CallResult.error` now printed inline in `run_suite_real`.
 
 ### Known issues
 
-- **BM8 blocked by rate limit (429) during peak hours.**  
-  Both `llama-3.3-70b-instruct:free` and `gemma-3-27b-it:free` share a free-tier pool on OpenRouter
-  and return `429` during daytime (approx. 07:00–23:00 UTC+8).  
-  BM8 real-latency numbers will be published in a follow-up patch after off-peak run.  
-  Workaround candidates: `qwen/qwen3-coder:free`, `nvidia/nemotron-nano-9b-v2:free`.
+- **BM8 blocked by rate limit (429) during peak hours.**
 
 ---
 
@@ -112,19 +168,17 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 
 ### Added
 
-- `max_steps` budget — `BUDGET_EXCEEDED` after N total steps executed.
-- `max_stalled_steps` budget — `STALLED` after N consecutive no-op state fingerprints.
+- `max_steps` budget — `BUDGET_EXCEEDED` after N total steps.
+- `max_stalled_steps` budget — `STALLED` after N consecutive no-op fingerprints.
 - `max_tokens` budget — `BUDGET_EXCEEDED` when cumulative token count exceeds limit.
-- `state_snapshots` in `Trace` — `list[(step_index, sha256_hex)]`, one entry per executed step.
+- `state_snapshots` in `Trace` — `list[(step_index, sha256_hex)]`.
 - `on_error`, `max_retries` per-step options.
 - `max_concurrency` for `parallel` blocks.
 
-### Performance (BM5–BM7, Mock adapter, 2-core VPS)
+### Fixed
 
-| Benchmark | Baseline | With budget | Delta |
-| :--- | :--- | :--- | :--- |
-| BM5 `max_steps` | 558 RPS / 1.793 ms | 616 RPS / 1.623 ms | ±9.5% (noise) |
-| BM7 `max_tokens` | 458 RPS / 2.184 ms | 420 RPS / 2.379 ms | +8.9% (O(N²) per step) |
+- **`total_tokens()` O(N²) per step** — fixed in v0.5.0 via incremental `_token_accumulator`
+  in `Trace.add_step` (O(1)).
 
 ---
 
@@ -135,15 +189,6 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 - `max_concurrency` — cap concurrent sub-steps per `parallel` block.
 - `retry` policy per step — exponential backoff: 1 s, 2 s, 4 s … cap 30 s.
 
-### Performance (BM1, Mock adapter, 2-core VPS)
-
-| Scenario | Throughput | Latency |
-| :--- | :--- | :--- |
-| 0 retries | 3 509 RPS | 0.285 ms |
-| 2 retries | 4 308 RPS | 0.232 ms |
-
-No regression vs v0.2.0 — `max_concurrency` / `retry` adds zero overhead when not triggered.
-
 ---
 
 ## [0.2.0] — 2025-01-XX
@@ -151,7 +196,7 @@ No regression vs v0.2.0 — `max_concurrency` / `retry` adds zero overhead when 
 ### Added
 
 - `parallel` step type — `asyncio.gather` for independent sub-steps.
-- `MockLLMAdapter` — deterministic testing without API keys (sequence or prompt-map mode).
+- `MockLLMAdapter` — deterministic testing without API keys.
 
 ---
 

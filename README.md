@@ -91,6 +91,7 @@ That is enforced by the VM, not by the prompt.
 | `RUNNING` | `llm` | success | `RUNNING` (advance to next step) |
 | `RUNNING` | `llm` | all retries exhausted | `FAILED` |
 | `RUNNING` | `tool` | success | `RUNNING` |
+| `RUNNING` | `tool` | returns sentinel `"PENDING"` | `SUSPENDED` |
 | `RUNNING` | `tool` | error, `on_error=fail` | `FAILED` |
 | `RUNNING` | `tool` | error, `on_error=skip` | `RUNNING` (output=`None`) |
 | `RUNNING` | `condition` | branch taken | `RUNNING` (jump to `then`/`otherwise`) |
@@ -100,6 +101,7 @@ That is enforced by the VM, not by the prompt.
 | `RUNNING` | any | `max_tokens` exceeded | `BUDGET_EXCEEDED` |
 | `RUNNING` | any | `max_stalled_steps` exceeded | `STALLED` |
 | `RUNNING` | — | no more steps | `SUCCESS` |
+| `SUSPENDED` | — | `resume_with_program()` called | `RUNNING` (from cursor) |
 | `FAILED` / `SUCCESS` / `BUDGET_EXCEEDED` / `STALLED` | — | — | terminal (no further transitions) |
 
 Terminal states are absorbing — once reached, no further step is executed. The append-only trace invariant holds: a step that reached `SUCCESS` cannot execute again within the same session.
@@ -156,6 +158,7 @@ vm = ExecutionVM(
 )
 trace = await vm.run(program, context={"user_input": "I was charged twice"})
 
+print(trace.trace_id)         # "3f2a1b4c-..." (UUID4, stable for OTel propagation)
 print(trace.status)           # SUCCESS
 print(trace.final_output)     # tool result
 print(trace.total_cost_usd()) # e.g. 0.000034
@@ -163,6 +166,68 @@ print(trace.total_cost_usd()) # e.g. 0.000034
 
 The `guardrail` step cannot be skipped, reordered, or overridden by the model.
 That is the guarantee.
+
+---
+
+## Suspend / Resume — Webhook-Driven Execution
+
+`ExecutionVM` can suspend mid-graph when a tool returns the sentinel `"PENDING"` and
+resume from a persisted cursor when an external event arrives (payment webhook, courier
+confirmation, etc.).
+
+```python
+from nano_vm.vm import ExecutionVM, InMemoryCursorRepository
+
+# Tool suspends execution by returning "PENDING"
+async def initiate_payment(**kwargs) -> str:
+    await register_webhook_handler(order_id=kwargs["order_id"])
+    return "PENDING"   # VM sees this, suspends, persists cursor
+
+vm = ExecutionVM(
+    llm=adapter,
+    tools={"initiate_payment": initiate_payment, ...},
+    cursor_repo=InMemoryCursorRepository(),   # swap for SqliteCursorRepository in production
+)
+
+trace = await vm.run(program, context={"order_id": "123"})
+assert trace.status == TraceStatus.SUSPENDED
+
+# Resume when webhook fires
+trace = await vm.resume_with_program(
+    program=program,
+    trace_id=trace.trace_id,
+    webhook_event={"type": "payment.confirmed", "order_id": "123"},
+)
+assert trace.status == TraceStatus.SUCCESS
+```
+
+**`resume()` vs `resume_with_program()`:** `resume()` requires a Blueprint registry
+(planned for P8). Until then, pass the program explicitly via `resume_with_program()`.
+
+`InMemoryCursorRepository` ships for tests and dry-run. For production, implement the
+`CursorRepository` Protocol backed by `SqliteCursorRepository(infrastructure.db)`.
+
+---
+
+## Budget Interrupts
+
+Budget exhaustion is emitted as a **system interrupt** (`BudgetInterrupt`), not a
+condition branch. The VM raises `InterruptType.BUDGET` before touching the next step —
+the LLM cannot observe or influence it.
+
+Override `_emit_interrupt()` in a subclass to hook into your observability stack:
+
+```python
+from nano_vm.vm import ExecutionVM, InterruptType
+
+class InstrumentedVM(ExecutionVM):
+    async def _emit_interrupt(self, interrupt_type: InterruptType) -> None:
+        await notify_operator(f"interrupt: {interrupt_type.value}")
+
+vm = InstrumentedVM(llm=adapter)
+```
+
+The base implementation is a documented no-op hook.
 
 ---
 
@@ -259,7 +324,7 @@ user_input
   → Planner (optional, 1 LLM call)
   → Program (DSL — JSON/dict/YAML)
   → ExecutionVM (deterministic FSM)
-  → Trace (status · cost · tokens · duration)
+  → Trace (status · trace_id · cost · tokens · duration)
 ```
 
 ---
@@ -271,7 +336,7 @@ Four step types:
 | Type | Purpose |
 | :--- | :--- |
 | `llm` | call the model; result stored in `output_key` |
-| `tool` | call a Python function |
+| `tool` | call a Python function; return `"PENDING"` to suspend |
 | `condition` | branch on an expression; `then` / `otherwise` |
 | `parallel` | run independent sub-steps concurrently via `asyncio.gather` |
 
@@ -299,9 +364,10 @@ Four step types:
 | `$step_id.output` | output of a previous step |
 
 > **⚠ Security note — condition expressions:**  
-> `condition` strings are evaluated via `eval()` with `__builtins__` cleared.
-> This is a partial sandbox — it prevents direct builtin access but does not
-> provide full isolation. **Do not interpolate raw user input into condition
+> `condition` strings are parsed and evaluated by the built-in **ASTEngine** —
+> a deterministic, sandboxed interpreter that supports a fixed operator set
+> (`==`, `!=`, `>`, `<`, `in`, `not in`, `and`, `or`, `not`, `contains`).
+> `eval()` is not used. **Do not interpolate raw user input into condition
 > expressions.** Condition logic should be authored by you (the developer), not
 > constructed from untrusted data at runtime. LLM output used as a branching
 > signal should only appear in context variables that your condition *tests*
@@ -334,8 +400,8 @@ program = Program.from_dict({
             "id": "fetch",
             "type": "parallel",
             "output_key": "fetched",
-            "max_concurrency": 5,        # cap concurrent sub-steps; default = None (no cap = all at once)
-            "on_error": "skip",          # failed sub-step → output is None; others still complete
+            "max_concurrency": 5,
+            "on_error": "skip",
             "parallel_steps": [
                 {"id": "weather", "type": "tool", "tool": "get_weather", "args": {"city": "$city"}},
                 {"id": "news",    "type": "tool", "tool": "get_news",    "args": {"topic": "$topic"}},
@@ -344,7 +410,6 @@ program = Program.from_dict({
         {
             "id": "summarize",
             "type": "llm",
-            # $weather.output is None if weather sub-step was skipped — handle in prompt
             "prompt": "Weather: $weather.output\nNews: $news.output\nSummarize. If a field is None, skip it.",
         },
     ],
@@ -354,7 +419,35 @@ program = Program.from_dict({
 `fetch` runs both tools concurrently via `asyncio.gather`. Wall-clock time = slowest single sub-step.
 Sequential execution resumes at `summarize` only after all sub-steps complete (or are skipped).
 
-**Partial result contract:** if a sub-step fails with `on_error: skip`, its output is set to `None` in the execution context. Downstream steps receive `None` — not an absent key, not an exception. Design your prompts accordingly.
+**Partial result contract:** if a sub-step fails with `on_error: skip`, its output is set to `None`.
+Downstream steps receive `None` — not an absent key, not an exception.
+
+---
+
+## MCP-Compatible Contracts (v0.7.0)
+
+`VaultStepResult` and `VaultStepMetadata` are DTOs for vault / MCP integration.
+`status` is a plain string (`"SUCCESS" | "FAILED" | "PENDING"`), not an enum —
+required for round-trip JSON serialization through the MCP layer.
+
+```python
+from nano_vm.models import VaultStepResult, VaultStepMetadata
+from uuid import uuid4
+
+result = VaultStepResult(
+    status="SUCCESS",
+    data={"payment_id": "pay_123"},
+    metadata=VaultStepMetadata(
+        idempotency_key="order_1:pay_step:initiate_payment",
+        execution_time_ms=142,
+        tool_version="1.0.0",
+        cached=False,
+        trace_id=str(uuid4()),
+    ),
+)
+```
+
+`@model_validator` enforces `status ∈ {"SUCCESS", "FAILED", "PENDING"}` at construction time.
 
 ---
 
@@ -393,9 +486,8 @@ steps in the order the DSL defines, never skips a required step, and produces
 a complete, reproducible trace — regardless of what the LLM returns.
 
 It does **not** guarantee **Semantic Determinism**: the text content produced by
-an LLM step may differ across runs even at `temperature=0.0`. Different providers,
-model versions, and infrastructure states can yield different outputs for identical
-prompts. This is a property of the LLM, not the VM.
+an LLM step may differ across runs even at `temperature=0.0`. Use `MockLLMAdapter`
+when you need both.
 
 | | State Determinism | Semantic Determinism |
 | :--- | :---: | :---: |
@@ -406,17 +498,15 @@ prompts. This is a property of the LLM, not the VM.
 | Reproducible trace structure | ✅ always | — |
 | Reproducible trace content | — | ❌ depends on LLM |
 
-Use `MockLLMAdapter` when you need both — it gives full Semantic Determinism
-in tests and CI by removing the LLM variable entirely.
-
 ---
 
 ## Observability
 
 ```python
-trace.status                # TraceStatus.SUCCESS | FAILED | BUDGET_EXCEEDED | STALLED
+trace.trace_id              # UUID4 — stable identifier for OTel propagation
+trace.status                # TraceStatus.SUCCESS | FAILED | SUSPENDED | BUDGET_EXCEEDED | STALLED
 trace.final_output          # last step output
-trace.total_tokens()        # sum across all steps
+trace.total_tokens()        # O(1) — incremental accumulator
 trace.total_cost_usd()      # sum across all steps (requires LiteLLMAdapter)
 trace.state_snapshots       # list[(step_index, sha256_hex)] — one entry per executed step
 trace.error                 # set on FAILED / BUDGET_EXCEEDED / STALLED
@@ -425,16 +515,14 @@ for step in trace.steps:
     print(step.step_id, step.status, step.duration_ms, step.usage)
 ```
 
-Parallel blocks expose sub-step hierarchy in the trace:
+Parallel blocks expose sub-step hierarchy:
 
 ```python
 # fetch              SUCCESS   142ms  usage=None
 #   ├─ weather       SUCCESS    98ms  usage=None
-#   └─ news          SKIPPED   429ms  usage=None   ← rate-limited, skipped
+#   └─ news          SKIPPED   429ms  usage=None
 # summarize          SUCCESS  1204ms  usage=TokenUsage(prompt=312, completion=87)
 ```
-
-Each sub-step has its own `status`, `duration_ms`, and `output`. If `on_error: skip` was triggered, `status=SKIPPED` and `output=None`.
 
 ---
 
@@ -446,8 +534,8 @@ from nano_vm import Planner
 planner = Planner(llm=adapter, max_retries=2, temperature=0.0)
 program = await planner.generate(
     "Fetch latest AI news, summarize, classify by topic",
-    available_tools=["fetch_rss", "summarize", "classify"],  # optional hint
-    context_keys=["user_id"],                                 # optional hint
+    available_tools=["fetch_rss", "summarize", "classify"],
+    context_keys=["user_id"],
 )
 trace = await vm.run(program)
 ```
@@ -455,7 +543,7 @@ trace = await vm.run(program)
 - exactly **1** LLM call
 - outputs a validated `Program` object
 - non-deterministic input → deterministic execution
-- signature stable since v0.5.0; all parameters keyword-optional
+- signature stable since v0.5.0
 
 ---
 
@@ -500,103 +588,8 @@ Benchmarked on Linux, 2-core VPS, Python 3.12.3. Mock adapter (no I/O).
 | **BM_double: raw agent** | 1000 runs, fail_prob=0.3 | — | — | **~20% double-executions** |
 | **BM_double: FSM runtime** | 3000 runs total | — | — | **0 double-executions** |
 
-> **Note:** BM5 ±9.5% is within measurement noise — `max_steps` is a single int comparison, overhead is negligible.  
-> BM7 +8.9% was real in v0.4.0: `total_tokens()` iterated all steps O(N²). Fixed in v0.5.0: `Trace` now
-> carries an incremental `_token_accumulator` (updated in `add_step`), making `total_tokens()` O(1).  
-> `max_tokens` is now safe in hot loops and long-running pipelines.  
-> Parallel steps: wall-clock = **slowest single sub-step**, not the sum.  
-> BM11: Planner determinism confirmed — `unique fingerprints=1` across repeated runs with Mock adapter.  
-> BM8: real multi-model latency pending off-peak OpenRouter run (free-tier rate limit during daytime).  
-> BM_double: structural guarantee — FSM trace invariant, not a retry policy or idempotency key.  
-> No regression vs v0.3.0 — `max_concurrency` / `retry` adds zero overhead when not triggered.
-
----
-
-## Benchmark
-
-### v0.3.0 — 20 parallel steps via OpenRouter
-
-```
-System: Linux 6.8.0-110-generic  ·  x86_64 (2 cores)  ·  Python 3.12.3
-Test:   1 run × 20 parallel steps (StepType.PARALLEL, asyncio.gather)
-
-  Total Execution Time : 1.7574 s
-  Parallel Steps       : 20
-  Effective Throughput : 11.38 steps/sec
-  VM Overhead (Core)   : ~1.80 ms/step
-  Trace Status         : SUCCESS — all constraints enforced, 0 steps skipped
-```
-
-![llm-nano-vm v0.3.0 benchmark — 20 parallel steps, OpenRouter, 2-core VPS](assets/benchmark_v030.jpg)
-
-No regression vs v0.2.0 — `max_concurrency` / `retry` path adds zero overhead when not triggered.
-
-### v0.4.0 — budget mechanism overhead (Mock adapter, BM5–BM7)
-
-```
-System: Linux  ·  x86_64 (2 cores)  ·  Python 3.12.3
-Test:   1000 warmup + measured runs, 10-step programs, Mock adapter
-
-  BM5  max_steps=1000   558 → 616 RPS    ±9.5%  (within noise — single int check)
-  BM7  max_tokens       458 → 420 RPS    +8.9%  (real: total_tokens() O(N²) per step)
-```
-
-![llm-nano-vm v0.4.0 benchmark — budget overhead BM5–BM7, 2-core VPS](assets/benchmark_v040.jpg)
-
-> **Fixed in v0.5.0:** `total_tokens()` overhead eliminated. `Trace._token_accumulator` is updated
-> incrementally in `add_step` — O(1) per step regardless of pipeline length.
-
-### v0.5.0 — Planner determinism (BM11)
-
-```
-System: Linux 6.8.0-110-generic  ·  x86_64 (2 cores)  ·  Python 3.12.3
-Test:   BM11 — Planner.generate() repeated runs, Mock adapter
-
-  BM11  Planner determinism   ✓ YES   unique fingerprints=1
-```
-
-BM8 (real multi-model calls via OpenRouter free tier) pending off-peak run due to rate limiting (429).
-Numbers will be added in a patch release.
-
-### v0.5.0 — Double-execution safety (structural guarantee)
-
-```
-System: Linux 6.8.0-110-generic  ·  x86_64 (2 cores)  ·  Python 3.12.3
-Test:   1000 runs × 3 independent trials, stochastic mock LLM (~50% retry rate)
-
-  Config:
-    fail_prob     = 0.30   (tool call failure rate)
-    fraud_prob    = 0.20   (adversarial double-trigger probability)
-    eligible_prob = 0.80   (eligibility check pass rate)
-    max_retries   = 2
-
-  Raw stateless agent:   194–210 double-executions / 1000 runs  (~20%)
-  FSM runtime (vm.run):  0 double-executions / 3000 runs         (0%)
-  Token overhead:        ~2×
-  Time overhead:         ~3–4×
-```
-
-The guarantee is structural, not probabilistic. The FSM append-only trace enforces
-the invariant `I_k(T) ∈ {0,1}` at every step — a step that succeeded cannot execute
-again within the same session, regardless of retry pressure or LLM output.
-
-> **Scope:** single-session invariants only. Cross-session deduplication (e.g. global
-> payment dedup across restarts) requires an external coordinator (database lock,
-> idempotency key store). The VM does not replace that layer — it complements it.
-
-Reproduce locally:
-
-```bash
-pip install llm-nano-vm[litellm]
-python benchmarks/stress_test.py           # sequential baseline
-python benchmarks/benchmark_v030.py       # v0.3.0 suite: retry overhead, concurrency scaling
-python benchmarks/benchmark_v040.py       # v0.4.0 suite: budget/guard overhead (BM5–BM7)
-python benchmarks/run_all.py              # v0.5.0 suite: BM1–BM11 (BM8 requires OPENROUTER_API_KEY)
-python benchmarks/benchmark_double.py     # double-execution safety: raw vs FSM, 1000×3 runs
-python benchmarks/benchmark_nano_vm.py   # v0.6.0 suite: FSM invariant stress (BM-01–BM-12 + BM-VM)
-```
-
----
+> **BM7 fixed in v0.5.0:** `total_tokens()` O(1) via incremental `_token_accumulator` in `Trace.add_step`.  
+> **BM_double:** structural guarantee — FSM trace invariant `I_k(T) ∈ {0,1}`, not a retry policy.
 
 ### v0.6.0 — FSM invariant stress suite
 
@@ -627,16 +620,38 @@ Result: 13/13 PASSED · Score 100% · ⬢ DETERMINISTIC EXECUTION RUNTIME VERIFI
 
 **Total operations across suite: 1,020,000**
 
-> **BM-04** confirms I1 empirically: 13 LLM noise variants ("оплата", "¿pagar?", "✓", "affirmative"…)
-> produce zero influence on δ(S, E). The LLM physically cannot alter the transition function.
->
-> **BM-12** is the primary chaos validation: full mix of retries, failures, timeouts, random events,
-> and budget exhaustion across 50,000 orders with 83,741 escalations — 0 invalid final states.
-> This is a mathematical consequence of δ having no path to an invalid state, not a probabilistic result.
->
-> **BM-VM** reproduces the double-execution benchmark from v0.5.0 using real `ExecutionVM` + `MockLLMAdapter`.
-> The `I_k(T) ∈ {0,1}` trace invariant holds across 300 runs: a step that succeeded cannot execute again
-> within the same session regardless of retry pressure or LLM output.
+### v0.7.0 — Stress test (10k FSM graphs × 5 runs, Mock adapter)
+
+```
+┌──────┬──────────────┬────────────┬────────┬────────┐
+│ Run  │ Time (sec)   │ Speed      │ OK     │ Failed │
+├──────┼──────────────┼────────────┼────────┼────────┤
+│  1   │   0.70       │ 14 286 /s  │  8973  │  1027  │
+│  2   │   0.70       │ 14 286 /s  │  8973  │  1027  │
+│  3   │   0.69       │ 14 493 /s  │  8973  │  1027  │
+│  4   │   0.70       │ 14 286 /s  │  8973  │  1027  │
+│  5   │   0.70       │ 14 286 /s  │  8973  │  1027  │
+├──────┼──────────────┼────────────┼────────┼────────┤
+│ AVG  │   0.70       │ 14 327 /s  │   —    │   —    │
+└──────┴──────────────┴────────────┴────────┴────────┘
+```
+
+89.73% success rate matches `P(value ≤ 0.9) = 0.9` — 1027 errors from `unregistered_tool_to_force_error`
+triggered at `value > 0.9`. Identical results across all 5 runs (dataset fixed before loop).
+`VMError: Tool not found` caught per-coroutine; event loop continues across 200 concurrent tasks.
+
+Reproduce locally:
+
+```bash
+pip install llm-nano-vm[litellm]
+python benchmarks/stress_test.py
+python benchmarks/benchmark_v030.py
+python benchmarks/benchmark_v040.py
+python benchmarks/run_all.py              # BM1–BM11 (BM8 requires OPENROUTER_API_KEY)
+python benchmarks/benchmark_double.py
+python benchmarks/benchmark_nano_vm.py   # v0.6.0 FSM invariant suite
+python benchmarks/benchmark_stress_060   # v0.7.0 10k stress
+```
 
 ---
 
@@ -692,9 +707,16 @@ Result: 13/13 PASSED · Score 100% · ⬢ DETERMINISTIC EXECUTION RUNTIME VERIFI
 - [x] Benchmark suite BM1–BM11 (`benchmarks/run_all.py`) (v0.5.0)
 - [x] Double-execution safety benchmark — 0/3000 FSM vs ~20% stateless (v0.5.0)
 - [x] `total_tokens()` O(1) — incremental `_token_accumulator` in `Trace.add_step` (v0.5.0)
-- [ ] BM8 real-latency numbers — pending off-peak OpenRouter run
 - [x] MCP server — `run_program`, `get_trace`, `list_programs`, `get_program`, `delete_program` · stdio + SSE · bearer auth · SQLite WAL ([nano-vm-mcp](https://github.com/Ale007XD/nano-vm-mcp))
 - [x] FSM invariant stress suite BM-01–BM-12 + BM-VM — 13/13 PASS · 1,020,000 ops · 0 violations (v0.6.0)
+- [x] `suspend / resume` — `"PENDING"` sentinel + `CursorRepository` + `resume_with_program()` (v0.7.0)
+- [x] `BudgetInterrupt` — isolated system interrupt, `_emit_interrupt()` hook (v0.7.0)
+- [x] `VaultStepResult` + `VaultStepMetadata` — MCP-compatible DTOs (v0.7.0)
+- [x] `Trace.trace_id` — UUID4, OTel-ready (v0.7.0)
+- [x] `erase()` — nested `CapabilityRef` tombstoning; GDPR erasure with hash-chain preservation (v0.7.0)
+- [x] `ASTEngine` — `eval()` removed from condition steps; deterministic sandboxed evaluator (v0.7.0)
+- [ ] BM8 real-latency numbers — pending off-peak OpenRouter run
+- [ ] Blueprint registry (P8) — enables `resume()` without explicit program argument
 - [ ] REST API — pay-per-run, API keys (nano-vm-server)
 
 ---

@@ -9,6 +9,14 @@ v0.6.0 additions:
   - VaultStepResult / VaultStepError / VaultStepMetadata — vault-layer contracts
   - ResumeError — специализированное исключение для resume failures
 
+v0.7.0 additions (Sprint 1 — Deterministic Execution Architecture):
+  - CapabilityRef — replaces raw PII in CanonicalState; secure_hash() + tombstone()
+  - PolicySnapshot — immutable rule snapshot per session (frozen); from_config()
+  - GovernanceEnvelope — typed wrapper for outgoing MCP data with policy audit trail
+  - ProjectionTarget — enum of projection targets (LLM, TRACE, TOOL)
+  - AbstractProjectionLayer — base class for all projection implementations
+  - DeterministicSanitizer — concrete regex + field-rule sanitiser; no eval()
+
 Quick start (unchanged):
     from nano_vm import ExecutionVM, Program
     from nano_vm.adapters import LiteLLMAdapter
@@ -22,8 +30,22 @@ Suspend/resume (v0.6.0):
         # сохранить trace.trace_id, ждать webhook
         event = WebhookEvent(trace_id=trace.trace_id, payload={"status": "confirmed"})
         trace = await vm.resume_with_program(event, program)
+
+CapabilityRef / projection (v0.7.0):
+    from nano_vm import CapabilityRef, PolicySnapshot, DeterministicSanitizer
+    from nano_vm import ProjectionTarget
+
+    ref = CapabilityRef(ref_id="vault://secret/42", salt="s0m3s4lt")
+    policy = PolicySnapshot.from_config(config, policy_id="pol-001", version="1.0.0")
+    sanitizer = DeterministicSanitizer()
+    projected = sanitizer.project(state, target=ProjectionTarget.LLM)
 """
 
+from .contracts import (
+    CapabilityRef,
+    GovernanceEnvelope,
+    PolicySnapshot,
+)
 from .models import (
     InterruptType,
     LLMUsage,
@@ -41,6 +63,11 @@ from .models import (
     VaultStepResult,
 )
 from .planner import Planner, PlannerError
+from .projection import (
+    AbstractProjectionLayer,
+    DeterministicSanitizer,
+    ProjectionTarget,
+)
 from .vm import (
     CursorRepository,
     ExecutionVM,
@@ -80,6 +107,13 @@ __all__ = [
     "VaultStepResult",
     "VaultStepError",
     "VaultStepMetadata",
+    # v0.7.0 Sprint 1 — Deterministic Execution Architecture
+    "CapabilityRef",
+    "PolicySnapshot",
+    "GovernanceEnvelope",
+    "ProjectionTarget",
+    "AbstractProjectionLayer",
+    "DeterministicSanitizer",
 ]
 
-__version__ = "0.6.0"
+__version__ = "0.7.0"

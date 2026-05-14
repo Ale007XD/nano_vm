@@ -13,16 +13,27 @@ v0.6.0 additions (vault-layer primitives):
   - Trace.trace_id          — stable UUID, required for suspend/resume correlation
   - Trace.suspended_at      — timestamp set by VM._suspend()
   - Trace.suspended_step_id — step cursor for resume()
+
+v0.7.0 additions (RFC: Deterministic Execution Architecture):
+  - CapabilityRef   — replaces raw PII in CanonicalState; supports tombstoning (GDPR)
+  - PolicySnapshot  — immutable rule snapshot per session; frozen=True
+  - GdprEraseEvent  — typed GDPR erasure event; frozen=True
+  - Trace.canonical_snapshot_hash() — Merkle root over state_snapshots
 """
 
 from __future__ import annotations
 
+import hashlib
 import uuid
 from datetime import datetime, timezone
 from enum import Enum
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from pydantic import BaseModel, Field, model_validator
+
+if TYPE_CHECKING:
+    # types-PyYAML provides stubs; runtime import is lazy inside from_yaml()
+    import yaml as _yaml_types  # noqa: F401
 
 # ---------------------------------------------------------------------------
 # Enums
@@ -136,6 +147,162 @@ class VaultStepResult(BaseModel):
 
 
 # ---------------------------------------------------------------------------
+# v0.7.0: CapabilityRef — replaces raw PII in CanonicalState
+# ---------------------------------------------------------------------------
+
+
+class CapabilityRef(BaseModel, frozen=True):
+    """
+    Замена сырых PII-данных в CanonicalState.
+
+    RFC v0.7.0:
+      ref_id       — URI ссылки в Vault (e.g. 'vault://secret/123')
+      salt         — соль для salted hashing; генерируется один раз при создании ref
+      is_tombstone — True после E_gdpr_erase; ProjectionLayer возвращает [REDACTED_TOMBSTONE]
+
+    Инварианты:
+      - frozen=True: иммутабельна после создания.
+      - secure_hash() детерминирован для одного (ref_id, salt).
+      - Tombstone сохраняет hash-chain: все tombstone-ссылки дают константный хеш.
+
+    Использование:
+      ref = CapabilityRef(ref_id="vault://users/42/email", salt="abc123")
+      h   = ref.secure_hash()   # sha256("vault://users/42/emailabc123")
+
+      # После GDPR-erasure:
+      ref = ref.model_copy(update={"is_tombstone": True})
+      ref.secure_hash()  # → "TOMBSTONE"
+    """
+
+    ref_id: str  # URI: "vault://secret/123"
+    salt: str = Field(default_factory=lambda: uuid.uuid4().hex)
+    is_tombstone: bool = False
+
+    def secure_hash(self) -> str:
+        """
+        Детерминированный хеш ссылки.
+
+        Returns:
+          'TOMBSTONE'         — если is_tombstone == True
+          sha256(ref_id+salt) — иначе (hex digest)
+        """
+        if self.is_tombstone:
+            return "TOMBSTONE"
+        raw = (self.ref_id + self.salt).encode()
+        return hashlib.sha256(raw).hexdigest()
+
+    def tombstone(self) -> CapabilityRef:
+        """
+        Возвращает новый CapabilityRef с is_tombstone=True.
+        Используется при обработке E_gdpr_erase.
+        """
+        return self.model_copy(update={"is_tombstone": True})
+
+
+# ---------------------------------------------------------------------------
+# v0.7.0: PolicySnapshot — immutable rule snapshot per session
+# ---------------------------------------------------------------------------
+
+
+class PolicySnapshot(BaseModel, frozen=True):
+    """
+    Иммутабельный снимок политики для одной сессии.
+
+    RFC v0.7.0:
+      policy_id        — идентификатор политики
+      version          — версия политики (semver)
+      policy_hash      — sha256 конфига на момент создания снимка
+      tool_capabilities — разрешённые capability per tool:
+                          {'send_email': ['email.read_raw', 'email.send']}
+
+    Инварианты:
+      - frozen=True: не может быть изменён после создания (immutable per session).
+      - policy_hash вычисляется детерминированно из (policy_id, version, tool_capabilities).
+      - has_capability() — O(1) проверка без side effects.
+
+    Использование (Gateway):
+      snapshot = PolicySnapshot(
+          policy_id="p-001",
+          version="1.0.0",
+          tool_capabilities={"send_email": ["email.read_raw"]},
+      )
+      ok = snapshot.has_capability("send_email", "email.read_raw")  # True
+    """
+
+    policy_id: str
+    version: str
+    policy_hash: str = Field(default="")
+    tool_capabilities: dict[str, list[str]] = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def _compute_policy_hash(self) -> PolicySnapshot:
+        """
+        Вычисляет policy_hash если не задан явно.
+        Детерминировано: sorted(tool_capabilities) гарантирует порядок.
+        """
+        if not self.policy_hash:
+            caps_repr = ";".join(
+                f"{k}:{','.join(sorted(v))}" for k, v in sorted(self.tool_capabilities.items())
+            )
+            raw = f"{self.policy_id}:{self.version}:{caps_repr}".encode()
+            # Обходим frozen через object.__setattr__
+            object.__setattr__(self, "policy_hash", hashlib.sha256(raw).hexdigest())
+        return self
+
+    def has_capability(self, tool_name: str, capability: str) -> bool:
+        """Проверяет наличие capability для инструмента. Pure function, no IO."""
+        return capability in self.tool_capabilities.get(tool_name, [])
+
+    def allowed_tools(self) -> frozenset[str]:
+        """Возвращает frozenset имён инструментов с хотя бы одной capability."""
+        return frozenset(self.tool_capabilities.keys())
+
+
+# ---------------------------------------------------------------------------
+# v0.7.0: GdprEraseEvent — typed GDPR erasure event
+# ---------------------------------------------------------------------------
+
+
+class GdprEraseEvent(BaseModel, frozen=True):
+    """
+    Типизированное событие GDPR-стирания.
+
+    RFC v0.7.0:
+      event_id       — уникальный идентификатор события (uuid)
+      target_ref_ids — tuple ref_id CapabilityRef'ов, подлежащих tombstoning
+      issued_at      — UTC-время выпуска события
+      issued_by      — идентификатор инициатора (user/service)
+
+    Инварианты:
+      - frozen=True: событие иммутабельно после создания.
+      - target_ref_ids — tuple (совместимо с frozen).
+      - VM.erase(event) обходит state.data и tombstones CapabilityRef с ref_id ∈ target_ref_ids.
+
+    Использование:
+      event = GdprEraseEvent(
+          target_ref_ids=("vault://users/42/email", "vault://users/42/phone"),
+          issued_by="gdpr-service",
+      )
+      new_state = vm.erase(state, event)
+    """
+
+    event_id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    target_ref_ids: tuple[str, ...] = Field(default_factory=tuple)
+    issued_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    issued_by: str = "unknown"
+    reason: str = "gdpr_erasure"
+
+    @model_validator(mode="after")
+    def _validate_target_ref_ids(self) -> GdprEraseEvent:
+        if not self.target_ref_ids:
+            raise ValueError("GdprEraseEvent.target_ref_ids cannot be empty")
+        return self
+
+
+GdprEraseEvent.model_rebuild()
+
+
+# ---------------------------------------------------------------------------
 # Step
 # ---------------------------------------------------------------------------
 
@@ -213,7 +380,7 @@ class Program(BaseModel):
     max_tokens: int | None = None
 
     @classmethod
-    def from_dict(cls, data: dict) -> Program:
+    def from_dict(cls, data: dict[str, Any]) -> Program:
         return cls.model_validate(data)
 
     @classmethod
@@ -385,3 +552,39 @@ class Trace(BaseModel):
     def total_cost_usd(self) -> float | None:
         costs = [s.usage.cost_usd for s in self.steps if s.usage and s.usage.cost_usd is not None]
         return round(sum(costs), 8) if costs else None
+
+    def canonical_snapshot_hash(self) -> str:
+        """
+        Merkle root над state_snapshots.
+
+        Алгоритм:
+          1. leaf_i = sha256(f"{idx}:{fp}") для каждого (idx, fp) в state_snapshots
+          2. Нечётный последний лист дублируется (стандартный Bitcoin-Merkle)
+          3. Рекурсивно попарно хешируем до одного корня
+          4. Пустой список → sha256("empty")
+
+        Pure function, no IO, детерминирован.
+        """
+        snapshots = self.state_snapshots
+        if not snapshots:
+            return hashlib.sha256(b"empty").hexdigest()
+
+        # Шаг 1: листья как bytes (sha256.digest())
+        current_b: list[bytes] = [
+            hashlib.sha256(f"{idx}:{fp}".encode()).digest() for idx, fp in snapshots
+        ]
+
+        # Единственный лист: возвращаем hex напрямую
+        if len(current_b) == 1:
+            return current_b[0].hex()
+
+        # Шаг 2-3: Merkle reduction — bytes конкатенация на каждом уровне
+        while len(current_b) > 1:
+            if len(current_b) % 2 == 1:
+                current_b.append(current_b[-1])  # дублируем нечётный лист
+            next_b: list[bytes] = []
+            for i in range(0, len(current_b), 2):
+                next_b.append(hashlib.sha256(current_b[i] + current_b[i + 1]).digest())
+            current_b = next_b
+
+        return current_b[0].hex()
