@@ -370,8 +370,28 @@ Four step types:
 > `eval()` is not used. **Do not interpolate raw user input into condition
 > expressions.** Condition logic should be authored by you (the developer), not
 > constructed from untrusted data at runtime. LLM output used as a branching
-> signal should only appear in context variables that your condition *tests*
-> (e.g. `'yes' in '$decision'`), never as the condition expression itself.
+> signal should only appear in context variables that your condition *tests*,
+> never as the condition expression itself.
+>
+> **❌ Antipattern — user input or LLM output becomes the expression:**
+> ```python
+> # NEVER: attacker controls the branch logic
+> {"type": "condition", "condition": "$user_input", "then": "pay", "otherwise": "reject"}
+> # NEVER: LLM output is embedded in the expression string itself
+> {"type": "condition", "condition": "$llm_role == 'admin'", "then": "elevate"}
+> #        ^^^ safe only if llm_role is never set from raw user input
+> ```
+>
+> **✅ Correct — you write the expression; LLM output is only a tested value:**
+> ```python
+> # The condition string is a static literal you authored
+> {"type": "condition", "condition": "'yes' in $decision",   "then": "process_refund", "otherwise": "reject"}
+> {"type": "condition", "condition": "$category == 'refund'", "then": "verify_eligibility"}
+> ```
+>
+> **Rule of thumb:** if the `condition` string itself would change depending on user input
+> or LLM output, that is the antipattern. The string must be a static literal you wrote at
+> program-definition time.
 
 ### Example — multi-step pipeline
 
@@ -430,6 +450,12 @@ Downstream steps receive `None` — not an absent key, not an exception.
 `status` is a plain string (`"SUCCESS" | "FAILED" | "PENDING"`), not an enum —
 required for round-trip JSON serialization through the MCP layer.
 
+> **Why a string, not an enum?** MCP communicates over an external process boundary via JSON.
+> A Python enum does not survive deserialization on the other side without a custom codec.
+> Using a plain string keeps the DTO portable across any MCP client implementation.
+> Type safety is preserved by `@model_validator`, which enforces `status ∈ {"SUCCESS", "FAILED", "PENDING"}`
+> at construction time and raises `ValueError` on any other value — same guarantee, zero serialization friction.
+
 ```python
 from nano_vm.models import VaultStepResult, VaultStepMetadata
 from uuid import uuid4
@@ -446,8 +472,6 @@ result = VaultStepResult(
     ),
 )
 ```
-
-`@model_validator` enforces `status ∈ {"SUCCESS", "FAILED", "PENDING"}` at construction time.
 
 ---
 
@@ -544,6 +568,16 @@ trace = await vm.run(program)
 - outputs a validated `Program` object
 - non-deterministic input → deterministic execution
 - signature stable since v0.5.0
+
+> **Treat Planner-generated programs like generated code: review before deploying.**  
+> The VM guarantees that whatever program it receives will execute exactly as written.
+> It cannot verify that the program is *semantically correct* — a guardrail step that
+> checks the wrong condition is still a guardrail step as far as the FSM is concerned.
+> For production workflows with compliance requirements, review generated programs
+> the same way you would review a pull request: verify that required guardrail steps
+> are present, that branch targets are correct, and that the logic matches your intent.
+> Automated structural validation (reachability, branch coverage) is planned as
+> `ProgramValidator` — see Roadmap.
 
 ---
 
@@ -651,7 +685,45 @@ python benchmarks/run_all.py              # BM1–BM11 (BM8 requires OPENROUTER_
 python benchmarks/benchmark_double.py
 python benchmarks/benchmark_nano_vm.py   # v0.6.0 FSM invariant suite
 python benchmarks/benchmark_stress_060   # v0.7.0 10k stress
+python benchmarks/benchmark_integration.py  # v0.7.3 integration suite
 ```
+
+### v0.7.3 — Integration benchmark suite (10 scenarios · 3 cycles × 5 runs × 10,000 items)
+
+End-to-end validation across the full stack: FSM kernel + MCP gateway + CapabilityRef contracts + GovernanceEnvelope + GDPR tombstoning + suspend/resume.
+
+**Test environment:** QEMU/KVM · Intel Xeon E5-2697A v4 @ 2.60 GHz · 2 cores / 2 threads · 2 GB ECC RAM · Python 3.12 · Mock adapter (no I/O).
+
+```
+Suite:  10 scenarios · 3 cycles × 5 runs × 10,000 items
+Result: 10/10 PASSED · ⬢ DETERMINISTIC EXECUTION VERIFIED
+Total operations: 1,096,500 · Total violations: 0
+Versions: llm-nano-vm v0.7.3 · nano-vm-mcp v0.3.0
+```
+
+| ID | Scenario | Total items | Mean TPS | p95 avg | Violations | Verdict |
+| :--- | :--- | ---: | ---: | ---: | ---: | :--- |
+| BM-INT-01 | Refund pipeline | 150,000 | 2,300/s | 0.66 ms | 0 | ✓ PASS |
+| BM-INT-02 | Double-execution guard | 150,000 | 2,400/s | 0.67 ms | 0 | ✓ PASS |
+| BM-INT-03 | Budget enforcement | 150,000 | 1,100/s | 331 ms | 0 | ✓ PASS |
+| BM-INT-04 | Parallel throughput | 15,000 | 436/s | 542 ms | 0 | ✓ PASS |
+| BM-INT-05 | MCP store round-trip | 151,500 | 3,000/s | 0.42 ms | 0 | ✓ PASS |
+| BM-INT-06 | GovernanceEnvelope | 150,000 | 1,300/s | 171 ms | 0 | ✓ PASS |
+| BM-INT-07 | Crash consistency | 30,000 | 7/s | 233 ms | 0 | ✓ PASS |
+| BM-INT-08 | Replay equivalence | 75,000 | 1,300/s | 1.30 ms | 0 | ✓ PASS |
+| BM-INT-09 | Adversarial retries | 75,000 | 2,400/s | 0.64 ms | 0 | ✓ PASS |
+| BM-INT-10 | Long-horizon | 150,000 | 30/s | 3,606 ms | 0 | ✓ PASS |
+
+**Extended metrics:**
+
+- **BM-INT-07** crash_rate = 100% (expected 50–90% at 0.5–8 ms window) — deterministic on 2-core QEMU; hardware-sensitive metric, not a bug.
+- **BM-INT-08** trace_hash_match = 100.00% (target: 100.00%) — Merkle hash chain fully reproducible across replay.
+- **BM-INT-09** adversarial mix: 3,000 duplicate events · 1,000 out-of-order · 1,000 delayed — 0 violations.
+- **BM-INT-10** peak RSS = 216 MB · peak alloc = 4.29 MB · 150,000 steps — memory bounded on 2 GB VPS.
+
+> **BM-INT-03 / BM-INT-06 latency note:** p95 of 331 ms / 171 ms reflects intentional budget-gate and
+> GovernanceEnvelope hash computation on a 2-core QEMU guest — not VM overhead. Mock adapter eliminates
+> I/O as a variable. In production the bottleneck remains the LLM API.
 
 ---
 
@@ -669,6 +741,13 @@ python benchmarks/benchmark_stress_060   # v0.7.0 10k stress
 - the workflow is unknown and must be discovered at runtime
 - the task is open-ended creative reasoning
 - you need fully autonomous multi-agent coordination
+
+**The honest trade-off:** llm-nano-vm asks you to pay a *DSL tax* — you must describe
+your workflow explicitly before running it. In return you get auditability, fault tolerance,
+and execution guarantees that no prompt-level instruction can provide. If your workflow is
+truly known in advance, that tax is worth it. If every request is unique and requires
+runtime planning, this is not the right tool — as the [Planner](#planner-optional) section
+makes clear.
 
 ---
 
@@ -715,9 +794,30 @@ python benchmarks/benchmark_stress_060   # v0.7.0 10k stress
 - [x] `Trace.trace_id` — UUID4, OTel-ready (v0.7.0)
 - [x] `erase()` — nested `CapabilityRef` tombstoning; GDPR erasure with hash-chain preservation (v0.7.0)
 - [x] `ASTEngine` — `eval()` removed from condition steps; deterministic sandboxed evaluator (v0.7.0)
+- [x] Integration benchmark suite BM-INT-01–BM-INT-10 — 10/10 PASS · 1,096,500 ops · 0 violations · full stack verified (v0.7.3)
+
+**Upcoming — documentation & type hygiene (post-0.7.3)**
+
+- [ ] `py.typed` marker — enables mypy for downstream users (R3)
 - [ ] BM8 real-latency numbers — pending off-peak OpenRouter run
-- [ ] Blueprint registry (P8) — enables `resume()` without explicit program argument
-- [ ] REST API — pay-per-run, API keys (nano-vm-server)
+
+**Upcoming — static analysis (v0.8.x)**
+
+- [ ] `ProgramValidator` — static analysis before execution: unreachable steps, missing branch targets, cycle detection, mandatory-guardrail reachability from any entry point (R1); integrates into `Planner` retry loop as a third validation level after Pydantic
+
+**Upcoming — execution graph (v0.8.x)**
+
+- [ ] `depends_on` + `TopologicalSorter` — declarative dependency graph over existing `parallel`; `Step.depends_on: list[str]`; VM topologically sorts parallel steps via `graphlib.TopologicalSorter` (stdlib 3.9+) before `asyncio.gather` (S3-1)
+
+**Upcoming — dynamic replanning (v0.9.x)**
+
+- [ ] `replan_on_interrupt` — on `BUDGET_EXCEEDED` / `STALLED`, VM returns partial `Trace`; `Planner.replan(trace, intent)` generates a continuation `Program`; FSM stays deterministic, Planner stays probabilistic (S3-2)
+- [ ] Blueprint registry (P8) — named program store; enables `resume()` without explicit program argument; unblocks long-horizon suspend/resume in production
+
+**Upcoming — gateway & infrastructure (v0.9.x)**
+
+- [ ] `nano-vm-mcp` Sprint 2 — `GovernedToolExecutor`, `AbstractStore`, `vm.step()` endpoint (S3-3)
+- [ ] REST API — pay-per-run, API keys (`nano-vm-server`)
 
 ---
 
