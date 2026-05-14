@@ -89,7 +89,7 @@ async def test_condition_then_branch():
                 {
                     "id": "check",
                     "type": "condition",
-                    "condition": "'yes' in '$ans'",
+                    "condition": "'yes' in $ans",
                     "then": "s3",
                     "otherwise": "s4",
                 },
@@ -114,7 +114,7 @@ async def test_condition_otherwise_branch():
                 {
                     "id": "check",
                     "type": "condition",
-                    "condition": "'yes' in '$ans'",
+                    "condition": "'yes' in $ans",
                     "then": "s3",
                     "otherwise": "s4",
                 },
@@ -140,7 +140,7 @@ async def test_condition_unknown_target_fails():
                 {
                     "id": "check",
                     "type": "condition",
-                    "condition": "'yes' in '$ans'",
+                    "condition": "'yes' in $ans",
                     "then": "nonexistent",
                     "otherwise": "also_nonexistent",
                 },

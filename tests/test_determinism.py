@@ -41,7 +41,7 @@ def make_classify_route_program() -> Program:
             Step(
                 id="route",
                 type=StepType.CONDITION,
-                condition="'SAFE' in '$verdict'",
+                condition="'SAFE' in $verdict",
                 then="handle_safe",
                 otherwise="handle_unsafe",
             ),
@@ -113,7 +113,7 @@ async def test_condition_target_not_in_program():
             Step(
                 id="route",
                 type=StepType.CONDITION,
-                condition="'SAFE' in '$verdict'",
+                condition="'SAFE' in $verdict",
                 then="nonexistent_step",
                 otherwise="also_nonexistent",
             ),

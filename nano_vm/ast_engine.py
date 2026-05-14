@@ -1,114 +1,96 @@
 """
-nano_vm.ast_engine
-==================
-Deterministic AST Evaluator — замена Python eval() для condition steps.
+nano_vm.ast_engine — Sprint 1: Deterministic AST Evaluator
+===========================================================
+Replaces eval() for condition step evaluation.
 
-RFC v0.7.0: «Pure function evaluation, no I/O or global state access.»
+Public API:
+  ASTEngine       — evaluates ConditionExpr node trees
+  eval_condition  — parses a DSL string and evaluates it
+  ASTEvalError    — raised on type errors or unknown operators
+  BinaryNode      — op, left, right
+  LogicalNode     — op (and/or), left, right
+  NotNode         — op (not), operand
+  LitNode         — literal value
+  VarNode         — variable name resolved from context
 
-Архитектура:
-  - ConditionExpr — Pydantic-модель JSON-дерева выражения.
-  - ASTEngine — evaluator, принимает ConditionExpr + контекст, возвращает bool.
-  - parse_condition() — компилирует строку DSL («'yes' in $decision») в ConditionExpr.
-
-Поддерживаемые операторы (RFC):
-  ==, !=, >, <, in, not in, and, or, contains
-
-Инварианты:
-  - Нет вызовов eval() / exec().
-  - Нет обращений к глобальному состоянию или I/O.
-  - Одинаковый (expr, context) → всегда одинаковый результат.
-  - Неизвестный оператор → ASTEvalError (не молчаливое игнорирование).
-
-Формат JSON-дерева:
- json_tree = {
-    "op": "and",
-    "left": {
-        "op": "in",
-        "left": {"op": "lit", "value": "yes"},
-        "right": {"op": "var", "name": "decision"}
-    },
-    "right": {
-        "op": ">",
-        "left": {"op": "var", "name": "score"},
-        "right": {"op": "lit", "value": 0}
-    }
-}
+Design invariants:
+  - Pure function evaluation: no I/O, no global state, no eval().
+  - Same (node, ctx) → same result always.
+  - Unknown operator → ASTEvalError, not silent fallback.
 """
 
 from __future__ import annotations
 
-from typing import Any, Literal, cast
-
-from pydantic import BaseModel
+import re
+from dataclasses import dataclass
+from typing import Any, Union
 
 # ---------------------------------------------------------------------------
-# Exceptions
+# Errors
 # ---------------------------------------------------------------------------
 
 
 class ASTEvalError(Exception):
-    """Ошибка вычисления AST-выражения."""
-
-
-class ASTParseError(Exception):
-    """Ошибка компиляции строки DSL в ConditionExpr."""
+    """Raised when the AST evaluator encounters a type error or bad operator."""
 
 
 # ---------------------------------------------------------------------------
-# AST Node models
+# Node types
 # ---------------------------------------------------------------------------
 
-# Терминальные узлы
+# Forward reference for recursive type alias
+ConditionExpr = Union["BinaryNode", "LogicalNode", "NotNode", "LitNode", "VarNode"]
 
 
-class LitNode(BaseModel):
-    """Литеральное значение: строка, число, bool."""
+@dataclass(frozen=True)
+class LitNode:
+    """Literal value node."""
 
-    op: Literal["lit"] = "lit"
     value: Any
 
 
-class VarNode(BaseModel):
-    """Переменная из контекста: $name или $step_id.output."""
+@dataclass(frozen=True)
+class VarNode:
+    """Variable reference resolved from the evaluation context.
 
-    op: Literal["var"] = "var"
-    name: str  # без '$'
+    Name formats:
+      "key"              -> ctx["key"]
+      "step_id.output"   -> ctx["__step_outputs__"]["step_id"]
+    """
+
+    name: str
 
 
-# Составные узлы (рекурсивные)
+@dataclass(frozen=True)
+class BinaryNode:
+    """Binary comparison node.
 
+    Supported operators: ==, !=, >, <, in, not in, contains
+    """
 
-class BinaryNode(BaseModel):
-    """Бинарный оператор: ==, !=, >, <, in, not in, contains."""
-
-    op: Literal["==", "!=", ">", "<", "in", "not in", "contains"]
+    op: str
     left: ConditionExpr
     right: ConditionExpr
 
 
-class LogicalNode(BaseModel):
-    """Логический оператор: and, or."""
+@dataclass(frozen=True)
+class LogicalNode:
+    """Logical combinator node.
 
-    op: Literal["and", "or"]
+    Supported operators: and, or
+    """
+
+    op: str
     left: ConditionExpr
     right: ConditionExpr
 
 
-class NotNode(BaseModel):
-    """Унарное отрицание."""
+@dataclass(frozen=True)
+class NotNode:
+    """Logical negation node."""
 
-    op: Literal["not"]
+    op: str  # always "not"
     operand: ConditionExpr
-
-
-# Дискриминированный union
-
-ConditionExpr = LitNode | VarNode | BinaryNode | LogicalNode | NotNode
-
-# Pydantic v2: rebuild для рекурсивных моделей
-BinaryNode.model_rebuild()
-LogicalNode.model_rebuild()
-NotNode.model_rebuild()
 
 
 # ---------------------------------------------------------------------------
@@ -117,256 +99,226 @@ NotNode.model_rebuild()
 
 
 class ASTEngine:
-    """
-    Детерминированный evaluator для ConditionExpr.
+    """Evaluates ConditionExpr node trees against a context dict.
 
-    Использование:
-        engine = ASTEngine()
-        expr = parse_condition("'yes' in $decision")
-        result: bool = engine.evaluate(expr, context={"decision": "yes, approved"})
+    All methods are pure functions — no state is mutated.
     """
 
-    def evaluate(self, node: ConditionExpr, context: dict[str, Any]) -> bool:
-        """
-        Вычисляет выражение в заданном контексте.
-        Возвращает bool.
-        Бросает ASTEvalError при ошибке типов или неизвестном операторе.
-        """
-        val = self._eval(node, context)
-        return bool(val)
+    def evaluate(self, node: ConditionExpr, ctx: dict[str, Any]) -> bool:
+        """Evaluate *node* against *ctx*.
 
-    # ------------------------------------------------------------------
-    # Internal recursive evaluator
-    # ------------------------------------------------------------------
+        Returns
+        -------
+        bool
+            Result of the expression.
 
-    def _eval(self, node: ConditionExpr, context: dict[str, Any]) -> Any:
+        Raises
+        ------
+        ASTEvalError
+            On type mismatch or unsupported operator.
+        """
         if isinstance(node, LitNode):
-            return node.value
+            # Literals evaluate to themselves — used as sub-expressions.
+            return bool(node.value)
 
         if isinstance(node, VarNode):
-            return self._resolve_var(node.name, context)
+            return bool(self._resolve_var(node, ctx))
 
         if isinstance(node, NotNode):
-            return not bool(self._eval(node.operand, context))
+            return not self.evaluate(node.operand, ctx)
 
         if isinstance(node, LogicalNode):
-            left = bool(self._eval(node.left, context))
-            if node.op == "and":
-                return left and bool(self._eval(node.right, context))
-            if node.op == "or":
-                return left or bool(self._eval(node.right, context))
-            raise ASTEvalError(f"Unknown logical op: {node.op}")  # защита от расширения enum
+            return self._eval_logical(node, ctx)
 
         if isinstance(node, BinaryNode):
-            return self._eval_binary(node, context)
+            return self._eval_binary(node, ctx)
 
-        raise ASTEvalError(f"Unknown AST node type: {type(node).__name__}")
+        raise ASTEvalError(f"Unknown node type: {type(node)}")
 
-    def _eval_binary(self, node: BinaryNode, context: dict[str, Any]) -> bool:
-        left = self._eval(node.left, context)
-        right = self._eval(node.right, context)
+    # ------------------------------------------------------------------
+    # Private helpers
+    # ------------------------------------------------------------------
+
+    def _resolve(self, node: ConditionExpr, ctx: dict[str, Any]) -> Any:
+        """Resolve a node to its raw value (not coerced to bool)."""
+        if isinstance(node, LitNode):
+            return node.value
+        if isinstance(node, VarNode):
+            return self._resolve_var(node, ctx)
+        # For compound nodes, evaluate to bool
+        return self.evaluate(node, ctx)
+
+    @staticmethod
+    def _resolve_var(node: VarNode, ctx: dict[str, Any]) -> Any:
+        """Resolve VarNode name from context.
+
+        "classify.output" -> ctx["__step_outputs__"]["classify"]
+        "key"             -> ctx.get("key")
+        """
+        if node.name.endswith(".output"):
+            step_id = node.name[: -len(".output")]
+            return (ctx.get("__step_outputs__") or {}).get(step_id)
+        return ctx.get(node.name)
+
+    def _eval_logical(self, node: LogicalNode, ctx: dict[str, Any]) -> bool:
+        if node.op == "and":
+            return self.evaluate(node.left, ctx) and self.evaluate(node.right, ctx)
+        if node.op == "or":
+            return self.evaluate(node.left, ctx) or self.evaluate(node.right, ctx)
+        raise ASTEvalError(f"Unknown logical operator: {node.op!r}")
+
+    def _eval_binary(self, node: BinaryNode, ctx: dict[str, Any]) -> bool:
+        left = self._resolve(node.left, ctx)
+        right = self._resolve(node.right, ctx)
         op = node.op
 
         try:
             if op == "==":
-                return cast(bool, left == right)
+                return bool(left == right)
             if op == "!=":
-                return cast(bool, left != right)
+                return bool(left != right)
             if op == ">":
-                return cast(bool, left > right)
+                return bool(left > right)
+            if op == ">=":
+                return bool(left >= right)
             if op == "<":
-                return cast(bool, left < right)
+                return bool(left < right)
+            if op == "<=":
+                return bool(left <= right)
             if op == "in":
                 return bool(left in right)
             if op == "not in":
                 return bool(left not in right)
             if op == "contains":
-                # contains: right contains left  (e.g. "$text contains 'yes'")
+                # "contains": checks if left is contained in right
                 return bool(left in right)
         except TypeError as exc:
-            raise ASTEvalError(
-                f"Type error in '{op}': left={left!r} ({type(left).__name__}), "
-                f"right={right!r} ({type(right).__name__}): {exc}"
-            ) from exc
+            raise ASTEvalError(f"Type error evaluating '{op}': {exc}") from exc
 
-        raise ASTEvalError(f"Unknown binary op: {op}")
-
-    def _resolve_var(self, name: str, context: dict[str, Any]) -> Any:
-        """
-        Разрешает переменную из контекста.
-
-        Поддерживает:
-          - "key"          → context["key"]
-          - "step_id.output" → context["__step_outputs__"]["step_id"]
-
-        Если ключ не найден — возвращает None (не бросает исключение,
-        чтобы условие могло быть вычислено как False).
-        """
-        if "." in name:
-            step_id, field = name.split(".", 1)
-            step_outputs = context.get("__step_outputs__", {})
-            step_out = step_outputs.get(step_id)
-            if step_out is None:
-                return None
-            if field == "output":
-                return step_out
-            if isinstance(step_out, dict):
-                return step_out.get(field)
-            return None
-
-        return context.get(name)
+        raise ASTEvalError(f"Unknown binary operator: {op!r}")
 
 
 # ---------------------------------------------------------------------------
-# DSL parser: строка → ConditionExpr
+# DSL parser  — string condition → ConditionExpr
 # ---------------------------------------------------------------------------
 
-# Поддерживаемые операторы в строковом DSL
-# Порядок важен: «not in» должен проверяться до «in»
-_BINARY_OPS = ["not in", "==", "!=", ">=", "<=", ">", "<", " in ", "contains"]
+# Tokeniser patterns (order matters)
+_TOKEN_PATTERNS = [
+    ("LOGIC", r"\band\b|\bor\b"),
+    ("NOT", r"\bnot\b(?!\s+in\b)"),
+    ("NOT_IN", r"\bnot\s+in\b"),
+    ("IN", r"\bin\b"),
+    ("CONTAINS", r"\bcontains\b"),
+    ("OP", r"==|!=|>=|<=|>|<"),
+    ("VAR", r"\$[\w.]+"),
+    ("STR", r"'[^']*'|\"[^\"]*\""),
+    ("NUM", r"-?\d+(?:\.\d+)?"),
+    ("BOOL", r"\b(?:True|False|None)\b"),
+    ("WS", r"\s+"),
+]
 
-# Допустимые операторы RFC (без алиасов >=, <=)
-_RFC_OPS = {"==", "!=", ">", "<", "in", "not in", "contains"}
+_TOKEN_RE = re.compile("|".join(f"(?P<{name}>{pat})" for name, pat in _TOKEN_PATTERNS))
 
 
-def parse_condition(expr_str: str) -> ConditionExpr:
+def _tokenise(expr: str) -> list[tuple[str, str]]:
+    tokens: list[tuple[str, str]] = []
+    for m in _TOKEN_RE.finditer(expr):
+        kind = m.lastgroup
+        assert kind is not None  # guaranteed by _TOKEN_RE structure
+        if kind == "WS":
+            continue
+        tokens.append((kind, m.group()))
+    return tokens
+
+
+def _parse_literal(kind: str, val: str) -> LitNode:
+    if kind == "STR":
+        return LitNode(value=val[1:-1])
+    if kind == "NUM":
+        return LitNode(value=float(val) if "." in val else int(val))
+    if kind == "BOOL":
+        return LitNode(value={"True": True, "False": False, "None": None}[val])
+    raise ASTEvalError(f"Cannot parse literal: {kind}={val!r}")
+
+
+def _parse_operand(tokens: list[tuple[str, str]], pos: int) -> tuple[ConditionExpr, int]:
+    if pos >= len(tokens):
+        raise ASTEvalError("Unexpected end of expression")
+    kind, val = tokens[pos]
+    if kind == "VAR":
+        return VarNode(name=val[1:]), pos + 1
+    if kind in ("STR", "NUM", "BOOL"):
+        return _parse_literal(kind, val), pos + 1
+    raise ASTEvalError(f"Expected operand, got {kind}={val!r} at position {pos}")
+
+
+def _parse_binary(tokens: list[tuple[str, str]], pos: int) -> tuple[ConditionExpr, int]:
+    left, pos = _parse_operand(tokens, pos)
+    if pos >= len(tokens):
+        return left, pos
+
+    kind, val = tokens[pos]
+    if kind in ("OP", "IN", "NOT_IN", "CONTAINS"):
+        # Map token to operator string
+        op_map = {
+            "IN": "in",
+            "NOT_IN": "not in",
+            "CONTAINS": "contains",
+        }
+        op = op_map.get(kind, val)
+        # Filter unsupported ops
+        if op not in ("==", "!=", ">", "<", ">=", "<=", "in", "not in", "contains"):
+            raise ASTEvalError(f"Unsupported operator: {op!r}")
+        right, pos = _parse_operand(tokens, pos + 1)
+        return BinaryNode(op=op, left=left, right=right), pos
+
+    return left, pos
+
+
+def _parse_expr(tokens: list[tuple[str, str]], pos: int) -> tuple[ConditionExpr, int]:
+    """Parse with left-to-right and/or logical combinators."""
+    # NOT prefix
+    if pos < len(tokens) and tokens[pos][0] == "NOT":
+        operand, pos = _parse_binary(tokens, pos + 1)
+        node: ConditionExpr = NotNode(op="not", operand=operand)
+    else:
+        node, pos = _parse_binary(tokens, pos)
+
+    while pos < len(tokens) and tokens[pos][0] == "LOGIC":
+        op = tokens[pos][1]
+        right, pos = _parse_binary(tokens, pos + 1)
+        node = LogicalNode(op=op, left=node, right=right)
+
+    return node, pos
+
+
+def parse_condition(expr: str) -> ConditionExpr:
+    """Parse a DSL condition string into a ConditionExpr node tree.
+
+    Raises ASTEvalError on parse failure.
     """
-    Компилирует строку DSL в ConditionExpr.
-
-    Поддерживаемые форматы:
-      'yes' in $decision
-      $score > 0
-      len($summary) > 100          ← NOT поддерживается (нет вызовов функций)
-      $a == $b
-      $decision != 'no'
-      $flag == True
-
-    Для сложных выражений с and/or:
-      $a > 0 and $b == 'ok'
-
-    Ограничения:
-      - Нет арифметики (+-*/).
-      - Нет вызовов функций (len(), str()…).
-      - Нет вложенных скобок.
-      Для таких случаев используйте ConditionExpr-дерево напрямую.
-
-    Бросает ASTParseError если выражение не распознано.
-    """
-    expr_str = expr_str.strip()
-
-    # Попытка разбить по 'and' / 'or' (низкий приоритет)
-    for logical_op in (" and ", " or "):
-        idx = _find_logical_split(expr_str, logical_op)
-        if idx != -1:
-            left_str = expr_str[:idx].strip()
-            right_str = expr_str[idx + len(logical_op) :].strip()
-            left = parse_condition(left_str)
-            right = parse_condition(right_str)
-            op_key = logical_op.strip()
-            return LogicalNode(op=op_key, left=left, right=right)  # type: ignore[arg-type]
-
-    # Бинарные операторы
-    for op in _BINARY_OPS:
-        idx = _find_op(expr_str, op)
-        if idx != -1:
-            left_str = expr_str[:idx].strip()
-            right_str = expr_str[idx + len(op) :].strip()
-            left = _parse_atom(left_str)
-            right = _parse_atom(right_str)
-            # Нормализуем ' in ' → 'in'
-            normalized_op = op.strip()
-            if normalized_op not in _RFC_OPS:
-                raise ASTParseError(
-                    f"Operator '{normalized_op}' not in RFC-allowed set: {_RFC_OPS}"
-                )
-            return BinaryNode(op=normalized_op, left=left, right=right)  # type: ignore[arg-type]
-
-    # Одиночный атом (bool/var/lit)
-    return _parse_atom(expr_str)
-
-
-def _find_logical_split(expr: str, logical_op: str) -> int:
-    """Находит индекс logical_op вне кавычек."""
-    in_single = False
-    in_double = False
-    for i, ch in enumerate(expr):
-        if ch == "'" and not in_double:
-            in_single = not in_single
-        elif ch == '"' and not in_single:
-            in_double = not in_double
-        if not in_single and not in_double:
-            if expr[i : i + len(logical_op)] == logical_op:
-                return i
-    return -1
-
-
-def _find_op(expr: str, op: str) -> int:
-    """Находит индекс оператора вне кавычек."""
-    in_single = False
-    in_double = False
-    for i, ch in enumerate(expr):
-        if ch == "'" and not in_double:
-            in_single = not in_single
-        elif ch == '"' and not in_single:
-            in_double = not in_double
-        if not in_single and not in_double:
-            if expr[i : i + len(op)] == op:
-                return i
-    return -1
-
-
-def _parse_atom(s: str) -> ConditionExpr:
-    """Разбирает одиночный атом: переменная, строковый литерал, число, bool."""
-    s = s.strip()
-
-    # Переменная: $name или $step_id.output
-    if s.startswith("$"):
-        return VarNode(name=s[1:])
-
-    # Строковый литерал в одинарных или двойных кавычках
-    if (s.startswith("'") and s.endswith("'")) or (s.startswith('"') and s.endswith('"')):
-        return LitNode(value=s[1:-1])
-
-    # Bool
-    if s == "True":
-        return LitNode(value=True)
-    if s == "False":
-        return LitNode(value=False)
-    if s == "None":
-        return LitNode(value=None)
-
-    # Число
-    try:
-        if "." in s:
-            return LitNode(value=float(s))
-        return LitNode(value=int(s))
-    except ValueError:
-        pass
-
-    # Неизвестный атом — возвращаем как строковый литерал с предупреждением
-    # (обратная совместимость: 'yes' без кавычек в old DSL)
-    return LitNode(value=s)
+    tokens = _tokenise(expr.strip())
+    if not tokens:
+        raise ASTEvalError("Empty condition expression")
+    node, pos = _parse_expr(tokens, 0)
+    if pos < len(tokens):
+        raise ASTEvalError(f"Unexpected token at position {pos}: {tokens[pos]!r}")
+    return node
 
 
 # ---------------------------------------------------------------------------
-# Convenience: compile + evaluate in one call
+# Convenience function
 # ---------------------------------------------------------------------------
 
+_engine = ASTEngine()
 
-def eval_condition(expr_str: str, context: dict[str, Any]) -> bool:
-    """
-    Компилирует строку и вычисляет результат.
-    Эквивалент: ASTEngine().evaluate(parse_condition(expr_str), context)
 
-    Используется в vm._execute_condition() вместо eval().
+def eval_condition(expr: str, ctx: dict[str, Any]) -> bool:
+    """Parse *expr* and evaluate it against *ctx*.
+
+    Equivalent to::
+
+        ASTEngine().evaluate(parse_condition(expr), ctx)
     """
-    engine = ASTEngine()
-    try:
-        node = parse_condition(expr_str)
-        return engine.evaluate(node, context)
-    except ASTParseError:
-        raise
-    except ASTEvalError:
-        raise
-    except Exception as exc:
-        raise ASTEvalError(f"Unexpected error evaluating '{expr_str}': {exc}") from exc
+    node = parse_condition(expr)
+    return _engine.evaluate(node, ctx)

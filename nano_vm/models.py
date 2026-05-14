@@ -5,20 +5,17 @@ Pure Pydantic models. No IO, no LLM calls.
 Everything that enters and exits the VM.
 
 v0.6.0 additions (vault-layer primitives):
-  - TraceStatus.SUSPENDED  — VM suspended awaiting webhook resume()
-  - InterruptType           — typed interrupt signals (BUDGET, TIMEOUT)
-  - VaultStepError          — structured error with retryable + compensation_required
-  - VaultStepMetadata       — idempotency_key, trace_id, cached (OTel propagation)
-  - VaultStepResult         — vault-layer StepResult contract (wraps tool output)
-  - Trace.trace_id          — stable UUID, required for suspend/resume correlation
-  - Trace.suspended_at      — timestamp set by VM._suspend()
-  - Trace.suspended_step_id — step cursor for resume()
+  - TraceStatus.SUSPENDED
+  - InterruptType
+  - VaultStepError / VaultStepMetadata / VaultStepResult
+  - Trace.trace_id, suspended_at, suspended_step_id
 
-v0.7.0 additions (RFC: Deterministic Execution Architecture):
-  - CapabilityRef   — replaces raw PII in CanonicalState; supports tombstoning (GDPR)
-  - PolicySnapshot  — immutable rule snapshot per session; frozen=True
-  - GdprEraseEvent  — typed GDPR erasure event; frozen=True
-  - Trace.canonical_snapshot_hash() — Merkle root over state_snapshots
+v0.7.0 Sprint 1-3:
+  - Re-exports CapabilityRef, PolicySnapshot, GovernanceEnvelope from contracts
+  - GdprEraseEvent — GDPR erasure system event
+  - Trace.add_snapshot() — Merkle chain node
+  - Trace.canonical_snapshot_hash() — Merkle root
+  - Trace.program_name field
 """
 
 from __future__ import annotations
@@ -27,17 +24,45 @@ import hashlib
 import uuid
 from datetime import datetime, timezone
 from enum import Enum
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from pydantic import BaseModel, Field, model_validator
 
-if TYPE_CHECKING:
-    # types-PyYAML provides stubs; runtime import is lazy inside from_yaml()
-    import yaml as _yaml_types  # noqa: F401
+# Re-export from contracts so tests can do:
+#   from nano_vm.models import CapabilityRef, PolicySnapshot
+from nano_vm.contracts import CapabilityRef, GovernanceEnvelope, PolicySnapshot
+
+# ---------------------------------------------------------------------------
+# GdprEraseEvent
+# ---------------------------------------------------------------------------
+
+
+class GdprEraseEvent(BaseModel):
+    """System event triggering GDPR erasure of CapabilityRef values."""
+
+    target_ref_ids: tuple[str, ...]
+    reason: str = "gdpr_erasure"
+    issued_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    issued_by: str | None = None
+
+    model_config = {"frozen": True}
+
+    @model_validator(mode="before")
+    @classmethod
+    def _validate_not_empty(cls, values: dict[str, Any]) -> dict[str, Any]:
+        if not values.get("target_ref_ids"):
+            raise ValueError("target_ref_ids cannot be empty")
+        return values
+
 
 # ---------------------------------------------------------------------------
 # Enums
 # ---------------------------------------------------------------------------
+
+
+class InterruptType(str, Enum):
+    BUDGET = "BUDGET"
+    TIMEOUT = "TIMEOUT"
 
 
 class StepType(str, Enum):
@@ -61,245 +86,13 @@ class OnError(str, Enum):
     RETRY = "retry"
 
 
-# ---------------------------------------------------------------------------
-# v0.6.0: Interrupt + vault error/metadata types
-# ---------------------------------------------------------------------------
-
-
-class InterruptType(str, Enum):
-    """
-    Typed interrupt signals emitted by the VM.
-    Budget = Interrupt, не control-flow условие (инвариант I7).
-    """
-
-    BUDGET = "BUDGET"
-    TIMEOUT = "TIMEOUT"
-
-
-class VaultStepError(BaseModel):
-    """
-    Structured error contract для vault-layer tool steps.
-    retryable: SagaCoordinator использует для решения о retry vs escalate.
-    compensation_required: SagaCoordinator использует для обхода в обратном порядке.
-    """
-
-    code: str  # machine-readable (e.g. "PAYMENT_DECLINED")
-    message: str  # human-readable
-    retryable: bool
-    compensation_required: bool
-
-
-class VaultStepMetadata(BaseModel):
-    """
-    Metadata, встраиваемые в каждый VaultStepResult.
-    trace_id: OTel propagation с первого коммита (инвариант I из decisions_log).
-    cached: True если результат из _tool_cache (persisted SQLite).
-    """
-
-    idempotency_key: str  # "{order_id}:{step_id}:{tool_name}"
-    execution_time_ms: int
-    tool_version: str
-    cached: bool
-    trace_id: str  # OTel trace propagation
-
-
-class VaultStepResult(BaseModel):
-    """
-    Vault-layer StepResult contract (Section 4.4 spec).
-    Используется MCPPolicyLayer и SagaCoordinator.
-    Не заменяет существующий StepResult — является его vault-надстройкой.
-
-    status: "SUCCESS" | "FAILED" | "PENDING"
-      - PENDING: шаг инициирован (напр. payment), ждёт webhook -> VM.suspend()
-      - SUCCESS: шаг завершён, data содержит результат
-      - FAILED:  шаг провалился, error содержит VaultStepError
-    """
-
-    status: str  # строка для MCP-совместимости; валидируется ниже
-    data: dict[str, Any] = Field(default_factory=dict)
-    error: VaultStepError | None = None
-    metadata: VaultStepMetadata
-
-    @model_validator(mode="after")
-    def _validate_status(self) -> VaultStepResult:
-        allowed = {"SUCCESS", "FAILED", "PENDING"}
-        if self.status not in allowed:
-            raise ValueError(
-                f"VaultStepResult.status must be one of {allowed}, got '{self.status}'"
-            )
-        return self
-
-    @property
-    def is_pending(self) -> bool:
-        return self.status == "PENDING"
-
-    @property
-    def is_failed(self) -> bool:
-        return self.status == "FAILED"
-
-    @property
-    def is_retryable(self) -> bool:
-        return self.is_failed and self.error is not None and self.error.retryable
-
-    @property
-    def requires_compensation(self) -> bool:
-        return self.is_failed and self.error is not None and self.error.compensation_required
-
-
-# ---------------------------------------------------------------------------
-# v0.7.0: CapabilityRef — replaces raw PII in CanonicalState
-# ---------------------------------------------------------------------------
-
-
-class CapabilityRef(BaseModel, frozen=True):
-    """
-    Замена сырых PII-данных в CanonicalState.
-
-    RFC v0.7.0:
-      ref_id       — URI ссылки в Vault (e.g. 'vault://secret/123')
-      salt         — соль для salted hashing; генерируется один раз при создании ref
-      is_tombstone — True после E_gdpr_erase; ProjectionLayer возвращает [REDACTED_TOMBSTONE]
-
-    Инварианты:
-      - frozen=True: иммутабельна после создания.
-      - secure_hash() детерминирован для одного (ref_id, salt).
-      - Tombstone сохраняет hash-chain: все tombstone-ссылки дают константный хеш.
-
-    Использование:
-      ref = CapabilityRef(ref_id="vault://users/42/email", salt="abc123")
-      h   = ref.secure_hash()   # sha256("vault://users/42/emailabc123")
-
-      # После GDPR-erasure:
-      ref = ref.model_copy(update={"is_tombstone": True})
-      ref.secure_hash()  # → "TOMBSTONE"
-    """
-
-    ref_id: str  # URI: "vault://secret/123"
-    salt: str = Field(default_factory=lambda: uuid.uuid4().hex)
-    is_tombstone: bool = False
-
-    def secure_hash(self) -> str:
-        """
-        Детерминированный хеш ссылки.
-
-        Returns:
-          'TOMBSTONE'         — если is_tombstone == True
-          sha256(ref_id+salt) — иначе (hex digest)
-        """
-        if self.is_tombstone:
-            return "TOMBSTONE"
-        raw = (self.ref_id + self.salt).encode()
-        return hashlib.sha256(raw).hexdigest()
-
-    def tombstone(self) -> CapabilityRef:
-        """
-        Возвращает новый CapabilityRef с is_tombstone=True.
-        Используется при обработке E_gdpr_erase.
-        """
-        return self.model_copy(update={"is_tombstone": True})
-
-
-# ---------------------------------------------------------------------------
-# v0.7.0: PolicySnapshot — immutable rule snapshot per session
-# ---------------------------------------------------------------------------
-
-
-class PolicySnapshot(BaseModel, frozen=True):
-    """
-    Иммутабельный снимок политики для одной сессии.
-
-    RFC v0.7.0:
-      policy_id        — идентификатор политики
-      version          — версия политики (semver)
-      policy_hash      — sha256 конфига на момент создания снимка
-      tool_capabilities — разрешённые capability per tool:
-                          {'send_email': ['email.read_raw', 'email.send']}
-
-    Инварианты:
-      - frozen=True: не может быть изменён после создания (immutable per session).
-      - policy_hash вычисляется детерминированно из (policy_id, version, tool_capabilities).
-      - has_capability() — O(1) проверка без side effects.
-
-    Использование (Gateway):
-      snapshot = PolicySnapshot(
-          policy_id="p-001",
-          version="1.0.0",
-          tool_capabilities={"send_email": ["email.read_raw"]},
-      )
-      ok = snapshot.has_capability("send_email", "email.read_raw")  # True
-    """
-
-    policy_id: str
-    version: str
-    policy_hash: str = Field(default="")
-    tool_capabilities: dict[str, list[str]] = Field(default_factory=dict)
-
-    @model_validator(mode="after")
-    def _compute_policy_hash(self) -> PolicySnapshot:
-        """
-        Вычисляет policy_hash если не задан явно.
-        Детерминировано: sorted(tool_capabilities) гарантирует порядок.
-        """
-        if not self.policy_hash:
-            caps_repr = ";".join(
-                f"{k}:{','.join(sorted(v))}" for k, v in sorted(self.tool_capabilities.items())
-            )
-            raw = f"{self.policy_id}:{self.version}:{caps_repr}".encode()
-            # Обходим frozen через object.__setattr__
-            object.__setattr__(self, "policy_hash", hashlib.sha256(raw).hexdigest())
-        return self
-
-    def has_capability(self, tool_name: str, capability: str) -> bool:
-        """Проверяет наличие capability для инструмента. Pure function, no IO."""
-        return capability in self.tool_capabilities.get(tool_name, [])
-
-    def allowed_tools(self) -> frozenset[str]:
-        """Возвращает frozenset имён инструментов с хотя бы одной capability."""
-        return frozenset(self.tool_capabilities.keys())
-
-
-# ---------------------------------------------------------------------------
-# v0.7.0: GdprEraseEvent — typed GDPR erasure event
-# ---------------------------------------------------------------------------
-
-
-class GdprEraseEvent(BaseModel, frozen=True):
-    """
-    Типизированное событие GDPR-стирания.
-
-    RFC v0.7.0:
-      event_id       — уникальный идентификатор события (uuid)
-      target_ref_ids — tuple ref_id CapabilityRef'ов, подлежащих tombstoning
-      issued_at      — UTC-время выпуска события
-      issued_by      — идентификатор инициатора (user/service)
-
-    Инварианты:
-      - frozen=True: событие иммутабельно после создания.
-      - target_ref_ids — tuple (совместимо с frozen).
-      - VM.erase(event) обходит state.data и tombstones CapabilityRef с ref_id ∈ target_ref_ids.
-
-    Использование:
-      event = GdprEraseEvent(
-          target_ref_ids=("vault://users/42/email", "vault://users/42/phone"),
-          issued_by="gdpr-service",
-      )
-      new_state = vm.erase(state, event)
-    """
-
-    event_id: str = Field(default_factory=lambda: str(uuid.uuid4()))
-    target_ref_ids: tuple[str, ...] = Field(default_factory=tuple)
-    issued_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
-    issued_by: str = "unknown"
-    reason: str = "gdpr_erasure"
-
-    @model_validator(mode="after")
-    def _validate_target_ref_ids(self) -> GdprEraseEvent:
-        if not self.target_ref_ids:
-            raise ValueError("GdprEraseEvent.target_ref_ids cannot be empty")
-        return self
-
-
-GdprEraseEvent.model_rebuild()
+class TraceStatus(str, Enum):
+    RUNNING = "running"
+    SUCCESS = "success"
+    FAILED = "failed"
+    BUDGET_EXCEEDED = "budget_exceeded"
+    STALLED = "stalled"
+    SUSPENDED = "suspended"
 
 
 # ---------------------------------------------------------------------------
@@ -329,13 +122,11 @@ class Step(BaseModel):
 
     # parallel step
     parallel_steps: list[Step] = Field(default_factory=list)
-
-    # parallel step options
-    max_concurrency: int | None = None  # None = no cap (all sub-steps at once)
+    max_concurrency: int | None = None
 
     # error handling
     on_error: OnError = OnError.FAIL
-    max_retries: int = 3  # attempts total (1 initial + 2 retries)
+    max_retries: int = 3
 
     @model_validator(mode="after")
     def _validate_by_type(self) -> Step:
@@ -401,13 +192,10 @@ class Program(BaseModel):
 
 
 class StateContext(BaseModel, frozen=True):
-    """
-    Immutable snapshot of execution state.
-    frozen=True: no mutation, only create new via model_copy.
-    """
+    """Immutable snapshot of execution state."""
 
-    data: dict[str, Any] = Field(default_factory=dict)
-    step_outputs: dict[str, Any] = Field(default_factory=dict)
+    data: dict[str, Any] = Field(default_factory=lambda: {})
+    step_outputs: dict[str, Any] = Field(default_factory=lambda: {})
 
     def with_output(self, step_id: str, output: Any) -> StateContext:
         return self.model_copy(update={"step_outputs": {**self.step_outputs, step_id: output}})
@@ -474,22 +262,10 @@ class StepResult(BaseModel):
 # ---------------------------------------------------------------------------
 
 
-class TraceStatus(str, Enum):
-    RUNNING = "running"
-    SUCCESS = "success"
-    FAILED = "failed"
-    BUDGET_EXCEEDED = "budget_exceeded"
-    STALLED = "stalled"
-    SUSPENDED = "suspended"  # v0.6.0: VM suspended, awaiting resume() via webhook
-
-
 class Trace(BaseModel):
     program_name: str
     status: TraceStatus = TraceStatus.RUNNING
-
-    # v0.6.0: stable ID для suspend/resume correlation и OTel propagation
     trace_id: str = Field(default_factory=lambda: str(uuid.uuid4()))
-
     steps: list[StepResult] = Field(default_factory=list)
     final_output: Any = None
     error: str | None = None
@@ -497,8 +273,6 @@ class Trace(BaseModel):
     finished_at: datetime | None = None
     duration_ms: float | None = None
     state_snapshots: list[tuple[int, str]] = Field(default_factory=list)
-
-    # v0.6.0: suspend cursor
     suspended_step_id: str | None = None
     suspended_at: datetime | None = None
 
@@ -521,10 +295,6 @@ class Trace(BaseModel):
         )
 
     def suspend(self, step_id: str) -> Trace:
-        """
-        v0.6.0: Переводит Trace в SUSPENDED, фиксирует cursor.
-        Вызывается только из ExecutionVM._suspend().
-        """
         return self.model_copy(
             update={
                 "status": TraceStatus.SUSPENDED,
@@ -540,6 +310,20 @@ class Trace(BaseModel):
         entry = (step_index, fp_hex)
         return self.model_copy(update={"state_snapshots": [*self.state_snapshots, entry]})
 
+    def canonical_snapshot_hash(self) -> str:
+        """Merkle root over all state_snapshots."""
+        snapshots = list(self.state_snapshots)
+        if not snapshots:
+            return hashlib.sha256(b"empty").hexdigest()
+        leaves = [hashlib.sha256(f"{idx}:{fp}".encode()).digest() for idx, fp in snapshots]
+        while len(leaves) > 1:
+            if len(leaves) % 2 == 1:
+                leaves.append(leaves[-1])
+            leaves = [
+                hashlib.sha256(leaves[i] + leaves[i + 1]).digest() for i in range(0, len(leaves), 2)
+            ]
+        return leaves[0].hex()
+
     def last_output(self) -> Any:
         for result in reversed(self.steps):
             if result.status == StepStatus.SUCCESS:
@@ -553,38 +337,78 @@ class Trace(BaseModel):
         costs = [s.usage.cost_usd for s in self.steps if s.usage and s.usage.cost_usd is not None]
         return round(sum(costs), 8) if costs else None
 
-    def canonical_snapshot_hash(self) -> str:
-        """
-        Merkle root над state_snapshots.
 
-        Алгоритм:
-          1. leaf_i = sha256(f"{idx}:{fp}") для каждого (idx, fp) в state_snapshots
-          2. Нечётный последний лист дублируется (стандартный Bitcoin-Merkle)
-          3. Рекурсивно попарно хешируем до одного корня
-          4. Пустой список → sha256("empty")
+# ---------------------------------------------------------------------------
+# Vault-layer primitives (v0.6.0)
+# ---------------------------------------------------------------------------
 
-        Pure function, no IO, детерминирован.
-        """
-        snapshots = self.state_snapshots
-        if not snapshots:
-            return hashlib.sha256(b"empty").hexdigest()
 
-        # Шаг 1: листья как bytes (sha256.digest())
-        current_b: list[bytes] = [
-            hashlib.sha256(f"{idx}:{fp}".encode()).digest() for idx, fp in snapshots
-        ]
+class VaultStepError(BaseModel):
+    code: str
+    message: str
+    retryable: bool
+    compensation_required: bool
 
-        # Единственный лист: возвращаем hex напрямую
-        if len(current_b) == 1:
-            return current_b[0].hex()
 
-        # Шаг 2-3: Merkle reduction — bytes конкатенация на каждом уровне
-        while len(current_b) > 1:
-            if len(current_b) % 2 == 1:
-                current_b.append(current_b[-1])  # дублируем нечётный лист
-            next_b: list[bytes] = []
-            for i in range(0, len(current_b), 2):
-                next_b.append(hashlib.sha256(current_b[i] + current_b[i + 1]).digest())
-            current_b = next_b
+class VaultStepMetadata(BaseModel):
+    idempotency_key: str
+    execution_time_ms: int
+    tool_version: str
+    cached: bool
+    trace_id: str
 
-        return current_b[0].hex()
+
+class VaultStepResult(BaseModel):
+    status: str
+    data: dict[str, Any] = Field(default_factory=dict)
+    error: VaultStepError | None = None
+    metadata: VaultStepMetadata
+
+    @model_validator(mode="after")
+    def _validate_status(self) -> VaultStepResult:
+        allowed = {"SUCCESS", "FAILED", "PENDING"}
+        if self.status not in allowed:
+            raise ValueError(
+                f"VaultStepResult.status must be one of {allowed}, got '{self.status}'"
+            )
+        return self
+
+    @property
+    def is_pending(self) -> bool:
+        return self.status == "PENDING"
+
+    @property
+    def is_failed(self) -> bool:
+        return self.status == "FAILED"
+
+    @property
+    def is_retryable(self) -> bool:
+        return self.is_failed and self.error is not None and self.error.retryable
+
+    @property
+    def requires_compensation(self) -> bool:
+        return self.is_failed and self.error is not None and self.error.compensation_required
+
+
+__all__ = [
+    # re-exported from contracts
+    "CapabilityRef",
+    "PolicySnapshot",
+    "GovernanceEnvelope",
+    # local
+    "GdprEraseEvent",
+    "InterruptType",
+    "LLMUsage",
+    "OnError",
+    "StepType",
+    "StepStatus",
+    "TraceStatus",
+    "Step",
+    "Program",
+    "StateContext",
+    "StepResult",
+    "Trace",
+    "VaultStepError",
+    "VaultStepMetadata",
+    "VaultStepResult",
+]

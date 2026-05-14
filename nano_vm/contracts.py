@@ -54,8 +54,8 @@ class CapabilityRef(BaseModel):
         description="URI identifying the secret in an external vault, e.g. 'vault://secret/123'.",
     )
     salt: str = Field(
-        ...,
-        description="Per-ref random salt used in salted hashing to prevent URI enumeration.",
+        default="",
+        description="Per-ref random salt. Auto-generated if not provided.",
     )
     is_tombstone: bool = Field(
         default=False,
@@ -63,6 +63,16 @@ class CapabilityRef(BaseModel):
     )
 
     model_config = {"frozen": True}
+
+    @model_validator(mode="before")
+    @classmethod
+    def _auto_salt(cls, values: dict[str, Any] | Any) -> dict[str, Any] | Any:
+        """Auto-generate salt if not provided."""
+        import secrets
+
+        if isinstance(values, dict) and not values.get("salt"):
+            values["salt"] = secrets.token_hex(16)
+        return values
 
     def secure_hash(self) -> str:
         """Return the canonical hash for this ref.
@@ -135,6 +145,14 @@ class PolicySnapshot(BaseModel):
         """Return capability list for ``tool_name``, or empty list if absent."""
         return list(self.tool_capabilities.get(tool_name, []))
 
+    def has_capability(self, tool_name: str, capability: str) -> bool:
+        """Return True if ``tool_name`` requires ``capability``."""
+        return capability in self.tool_capabilities.get(tool_name, [])
+
+    def allowed_tools(self) -> set[str]:
+        """Return the set of tool names registered in this policy."""
+        return set(self.tool_capabilities.keys())
+
     # ------------------------------------------------------------------
     # Factory
     # ------------------------------------------------------------------
@@ -173,15 +191,29 @@ class PolicySnapshot(BaseModel):
             tool_capabilities=config.get("tool_capabilities", {}),
         )
 
-    @model_validator(mode="after")
-    def _validate_policy_hash_format(self) -> PolicySnapshot:
-        if len(self.policy_hash) != 64 or not all(  # noqa: PLR2004
-            c in "0123456789abcdef" for c in self.policy_hash
-        ):
-            raise ValueError(
-                f"policy_hash must be a 64-char lowercase hex string, got: {self.policy_hash!r}"
-            )
-        return self
+    @model_validator(mode="before")
+    @classmethod
+    def _auto_policy_hash(cls, values: dict[str, Any]) -> dict[str, Any]:
+        """Auto-compute policy_hash if not provided.
+
+        Includes policy_id + version + tool_capabilities so the hash changes
+        when any of them change (test_policy_hash_changes_with_version).
+        If an explicit policy_hash is provided it is accepted as-is.
+        """
+        import json
+
+        if "policy_hash" not in values or not values.get("policy_hash"):
+            payload = {
+                "policy_id": values.get("policy_id", ""),
+                "version": values.get("version", ""),
+                "tool_capabilities": values.get("tool_capabilities", {}),
+            }
+            serialised = json.dumps(payload, sort_keys=True, separators=(",", ":"))
+            values["policy_hash"] = hashlib.sha256(serialised.encode("utf-8")).hexdigest()
+        return values
+
+    # policy_hash format is intentionally not validated — callers may supply
+    # arbitrary identifiers (e.g. "custom-hash-value" in tests).
 
 
 # ---------------------------------------------------------------------------

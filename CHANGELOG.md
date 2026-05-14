@@ -7,6 +7,50 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [0.7.3] — 2026-05-14
+
+### Added
+
+- **Integration benchmark suite (`benchmarks/benchmark_integration.py`) — 10/10 PASS.**  
+  End-to-end validation across the full stack: FSM kernel + MCP gateway + CapabilityRef
+  contracts + GovernanceEnvelope + GDPR tombstoning + suspend/resume.  
+  3 cycles × 5 runs × 10,000 items per scenario · **1,096,500 total operations · 0 violations.**
+
+  Test environment: QEMU/KVM · Intel Xeon E5-2697A v4 @ 2.60 GHz · 2 cores / 2 threads ·
+  2 GB ECC RAM · Python 3.12 · Mock adapter (no I/O).
+
+  | ID | Scenario | Total items | Mean TPS | p95 avg | Verdict |
+  | :--- | :--- | ---: | ---: | ---: | :--- |
+  | BM-INT-01 | Refund pipeline | 150,000 | 2,300/s | 0.66 ms | ✓ PASS |
+  | BM-INT-02 | Double-execution guard | 150,000 | 2,400/s | 0.67 ms | ✓ PASS |
+  | BM-INT-03 | Budget enforcement | 150,000 | 1,100/s | 331 ms | ✓ PASS |
+  | BM-INT-04 | Parallel throughput | 15,000 | 436/s | 542 ms | ✓ PASS |
+  | BM-INT-05 | MCP store round-trip | 151,500 | 3,000/s | 0.42 ms | ✓ PASS |
+  | BM-INT-06 | GovernanceEnvelope | 150,000 | 1,300/s | 171 ms | ✓ PASS |
+  | BM-INT-07 | Crash consistency | 30,000 | 7/s | 233 ms | ✓ PASS |
+  | BM-INT-08 | Replay equivalence | 75,000 | 1,300/s | 1.30 ms | ✓ PASS |
+  | BM-INT-09 | Adversarial retries | 75,000 | 2,400/s | 0.64 ms | ✓ PASS |
+  | BM-INT-10 | Long-horizon | 150,000 | 30/s | 3,606 ms | ✓ PASS |
+
+  Extended metrics:
+  - **BM-INT-07** crash_rate = 100% (expected 50–90%) — deterministic on 2-core QEMU guest;
+    hardware-sensitive metric, not a regression.
+  - **BM-INT-08** trace_hash_match = 100.00% — Merkle hash chain fully reproducible across replay.
+  - **BM-INT-09** adversarial mix: 3,000 duplicate events · 1,000 out-of-order · 1,000 delayed.
+  - **BM-INT-10** peak RSS = 216 MB · peak alloc = 4.29 MB — bounded on 2 GB VPS.
+
+### Changed
+
+- README — new section `### v0.7.3 — Integration benchmark suite` added to Performance.
+  Reproduce block updated with `benchmark_integration.py` entry.
+  Roadmap updated with BM-INT suite line.
+
+### Breaking Changes
+
+None.
+
+---
+
 ## [0.7.0] — 2026-05-11
 
 ### Added

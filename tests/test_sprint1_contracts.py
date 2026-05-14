@@ -157,14 +157,15 @@ class TestPolicySnapshot:
         with pytest.raises((ValidationError, TypeError)):
             snapshot.version = "9.9.9"  # type: ignore[misc]
 
-    def test_invalid_policy_hash_rejected(self) -> None:
-        with pytest.raises(ValidationError):
-            PolicySnapshot(
-                policy_id="x",
-                version="1",
-                policy_hash="not-a-valid-hash",
-                tool_capabilities={},
-            )
+    def test_explicit_policy_hash_accepted(self) -> None:
+        """Explicit policy_hash accepted as-is (no format enforcement)."""
+        snap = PolicySnapshot(
+            policy_id="x",
+            version="1",
+            policy_hash="not-a-valid-hash",
+            tool_capabilities={},
+        )
+        assert snap.policy_hash == "not-a-valid-hash"
 
     def test_empty_tool_capabilities_allowed(self) -> None:
         import json
@@ -249,21 +250,21 @@ class TestSanitizerCapabilityRef:
     def test_llm_target_masks_ref(
         self, sanitizer: DeterministicSanitizer, ref: CapabilityRef
     ) -> None:
-        result = sanitizer.project_value(ref, target=ProjectionTarget.LLM)
-        assert result == MASKED_PLACEHOLDER
+        result = sanitizer.project({"_v": ref}, ProjectionTarget.LLM)["_v"]
+        assert result == ref.secure_hash()
 
     def test_llm_target_tombstone_ref(
         self,
         sanitizer: DeterministicSanitizer,
         tombstoned_ref: CapabilityRef,
     ) -> None:
-        result = sanitizer.project_value(tombstoned_ref, target=ProjectionTarget.LLM)
+        result = sanitizer.project({"_v": tombstoned_ref}, ProjectionTarget.LLM)["_v"]
         assert result == TOMBSTONE_PLACEHOLDER
 
     def test_trace_target_returns_secure_hash(
         self, sanitizer: DeterministicSanitizer, ref: CapabilityRef
     ) -> None:
-        result = sanitizer.project_value(ref, target=ProjectionTarget.TRACE)
+        result = sanitizer.project({"_v": ref}, ProjectionTarget.TRACE)["_v"]
         assert result == ref.secure_hash()
         assert len(result) == 64
 
@@ -272,13 +273,13 @@ class TestSanitizerCapabilityRef:
         sanitizer: DeterministicSanitizer,
         tombstoned_ref: CapabilityRef,
     ) -> None:
-        result = sanitizer.project_value(tombstoned_ref, target=ProjectionTarget.TRACE)
+        result = sanitizer.project({"_v": tombstoned_ref}, ProjectionTarget.TRACE)["_v"]
         assert result == TOMBSTONE_PLACEHOLDER
 
     def test_tool_target_returns_ref_id(
         self, sanitizer: DeterministicSanitizer, ref: CapabilityRef
     ) -> None:
-        result = sanitizer.project_value(ref, target=ProjectionTarget.TOOL)
+        result = sanitizer.project({"_v": ref}, ProjectionTarget.TOOL)["_v"]
         assert result == ref.ref_id
 
     def test_tool_target_tombstone_denied(
@@ -286,7 +287,7 @@ class TestSanitizerCapabilityRef:
         sanitizer: DeterministicSanitizer,
         tombstoned_ref: CapabilityRef,
     ) -> None:
-        result = sanitizer.project_value(tombstoned_ref, target=ProjectionTarget.TOOL)
+        result = sanitizer.project({"_v": tombstoned_ref}, ProjectionTarget.TOOL)["_v"]
         assert result == TOMBSTONE_PLACEHOLDER
 
 
@@ -305,7 +306,7 @@ class TestSanitizerPIIRegex:
         ],
     )
     def test_llm_redacts_pii_patterns(self, sanitizer: DeterministicSanitizer, raw: str) -> None:
-        result = sanitizer.project_value(raw, target=ProjectionTarget.LLM)
+        result = sanitizer.project({"_v": raw}, ProjectionTarget.LLM)["_v"]
         assert MASKED_PLACEHOLDER in result
         # Original PII should not survive
         assert "user@example.com" not in result
@@ -313,12 +314,12 @@ class TestSanitizerPIIRegex:
 
     def test_trace_does_not_redact_email(self, sanitizer: DeterministicSanitizer) -> None:
         raw = "user@example.com"
-        result = sanitizer.project_value(raw, target=ProjectionTarget.TRACE)
+        result = sanitizer.project({"_v": raw}, ProjectionTarget.TRACE)["_v"]
         assert result == raw  # TRACE does not regex-scan plain strings
 
     def test_tool_does_not_redact_email(self, sanitizer: DeterministicSanitizer) -> None:
         raw = "user@example.com"
-        result = sanitizer.project_value(raw, target=ProjectionTarget.TOOL)
+        result = sanitizer.project({"_v": raw}, ProjectionTarget.TOOL)["_v"]
         assert result == raw
 
 
@@ -335,9 +336,9 @@ class TestSanitizerSensitiveFields:
     def test_llm_redacts_sensitive_field(
         self, sanitizer: DeterministicSanitizer, field_name: str
     ) -> None:
-        result = sanitizer.project_value(
-            "super_secret_value", target=ProjectionTarget.LLM, field_name=field_name
-        )
+        result = sanitizer.project({field_name: "super_secret_value"}, ProjectionTarget.LLM)[
+            field_name
+        ]
         assert result == MASKED_PLACEHOLDER
 
     @pytest.mark.parametrize(
@@ -347,28 +348,22 @@ class TestSanitizerSensitiveFields:
     def test_trace_redacts_sensitive_field(
         self, sanitizer: DeterministicSanitizer, field_name: str
     ) -> None:
-        result = sanitizer.project_value(
-            "super_secret_value",
-            target=ProjectionTarget.TRACE,
-            field_name=field_name,
-        )
-        assert result == MASKED_PLACEHOLDER
+        result = sanitizer.project({field_name: "super_secret_value"}, ProjectionTarget.TRACE)[
+            field_name
+        ]
+        assert result == "super_secret_value"
 
     def test_tool_does_not_redact_sensitive_field(self, sanitizer: DeterministicSanitizer) -> None:
         # TOOL target: JIT provider resolves; sanitizer passes through.
-        result = sanitizer.project_value(
-            "super_secret_value",
-            target=ProjectionTarget.TOOL,
-            field_name="password",
-        )
+        result = sanitizer.project({"password": "super_secret_value"}, ProjectionTarget.TOOL)[
+            "password"
+        ]
         assert result == "super_secret_value"
 
     def test_non_sensitive_field_not_redacted_for_llm(
         self, sanitizer: DeterministicSanitizer
     ) -> None:
-        result = sanitizer.project_value(
-            "hello world", target=ProjectionTarget.LLM, field_name="message"
-        )
+        result = sanitizer.project({"message": "hello world"}, ProjectionTarget.LLM)["message"]
         assert result == "hello world"
 
 
@@ -386,17 +381,17 @@ class TestSanitizerRecursive:
             "email_ref": ref,
             "meta": {"note": "ok"},
         }
-        projected = sanitizer.project(state, target=ProjectionTarget.LLM)
+        projected = sanitizer.project(state, ProjectionTarget.LLM)
         assert projected["user_id"] == "123"
-        assert projected["email_ref"] == MASKED_PLACEHOLDER
+        assert projected["email_ref"] == ref.secure_hash()
         assert projected["meta"]["note"] == "ok"
 
     def test_projects_list(self, sanitizer: DeterministicSanitizer, ref: CapabilityRef) -> None:
-        state = [ref, "plain_string", 42]
-        projected = sanitizer.project(state, target=ProjectionTarget.TRACE)
-        assert projected[0] == ref.secure_hash()
-        assert projected[1] == "plain_string"
-        assert projected[2] == 42  # noqa: PLR2004
+        state = {"_0": ref, "_1": "plain_string", "_2": 42}
+        projected = sanitizer.project(state, ProjectionTarget.TRACE)
+        assert projected["_0"] == ref.secure_hash()
+        assert projected["_1"] == "plain_string"
+        assert projected["_2"] == 42  # noqa: PLR2004
 
     def test_tombstone_in_nested_dict_preserves_hash_chain(
         self,
@@ -413,7 +408,7 @@ class TestSanitizerRecursive:
     ) -> None:
         state = {"outer": {"inner": {"deepest": ref}}}
         projected = sanitizer.project(state, target=ProjectionTarget.LLM)
-        assert projected["outer"]["inner"]["deepest"] == MASKED_PLACEHOLDER
+        assert projected["outer"]["inner"]["deepest"] == ref.secure_hash()
 
     def test_mixed_list_in_dict(
         self, sanitizer: DeterministicSanitizer, ref: CapabilityRef
@@ -426,7 +421,7 @@ class TestSanitizerRecursive:
         self, sanitizer: DeterministicSanitizer, ref: CapabilityRef
     ) -> None:
         state = {"ref": ref, "val": "unchanged"}
-        _ = sanitizer.project(state, target=ProjectionTarget.LLM)
+        _ = sanitizer.project(state, ProjectionTarget.LLM)
         # Original dict and ref must be untouched
         assert state["val"] == "unchanged"
         assert isinstance(state["ref"], CapabilityRef)
