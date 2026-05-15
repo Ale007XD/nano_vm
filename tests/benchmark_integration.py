@@ -38,12 +38,10 @@ import argparse
 import asyncio
 import gc
 import hashlib
-import json
 import math
 import os
 import random
 import resource
-import signal
 import statistics
 import tempfile
 import time
@@ -52,6 +50,9 @@ import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
+
+# ── nano_vm_mcp ───────────────────────────────────────────────────────────────
+from nano_vm_mcp.store import ProgramStore as Store
 
 # ── rich ──────────────────────────────────────────────────────────────────────
 from rich import box
@@ -74,9 +75,6 @@ from rich.text import Text
 # ── nano_vm ───────────────────────────────────────────────────────────────────
 from nano_vm import ExecutionVM, Program, TraceStatus
 from nano_vm.adapters import MockLLMAdapter
-
-# ── nano_vm_mcp ───────────────────────────────────────────────────────────────
-from nano_vm_mcp.store import ProgramStore as Store
 
 console = Console()
 
@@ -439,8 +437,7 @@ async def run_bm_int_01(cycle: int, run: int, progress: Any, task: Any) -> RunRe
     vm = ExecutionVM(llm=make_refund_llm(rng), tools=TOOLS)
     program = Program.from_dict(REFUND_PROGRAM)
     contexts = [
-        {"user_input": f"Refund request #{5000 + i}", "order_id": str(1000 + i)}
-        for i in range(N)
+        {"user_input": f"Refund request #{5000 + i}", "order_id": str(1000 + i)} for i in range(N)
     ]
     t0 = time.perf_counter()
     latencies, ok, failed, budget, violations, mean_steps = await _run_batch(
@@ -449,10 +446,17 @@ async def run_bm_int_01(cycle: int, run: int, progress: Any, task: Any) -> RunRe
     elapsed = time.perf_counter() - t0
     progress.advance(task, N)
     return RunResult(
-        scenario_id="BM-INT-01", cycle=cycle, run=run, n=N,
-        elapsed_s=elapsed, throughput=N / elapsed,
-        ok=ok, failed=failed, budget_exceeded=budget,
-        violations=violations, mean_steps=mean_steps,
+        scenario_id="BM-INT-01",
+        cycle=cycle,
+        run=run,
+        n=N,
+        elapsed_s=elapsed,
+        throughput=N / elapsed,
+        ok=ok,
+        failed=failed,
+        budget_exceeded=budget,
+        violations=violations,
+        mean_steps=mean_steps,
         p50_ms=_percentile(latencies, 50),
         p95_ms=_percentile(latencies, 95),
         p99_ms=_percentile(latencies, 99),
@@ -519,10 +523,17 @@ async def run_bm_int_02(cycle: int, run: int, progress: Any, task: Any) -> RunRe
     elapsed = time.perf_counter() - t0
     progress.advance(task, N)
     return RunResult(
-        scenario_id="BM-INT-02", cycle=cycle, run=run, n=N,
-        elapsed_s=elapsed, throughput=N / elapsed,
-        ok=ok, failed=failed, budget_exceeded=budget,
-        violations=violations, mean_steps=mean_steps,
+        scenario_id="BM-INT-02",
+        cycle=cycle,
+        run=run,
+        n=N,
+        elapsed_s=elapsed,
+        throughput=N / elapsed,
+        ok=ok,
+        failed=failed,
+        budget_exceeded=budget,
+        violations=violations,
+        mean_steps=mean_steps,
         p50_ms=_percentile(latencies, 50),
         p95_ms=_percentile(latencies, 95),
         p99_ms=_percentile(latencies, 99),
@@ -551,10 +562,17 @@ async def run_bm_int_03(cycle: int, run: int, progress: Any, task: Any) -> RunRe
     real_ok = budget
     real_violations = N - budget
     return RunResult(
-        scenario_id="BM-INT-03", cycle=cycle, run=run, n=N,
-        elapsed_s=elapsed, throughput=N / elapsed,
-        ok=real_ok, failed=failed, budget_exceeded=budget,
-        violations=real_violations, mean_steps=mean_steps,
+        scenario_id="BM-INT-03",
+        cycle=cycle,
+        run=run,
+        n=N,
+        elapsed_s=elapsed,
+        throughput=N / elapsed,
+        ok=real_ok,
+        failed=failed,
+        budget_exceeded=budget,
+        violations=real_violations,
+        mean_steps=mean_steps,
         p50_ms=_percentile(latencies, 50),
         p95_ms=_percentile(latencies, 95),
         p99_ms=_percentile(latencies, 99),
@@ -613,18 +631,26 @@ async def run_bm_int_04(cycle: int, run: int, progress: Any, task: Any) -> RunRe
 
     t0 = time.perf_counter()
     latencies, ok, failed, budget, violations, mean_steps = await _run_batch(
-        vm, program, contexts,
+        vm,
+        program,
+        contexts,
         lambda t: t.status == TraceStatus.SUCCESS,
     )
     elapsed = time.perf_counter() - t0
     progress.advance(task, N)
 
     return RunResult(
-        scenario_id="BM-INT-04", cycle=cycle, run=run,
+        scenario_id="BM-INT-04",
+        cycle=cycle,
+        run=run,
         n=batch,  # programs, not sub-steps — OK% semantically consistent
-        elapsed_s=elapsed, throughput=batch / elapsed,
-        ok=ok, failed=failed, budget_exceeded=budget,
-        violations=violations, mean_steps=mean_steps,
+        elapsed_s=elapsed,
+        throughput=batch / elapsed,
+        ok=ok,
+        failed=failed,
+        budget_exceeded=budget,
+        violations=violations,
+        mean_steps=mean_steps,
         p50_ms=_percentile(latencies, 50),
         p95_ms=_percentile(latencies, 95),
         p99_ms=_percentile(latencies, 99),
@@ -704,10 +730,17 @@ async def run_bm_int_05(cycle: int, run: int, progress: Any, task: Any) -> RunRe
     total_ops = batch_programs * (1 + traces_per_program)  # 100 * 101 = 10 100  # PATCH
 
     return RunResult(
-        scenario_id="BM-INT-05", cycle=cycle, run=run, n=total_ops,
-        elapsed_s=elapsed, throughput=total_ops / max(elapsed, 1e-6),  # PATCH
-        ok=ok, failed=0, budget_exceeded=0,
-        violations=violations, mean_steps=1.0,
+        scenario_id="BM-INT-05",
+        cycle=cycle,
+        run=run,
+        n=total_ops,
+        elapsed_s=elapsed,
+        throughput=total_ops / max(elapsed, 1e-6),  # PATCH
+        ok=ok,
+        failed=0,
+        budget_exceeded=0,
+        violations=violations,
+        mean_steps=1.0,
         p50_ms=_percentile(latencies, 50),
         p95_ms=_percentile(latencies, 95),
         p99_ms=_percentile(latencies, 99),
@@ -744,12 +777,14 @@ async def run_bm_int_06(cycle: int, run: int, progress: Any, task: Any) -> RunRe
     for i in range(N):
         eid = str(uuid.uuid4())
         execution_ids.append(eid)
-        contexts.append({
-            "user_input": f"Process order {i}",
-            "order_id": str(3000 + i),
-            "capability_id": f"cap_{i % 500}",
-            "trace_id": eid,
-        })
+        contexts.append(
+            {
+                "user_input": f"Process order {i}",
+                "order_id": str(3000 + i),
+                "capability_id": f"cap_{i % 500}",
+                "trace_id": eid,
+            }
+        )
 
     t0 = time.perf_counter()
     latencies, ok, failed, budget, violations, mean_steps = await _run_batch(
@@ -758,11 +793,13 @@ async def run_bm_int_06(cycle: int, run: int, progress: Any, task: Any) -> RunRe
     elapsed = time.perf_counter() - t0
 
     envelope_violations = 0
-    sample = execution_ids[:min(500, N)]
+    sample = execution_ids[: min(500, N)]
     for eid in sample:
         gov_store.save_envelope(
-            eid, 1,
-            f"ph_{eid[:8]}", f"sh_{eid[:8]}",
+            eid,
+            1,
+            f"ph_{eid[:8]}",
+            f"sh_{eid[:8]}",
             {"capability_id": "cap_x", "scope": "refund:write"},
         )
         envelopes = gov_store.get_envelopes(eid)
@@ -776,10 +813,17 @@ async def run_bm_int_06(cycle: int, run: int, progress: Any, task: Any) -> RunRe
     progress.advance(task, N)
 
     return RunResult(
-        scenario_id="BM-INT-06", cycle=cycle, run=run, n=N,
-        elapsed_s=elapsed, throughput=N / elapsed,
-        ok=ok, failed=failed, budget_exceeded=budget,
-        violations=violations, mean_steps=mean_steps,
+        scenario_id="BM-INT-06",
+        cycle=cycle,
+        run=run,
+        n=N,
+        elapsed_s=elapsed,
+        throughput=N / elapsed,
+        ok=ok,
+        failed=failed,
+        budget_exceeded=budget,
+        violations=violations,
+        mean_steps=mean_steps,
         p50_ms=_percentile(latencies, 50),
         p95_ms=_percentile(latencies, 95),
         p99_ms=_percentile(latencies, 99),
@@ -840,7 +884,7 @@ _CRASH_PROGRAM = {
     ],
 }
 
-_CRASH_N = 2_000   # programs per run (lighter than N — crash overhead is real)
+_CRASH_N = 2_000  # programs per run (lighter than N — crash overhead is real)
 
 
 async def _run_clean(vm: ExecutionVM, program: Program, ctx: dict) -> Any:
@@ -944,10 +988,17 @@ async def run_bm_int_07(cycle: int, run: int, progress: Any, task: Any) -> RunRe
     elapsed = sum(latencies) / 1000.0  # sequential pairs, sum ≈ wall
 
     return RunResult(
-        scenario_id="BM-INT-07", cycle=cycle, run=run, n=_CRASH_N,
-        elapsed_s=max(elapsed, 0.001), throughput=_CRASH_N / max(elapsed, 0.001),
-        ok=ok, failed=0, budget_exceeded=0,
-        violations=violations, mean_steps=0.0,
+        scenario_id="BM-INT-07",
+        cycle=cycle,
+        run=run,
+        n=_CRASH_N,
+        elapsed_s=max(elapsed, 0.001),
+        throughput=_CRASH_N / max(elapsed, 0.001),
+        ok=ok,
+        failed=0,
+        budget_exceeded=0,
+        violations=violations,
+        mean_steps=0.0,
         p50_ms=_percentile(latencies, 50),
         p95_ms=_percentile(latencies, 95),
         p99_ms=_percentile(latencies, 99),
@@ -1023,10 +1074,7 @@ async def run_bm_int_08(cycle: int, run: int, progress: Any, task: Any) -> RunRe
     Violation = hash mismatch.
     """
     program = Program.from_dict(_REPLAY_PROGRAM)
-    contexts = [
-        {"input": f"refund order {i}", "order_id": str(i)}
-        for i in range(_REPLAY_N)
-    ]
+    contexts = [{"input": f"refund order {i}", "order_id": str(i)} for i in range(_REPLAY_N)]
 
     sem = asyncio.Semaphore(_BATCH_CONCURRENCY)
     latencies: list[float] = []
@@ -1061,10 +1109,17 @@ async def run_bm_int_08(cycle: int, run: int, progress: Any, task: Any) -> RunRe
 
     latencies.sort()
     return RunResult(
-        scenario_id="BM-INT-08", cycle=cycle, run=run, n=_REPLAY_N,
-        elapsed_s=elapsed, throughput=_REPLAY_N / elapsed,
-        ok=ok, failed=0, budget_exceeded=0,
-        violations=violations, mean_steps=0.0,
+        scenario_id="BM-INT-08",
+        cycle=cycle,
+        run=run,
+        n=_REPLAY_N,
+        elapsed_s=elapsed,
+        throughput=_REPLAY_N / elapsed,
+        ok=ok,
+        failed=0,
+        budget_exceeded=0,
+        violations=violations,
+        mean_steps=0.0,
         p50_ms=_percentile(latencies, 50),
         p95_ms=_percentile(latencies, 95),
         p99_ms=_percentile(latencies, 99),
@@ -1155,8 +1210,7 @@ async def run_bm_int_09(cycle: int, run: int, progress: Any, task: Any) -> RunRe
     rng = random.Random(SEED + cycle * 400 + run + 9)
 
     base_contexts = [
-        {"input": f"refund order {i}", "order_id": str(i), "tid": str(i)}
-        for i in range(_ADV_N)
+        {"input": f"refund order {i}", "order_id": str(i), "tid": str(i)} for i in range(_ADV_N)
     ]
 
     sem = asyncio.Semaphore(_BATCH_CONCURRENCY)
@@ -1166,15 +1220,15 @@ async def run_bm_int_09(cycle: int, run: int, progress: Any, task: Any) -> RunRe
 
     # Sub-A: duplicate webhooks — same context _DUP_FACTOR times
     dup_contexts = []
-    for ctx in base_contexts[:_ADV_N // 3]:
+    for ctx in base_contexts[: _ADV_N // 3]:
         dup_contexts.extend([ctx] * _DUP_FACTOR)
 
     # Sub-B: out-of-order — shuffled submission order
-    ooo_contexts = list(base_contexts[_ADV_N // 3: 2 * _ADV_N // 3])
+    ooo_contexts = list(base_contexts[_ADV_N // 3 : 2 * _ADV_N // 3])
     rng.shuffle(ooo_contexts)
 
     # Sub-C: delayed acks — remaining contexts with delayed tool
-    delayed_contexts = base_contexts[2 * _ADV_N // 3:]
+    delayed_contexts = base_contexts[2 * _ADV_N // 3 :]
 
     async def _run_one(ctx: dict, tools_override: dict | None = None) -> None:
         nonlocal ok, violations
@@ -1204,10 +1258,17 @@ async def run_bm_int_09(cycle: int, run: int, progress: Any, task: Any) -> RunRe
     latencies.sort()
 
     return RunResult(
-        scenario_id="BM-INT-09", cycle=cycle, run=run, n=total,
-        elapsed_s=elapsed, throughput=total / elapsed,
-        ok=ok, failed=0, budget_exceeded=0,
-        violations=violations, mean_steps=0.0,
+        scenario_id="BM-INT-09",
+        cycle=cycle,
+        run=run,
+        n=total,
+        elapsed_s=elapsed,
+        throughput=total / elapsed,
+        ok=ok,
+        failed=0,
+        budget_exceeded=0,
+        violations=violations,
+        mean_steps=0.0,
         p50_ms=_percentile(latencies, 50),
         p95_ms=_percentile(latencies, 95),
         p99_ms=_percentile(latencies, 99),
@@ -1231,9 +1292,9 @@ async def run_bm_int_09(cycle: int, run: int, progress: Any, task: Any) -> RunRe
 # Violation = peak RSS > RSS_LIMIT_MB or any step duplicate.
 # ══════════════════════════════════════════════════════════════════════════════
 
-_LONG_STEPS = 1_000    # steps per program (100k is ~100× this with RUNS×CYCLES)
-_LONG_PROGRAMS = 10    # programs per run
-_RSS_LIMIT_MB = 512    # violation threshold
+_LONG_STEPS = 1_000  # steps per program (100k is ~100× this with RUNS×CYCLES)
+_LONG_PROGRAMS = 10  # programs per run
+_RSS_LIMIT_MB = 512  # violation threshold
 
 
 def _make_long_program(n_steps: int) -> dict:
@@ -1306,11 +1367,17 @@ async def run_bm_int_10(cycle: int, run: int, progress: Any, task: Any) -> RunRe
     latencies.sort()
 
     return RunResult(
-        scenario_id="BM-INT-10", cycle=cycle, run=run,
+        scenario_id="BM-INT-10",
+        cycle=cycle,
+        run=run,
         n=_LONG_PROGRAMS * _LONG_STEPS,
-        elapsed_s=elapsed, throughput=total_steps_executed / elapsed,
-        ok=ok, failed=0, budget_exceeded=0,
-        violations=violations, mean_steps=float(_LONG_STEPS),
+        elapsed_s=elapsed,
+        throughput=total_steps_executed / elapsed,
+        ok=ok,
+        failed=0,
+        budget_exceeded=0,
+        violations=violations,
+        mean_steps=float(_LONG_STEPS),
         p50_ms=_percentile(latencies, 50),
         p95_ms=_percentile(latencies, 95),
         p99_ms=_percentile(latencies, 99),
@@ -1328,19 +1395,19 @@ async def run_bm_int_10(cycle: int, run: int, progress: Any, task: Any) -> RunRe
 # ══════════════════════════════════════════════════════════════════════════════
 
 SCENARIOS_ORIGINAL = [
-    ("BM-INT-01", "Refund pipeline",       "llm+cond+parallel+tool", run_bm_int_01),
-    ("BM-INT-02", "Double-execution guard", "FSM I_k(T)∈{0,1}",      run_bm_int_02),
-    ("BM-INT-03", "Budget enforcement",    "max_steps wall",          run_bm_int_03),
-    ("BM-INT-04", "Parallel throughput",   "asyncio.gather scaling",  run_bm_int_04),
-    ("BM-INT-05", "MCP store round-trip",  "SQLite WAL",              run_bm_int_05),
-    ("BM-INT-06", "GovernanceEnvelope",    "CapabilityRef+audit",     run_bm_int_06),
+    ("BM-INT-01", "Refund pipeline", "llm+cond+parallel+tool", run_bm_int_01),
+    ("BM-INT-02", "Double-execution guard", "FSM I_k(T)∈{0,1}", run_bm_int_02),
+    ("BM-INT-03", "Budget enforcement", "max_steps wall", run_bm_int_03),
+    ("BM-INT-04", "Parallel throughput", "asyncio.gather scaling", run_bm_int_04),
+    ("BM-INT-05", "MCP store round-trip", "SQLite WAL", run_bm_int_05),
+    ("BM-INT-06", "GovernanceEnvelope", "CapabilityRef+audit", run_bm_int_06),
 ]
 
 SCENARIOS_NEW = [
-    ("BM-INT-07", "Crash consistency",     "kill→replay→resume",      run_bm_int_07),
-    ("BM-INT-08", "Replay equivalence",    "trace_hash(r1)==hash(r2)", run_bm_int_08),
-    ("BM-INT-09", "Adversarial retries",   "dup+ooo+delayed",         run_bm_int_09),
-    ("BM-INT-10", "Long-horizon",          "1k steps+memory profile", run_bm_int_10),
+    ("BM-INT-07", "Crash consistency", "kill→replay→resume", run_bm_int_07),
+    ("BM-INT-08", "Replay equivalence", "trace_hash(r1)==hash(r2)", run_bm_int_08),
+    ("BM-INT-09", "Adversarial retries", "dup+ooo+delayed", run_bm_int_09),
+    ("BM-INT-10", "Long-horizon", "1k steps+memory profile", run_bm_int_10),
 ]
 
 ALL_SCENARIOS = SCENARIOS_ORIGINAL + SCENARIOS_NEW
@@ -1369,29 +1436,33 @@ def _fmt_ms(v: float) -> str:
 def render_cycle_table(cycle: int, summaries: list[ScenarioSummary]) -> Table:
     t = Table(
         title=f"[bold]Cycle {cycle} / {CYCLES}[/bold]",
-        box=box.ROUNDED, show_lines=True,
+        box=box.ROUNDED,
+        show_lines=True,
         header_style="bold cyan",
         title_style="bold white on dark_blue",
         border_style="bright_black",
         expand=True,
     )
-    t.add_column("ID",         style="bold yellow", width=12)
-    t.add_column("Scenario",   style="white",       width=28)
-    t.add_column("Tag",        style="dim",         width=24)
-    t.add_column("Mean TPS",   style="cyan",        justify="right", width=12)
-    t.add_column("±σ",         style="dim cyan",    justify="right", width=10)
-    t.add_column("OK %",       justify="right",     width=8)
-    t.add_column("p50",        justify="right",     width=10)
-    t.add_column("p95",        justify="right",     width=10)
-    t.add_column("Violations", justify="right",     width=12)
-    t.add_column("Status",     justify="center",    width=10)
+    t.add_column("ID", style="bold yellow", width=12)
+    t.add_column("Scenario", style="white", width=28)
+    t.add_column("Tag", style="dim", width=24)
+    t.add_column("Mean TPS", style="cyan", justify="right", width=12)
+    t.add_column("±σ", style="dim cyan", justify="right", width=10)
+    t.add_column("OK %", justify="right", width=8)
+    t.add_column("p50", justify="right", width=10)
+    t.add_column("p95", justify="right", width=10)
+    t.add_column("Violations", justify="right", width=12)
+    t.add_column("Status", justify="center", width=10)
 
     for s in summaries:
         ok_color = "green" if s.ok_pct >= 95 else ("yellow" if s.ok_pct >= 70 else "red")
         viol_color = "green" if s.total_violations == 0 else "bold red"
         t.add_row(
-            s.scenario_id, s.label, s.tag,
-            _fmt_tps(s.mean_tps), f"±{_fmt_tps(s.stddev_tps)}",
+            s.scenario_id,
+            s.label,
+            s.tag,
+            _fmt_tps(s.mean_tps),
+            f"±{_fmt_tps(s.stddev_tps)}",
             Text(f"{s.ok_pct:.1f}%", style=ok_color),
             _fmt_ms(statistics.mean([r.p50_ms for r in s.results])),
             _fmt_ms(s.mean_p95),
@@ -1407,21 +1478,22 @@ def render_final_table(
 ) -> tuple[Table, bool]:
     t = Table(
         title=f"[bold]FINAL SUMMARY — {CYCLES} cycles × {RUNS} runs × {N:,} items[/bold]",
-        box=box.DOUBLE_EDGE, show_lines=True,
+        box=box.DOUBLE_EDGE,
+        show_lines=True,
         header_style="bold white on dark_blue",
         title_style="bold white on dark_blue",
         border_style="cyan",
         expand=True,
     )
-    t.add_column("ID",          style="bold yellow", width=12)
-    t.add_column("Scenario",    style="white",       width=28)
-    t.add_column("Total items", justify="right",     width=14)
-    t.add_column("Mean TPS",    style="cyan",        justify="right", width=12)
-    t.add_column("Throughput σ",style="dim cyan",    justify="right", width=12)
-    t.add_column("OK %",        justify="right",     width=8)
-    t.add_column("p95 avg",     justify="right",     width=10)
-    t.add_column("Violations",  justify="right",     width=12)
-    t.add_column("Verdict",     justify="center",    width=10)
+    t.add_column("ID", style="bold yellow", width=12)
+    t.add_column("Scenario", style="white", width=28)
+    t.add_column("Total items", justify="right", width=14)
+    t.add_column("Mean TPS", style="cyan", justify="right", width=12)
+    t.add_column("Throughput σ", style="dim cyan", justify="right", width=12)
+    t.add_column("OK %", justify="right", width=8)
+    t.add_column("p95 avg", justify="right", width=10)
+    t.add_column("Violations", justify="right", width=12)
+    t.add_column("Verdict", justify="center", width=10)
 
     all_pass = True
     for sid, label, tag, _ in scenarios:
@@ -1431,9 +1503,11 @@ def render_final_table(
         if not s.passed:
             all_pass = False
         t.add_row(
-            s.scenario_id, s.label,
+            s.scenario_id,
+            s.label,
             f"{s.total_n:,}",
-            _fmt_tps(s.mean_tps), f"±{_fmt_tps(s.stddev_tps)}",
+            _fmt_tps(s.mean_tps),
+            f"±{_fmt_tps(s.stddev_tps)}",
             Text(f"{s.ok_pct:.1f}%", style=ok_color),
             _fmt_ms(s.mean_p95),
             Text(str(s.total_violations), style=viol_color),
@@ -1451,7 +1525,9 @@ def render_extra_panel(all_summaries: dict[str, ScenarioSummary]) -> None:
         return
 
     console.print()
-    console.print(Rule("[bold white]Extended Metrics — New Suite[/bold white]", style="bright_black"))
+    console.print(
+        Rule("[bold white]Extended Metrics — New Suite[/bold white]", style="bright_black")
+    )
 
     if "BM-INT-07" in all_summaries:
         s = all_summaries["BM-INT-07"]
@@ -1474,8 +1550,9 @@ def render_extra_panel(all_summaries: dict[str, ScenarioSummary]) -> None:
         extras = [r.extra for r in s.results if r.extra]
         if extras:
             avg_match = statistics.mean(e.get("hash_match_pct", 0) for e in extras)
-            console.print(f"  [cyan]BM-INT-08[/cyan]  trace_hash match {avg_match:.2f}%  "
-                          f"(target 100.00%)")
+            console.print(
+                f"  [cyan]BM-INT-08[/cyan]  trace_hash match {avg_match:.2f}%  (target 100.00%)"
+            )
 
     if "BM-INT-09" in all_summaries:
         s = all_summaries["BM-INT-09"]
@@ -1525,7 +1602,7 @@ def render_invariant_panel(
         f"  Items per run    : {N:,}",
         f"  Scenarios        : {len(scenarios)}",
         "",
-        f"  [dim]llm-nano-vm v0.7.3  ×  nano-vm-mcp v0.3.0[/dim]",
+        "  [dim]llm-nano-vm v0.7.3  ×  nano-vm-mcp v0.3.0[/dim]",
     ]
     return Panel(
         "\n".join(lines),
@@ -1581,10 +1658,12 @@ async def main() -> None:
     scenarios = _select_scenarios(args)
 
     console.print()
-    console.print(Rule(
-        "[bold cyan]llm-nano-vm v0.7.3 × nano-vm-mcp v0.3.0 — Integration Benchmark[/bold cyan]",
-        style="cyan",
-    ))
+    console.print(
+        Rule(
+            "[bold cyan]llm-nano-vm v0.7.3 × nano-vm-mcp v0.3.0 — Integration Benchmark[/bold cyan]",
+            style="cyan",
+        )
+    )
     console.print(
         f"  [dim]{CYCLES} cycles · {RUNS} runs · {N:,} items/run · seed={SEED} · "
         f"suite={args.suite} · scenarios={len(scenarios)}[/dim]"
