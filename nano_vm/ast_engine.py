@@ -54,8 +54,13 @@ class VarNode:
     """Variable reference resolved from the evaluation context.
 
     Name formats:
-      "key"              -> ctx["key"]
-      "step_id.output"   -> ctx["__step_outputs__"]["step_id"]
+      "key"                            -> ctx["key"]
+      "step_id.output"                 -> ctx["step_id"]  (step output scalar)
+      "step_id.output.field"           -> ctx["step_id"]["field"]
+      "step_id.output.nested.field"    -> ctx["step_id"]["nested"]["field"]
+
+    Arbitrary dotted paths traverse nested dicts returned by tool steps.
+    Missing intermediate keys resolve to None (no exception).
     """
 
     name: str
@@ -150,15 +155,47 @@ class ASTEngine:
 
     @staticmethod
     def _resolve_var(node: VarNode, ctx: dict[str, Any]) -> Any:
-        """Resolve VarNode name from context.
+        """Resolve VarNode name from context using dotted-path traversal.
 
-        "classify.output" -> ctx["__step_outputs__"]["classify"]
-        "key"             -> ctx.get("key")
+        Resolution rules (first matching wins):
+          1. No dots → ctx.get("key")
+          2. "step_id.output" (exactly two parts, second=="output") → ctx.get("step_id")
+             which already holds the step's scalar / dict output.
+          3. "step_id.output.field[.nested...]" → ctx.get("step_id"), then traverse
+             remaining path segments as dict keys.
+          4. Any other dotted path → traverse all segments as dict keys starting from ctx.
+
+        Missing keys at any level return None (never raise).
         """
-        if node.name.endswith(".output"):
-            step_id = node.name[: -len(".output")]
-            return (ctx.get("__step_outputs__") or {}).get(step_id)
-        return ctx.get(node.name)
+        parts = node.name.split(".")
+        if len(parts) == 1:
+            # Simple key — no dots.
+            return ctx.get(parts[0])
+
+        # Start resolution: first segment is always a top-level ctx key.
+        value: Any = ctx.get(parts[0])
+
+        # Skip the literal "output" segment when it is the second part and the
+        # step output is a scalar (not a dict) — preserve backward compat with
+        # "step_id.output" resolving to the raw scalar output.
+        rest = parts[1:]
+        if rest and rest[0] == "output":
+            # If the value is a dict, keep "output" as a real key only when
+            # the dict actually contains an "output" key.  Otherwise treat it
+            # as the transparent alias for the step value itself and skip it.
+            if not isinstance(value, dict) or "output" not in value:
+                rest = rest[1:]  # transparent skip — value IS the output
+
+        for segment in rest:
+            if value is None:
+                return None
+            if isinstance(value, dict):
+                value = value.get(segment)
+            else:
+                # Non-dict intermediate — cannot traverse further.
+                return None
+
+        return value
 
     def _eval_logical(self, node: LogicalNode, ctx: dict[str, Any]) -> bool:
         if node.op == "and":
