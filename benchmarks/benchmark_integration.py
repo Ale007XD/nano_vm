@@ -6,7 +6,6 @@ import gc
 import hashlib
 import math
 import os
-import platform
 import random
 import statistics
 import tempfile
@@ -17,6 +16,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from nano_vm_mcp.store import ProgramStore as Store
 from rich import box
 from rich.console import Console
 from rich.panel import Panel
@@ -36,7 +36,6 @@ from rich.text import Text
 
 from nano_vm import ExecutionVM, Program, TraceStatus
 from nano_vm.adapters import MockLLMAdapter
-from nano_vm_mcp.store import ProgramStore as Store
 
 console = Console()
 
@@ -315,7 +314,9 @@ class ScenarioSummary:
         return self.total_violations == 0
 
 
-async def _run_batch(vm: ExecutionVM, program: Program, contexts: list[dict[str, Any]], invariant_fn: Any):
+async def _run_batch(
+    vm: ExecutionVM, program: Program, contexts: list[dict[str, Any]], invariant_fn: Any
+):
     sem = asyncio.Semaphore(BATCH_CONCURRENCY)
     latencies: list[float] = []
     ok = failed = budget = violations = 0
@@ -365,13 +366,31 @@ async def run_bm_int_01(cycle: int, run: int, progress: Any, task: Any) -> RunRe
     rng = random.Random(SEED + cycle * 100 + run)
     vm = ExecutionVM(llm=make_refund_llm(rng), tools=TOOLS)
     program = Program.from_dict(REFUND_PROGRAM)
-    contexts = [{"user_input": f"Refund request #{5000 + i}", "order_id": str(1000 + i)} for i in range(N)]
+    contexts = [
+        {"user_input": f"Refund request #{5000 + i}", "order_id": str(1000 + i)} for i in range(N)
+    ]
     t0 = time.perf_counter()
-    latencies, ok, failed, budget, violations, mean_steps = await _run_batch(vm, program, contexts, _refund_invariant)
+    latencies, ok, failed, budget, violations, mean_steps = await _run_batch(
+        vm, program, contexts, _refund_invariant
+    )
     elapsed = time.perf_counter() - t0
     progress.advance(task, N)
-    return RunResult("BM-INT-01", cycle, run, N, elapsed, N / elapsed, ok, failed, budget, violations, mean_steps,
-                     _percentile(latencies, 50), _percentile(latencies, 95), _percentile(latencies, 99))
+    return RunResult(
+        "BM-INT-01",
+        cycle,
+        run,
+        N,
+        elapsed,
+        N / elapsed,
+        ok,
+        failed,
+        budget,
+        violations,
+        mean_steps,
+        _percentile(latencies, 50),
+        _percentile(latencies, 95),
+        _percentile(latencies, 99),
+    )
 
 
 def _double_invariant(trace: Any) -> bool:
@@ -424,11 +443,27 @@ async def run_bm_int_02(cycle: int, run: int, progress: Any, task: Any) -> RunRe
     program = Program.from_dict(DOUBLE_PROGRAM)
     contexts = [{"input": f"refund order {i}", "order_id": str(i)} for i in range(N)]
     t0 = time.perf_counter()
-    latencies, ok, failed, budget, violations, mean_steps = await _run_batch(vm, program, contexts, _double_invariant)
+    latencies, ok, failed, budget, violations, mean_steps = await _run_batch(
+        vm, program, contexts, _double_invariant
+    )
     elapsed = time.perf_counter() - t0
     progress.advance(task, N)
-    return RunResult("BM-INT-02", cycle, run, N, elapsed, N / elapsed, ok, failed, budget, violations, mean_steps,
-                     _percentile(latencies, 50), _percentile(latencies, 95), _percentile(latencies, 99))
+    return RunResult(
+        "BM-INT-02",
+        cycle,
+        run,
+        N,
+        elapsed,
+        N / elapsed,
+        ok,
+        failed,
+        budget,
+        violations,
+        mean_steps,
+        _percentile(latencies, 50),
+        _percentile(latencies, 95),
+        _percentile(latencies, 99),
+    )
 
 
 def _budget_invariant(trace: Any) -> bool:
@@ -440,11 +475,27 @@ async def run_bm_int_03(cycle: int, run: int, progress: Any, task: Any) -> RunRe
     program = Program.from_dict(BUDGET_PROGRAM)
     contexts = [{"order_id": str(i)} for i in range(N)]
     t0 = time.perf_counter()
-    latencies, ok, failed, budget, violations, mean_steps = await _run_batch(vm, program, contexts, _budget_invariant)
+    latencies, ok, failed, budget, violations, mean_steps = await _run_batch(
+        vm, program, contexts, _budget_invariant
+    )
     elapsed = time.perf_counter() - t0
     progress.advance(task, N)
-    return RunResult("BM-INT-03", cycle, run, N, elapsed, N / elapsed, budget, failed, budget, N - budget, mean_steps,
-                     _percentile(latencies, 50), _percentile(latencies, 95), _percentile(latencies, 99))
+    return RunResult(
+        "BM-INT-03",
+        cycle,
+        run,
+        N,
+        elapsed,
+        N / elapsed,
+        budget,
+        failed,
+        budget,
+        N - budget,
+        mean_steps,
+        _percentile(latencies, 50),
+        _percentile(latencies, 95),
+        _percentile(latencies, 99),
+    )
 
 
 def _make_parallel_program(concurrency: int, width: int) -> dict:
@@ -478,11 +529,27 @@ async def run_bm_int_04(cycle: int, run: int, progress: Any, task: Any) -> RunRe
     program = Program.from_dict(_make_parallel_program(concurrency=width, width=width))
     contexts = [{"order_id": str(i)} for i in range(batch)]
     t0 = time.perf_counter()
-    latencies, ok, failed, budget, violations, mean_steps = await _run_batch(vm, program, contexts, lambda t: t.status == TraceStatus.SUCCESS)
+    latencies, ok, failed, budget, violations, mean_steps = await _run_batch(
+        vm, program, contexts, lambda t: t.status == TraceStatus.SUCCESS
+    )
     elapsed = time.perf_counter() - t0
     progress.advance(task, N)
-    return RunResult("BM-INT-04", cycle, run, batch, elapsed, batch / elapsed, ok, failed, budget, violations, mean_steps,
-                     _percentile(latencies, 50), _percentile(latencies, 95), _percentile(latencies, 99))
+    return RunResult(
+        "BM-INT-04",
+        cycle,
+        run,
+        batch,
+        elapsed,
+        batch / elapsed,
+        ok,
+        failed,
+        budget,
+        violations,
+        mean_steps,
+        _percentile(latencies, 50),
+        _percentile(latencies, 95),
+        _percentile(latencies, 99),
+    )
 
 
 async def run_bm_int_05(cycle: int, run: int, progress: Any, task: Any) -> RunResult:
@@ -510,7 +577,11 @@ async def run_bm_int_05(cycle: int, run: int, progress: Any, task: Any) -> RunRe
             continue
         for t_idx in range(traces_per_program):
             trace_id = str(uuid.uuid4())
-            trace_data = {"trace_id": trace_id, "status": "SUCCESS", "steps": [{"step_id": f"s{t_idx}", "status": "SUCCESS"}]}
+            trace_data = {
+                "trace_id": trace_id,
+                "status": "SUCCESS",
+                "steps": [{"step_id": f"s{t_idx}", "status": "SUCCESS"}],
+            }
             t0 = time.perf_counter()
             store.save_trace(trace_id, program_id, "SUCCESS", 1, 0.0, trace_data)
             fetched = store.get_trace(trace_id)
@@ -526,13 +597,33 @@ async def run_bm_int_05(cycle: int, run: int, progress: Any, task: Any) -> RunRe
     Path(db_path).unlink(missing_ok=True)
     latencies.sort()
     total_ops = batch_programs * (1 + traces_per_program)
-    return RunResult("BM-INT-05", cycle, run, total_ops, elapsed, total_ops / max(elapsed, 1e-6), ok, 0, 0, violations, 1.0,
-                     _percentile(latencies, 50), _percentile(latencies, 95), _percentile(latencies, 99))
+    return RunResult(
+        "BM-INT-05",
+        cycle,
+        run,
+        total_ops,
+        elapsed,
+        total_ops / max(elapsed, 1e-6),
+        ok,
+        0,
+        0,
+        violations,
+        1.0,
+        _percentile(latencies, 50),
+        _percentile(latencies, 95),
+        _percentile(latencies, 99),
+    )
 
 
 def _governance_invariant(trace: Any) -> bool:
     ids = [s.step_id for s in trace.steps]
-    return bool(ids) and len(ids) == len(set(ids)) and ids[0] == "capability_check" and len(ids) >= 2 and ids[1] == "classify"
+    return (
+        bool(ids)
+        and len(ids) == len(set(ids))
+        and ids[0] == "capability_check"
+        and len(ids) >= 2
+        and ids[1] == "classify"
+    )
 
 
 async def run_bm_int_06(cycle: int, run: int, progress: Any, task: Any) -> RunResult:
@@ -547,19 +638,29 @@ async def run_bm_int_06(cycle: int, run: int, progress: Any, task: Any) -> RunRe
     for i in range(N):
         eid = str(uuid.uuid4())
         execution_ids.append(eid)
-        contexts.append({
-            "user_input": f"Process order {i}",
-            "order_id": str(3000 + i),
-            "capability_id": f"cap_{i % 500}",
-            "trace_id": eid,
-        })
+        contexts.append(
+            {
+                "user_input": f"Process order {i}",
+                "order_id": str(3000 + i),
+                "capability_id": f"cap_{i % 500}",
+                "trace_id": eid,
+            }
+        )
     t0 = time.perf_counter()
-    latencies, ok, failed, budget, violations, mean_steps = await _run_batch(vm, program, contexts, _governance_invariant)
+    latencies, ok, failed, budget, violations, mean_steps = await _run_batch(
+        vm, program, contexts, _governance_invariant
+    )
     elapsed = time.perf_counter() - t0
     envelope_violations = 0
-    sample = execution_ids[:min(500, N)]
+    sample = execution_ids[: min(500, N)]
     for eid in sample:
-        gov_store.save_envelope(eid, 1, f"ph_{eid[:8]}", f"sh_{eid[:8]}", {"capability_id": "cap_x", "scope": "refund:write"})
+        gov_store.save_envelope(
+            eid,
+            1,
+            f"ph_{eid[:8]}",
+            f"sh_{eid[:8]}",
+            {"capability_id": "cap_x", "scope": "refund:write"},
+        )
         envelopes = gov_store.get_envelopes(eid)
         if not envelopes or envelopes[0].get("execution_id") != eid:
             envelope_violations += 1
@@ -567,19 +668,55 @@ async def run_bm_int_06(cycle: int, run: int, progress: Any, task: Any) -> RunRe
     Path(db_path_gov).unlink(missing_ok=True)
     violations += envelope_violations
     progress.advance(task, N)
-    return RunResult("BM-INT-06", cycle, run, N, elapsed, N / elapsed, ok, failed, budget, violations, mean_steps,
-                     _percentile(latencies, 50), _percentile(latencies, 95), _percentile(latencies, 99))
+    return RunResult(
+        "BM-INT-06",
+        cycle,
+        run,
+        N,
+        elapsed,
+        N / elapsed,
+        ok,
+        failed,
+        budget,
+        violations,
+        mean_steps,
+        _percentile(latencies, 50),
+        _percentile(latencies, 95),
+        _percentile(latencies, 99),
+    )
 
 
 CRASH_PROGRAM = {
     "name": "crash_target",
     "max_steps": 10,
     "steps": [
-        {"id": "step_a", "type": "tool", "tool": "audit_log", "args": {"trace_id": "$tid", "step_id": "a"}},
-        {"id": "step_b", "type": "tool", "tool": "get_order_amount", "args": {"order_id": "$order_id"}, "output_key": "amount"},
-        {"id": "step_c", "type": "tool", "tool": "get_order_status", "args": {"order_id": "$order_id"}, "output_key": "status"},
+        {
+            "id": "step_a",
+            "type": "tool",
+            "tool": "audit_log",
+            "args": {"trace_id": "$tid", "step_id": "a"},
+        },
+        {
+            "id": "step_b",
+            "type": "tool",
+            "tool": "get_order_amount",
+            "args": {"order_id": "$order_id"},
+            "output_key": "amount",
+        },
+        {
+            "id": "step_c",
+            "type": "tool",
+            "tool": "get_order_status",
+            "args": {"order_id": "$order_id"},
+            "output_key": "status",
+        },
         {"id": "step_d", "type": "tool", "tool": "issue_refund", "args": {"order_id": "$order_id"}},
-        {"id": "step_e", "type": "tool", "tool": "audit_log", "args": {"trace_id": "$tid", "step_id": "e"}},
+        {
+            "id": "step_e",
+            "type": "tool",
+            "tool": "audit_log",
+            "args": {"trace_id": "$tid", "step_id": "e"},
+        },
     ],
 }
 
@@ -656,19 +793,59 @@ async def run_bm_int_07(cycle: int, run: int, progress: Any, task: Any) -> RunRe
     progress.advance(task, N)
     latencies.sort()
     elapsed = sum(latencies) / 1000.0
-    return RunResult("BM-INT-07", cycle, run, CRASH_N, max(elapsed, 0.001), CRASH_N / max(elapsed, 0.001), ok, 0, 0, violations, 0.0,
-                     _percentile(latencies, 50), _percentile(latencies, 95), _percentile(latencies, 99),
-                     {"crashed_count": crashed_count, "crash_rate_pct": 100.0 * crashed_count / CRASH_N, "hash_mismatches": hash_mismatches, "hash_match_pct": 100.0 * (1 - hash_mismatches / CRASH_N)})
+    return RunResult(
+        "BM-INT-07",
+        cycle,
+        run,
+        CRASH_N,
+        max(elapsed, 0.001),
+        CRASH_N / max(elapsed, 0.001),
+        ok,
+        0,
+        0,
+        violations,
+        0.0,
+        _percentile(latencies, 50),
+        _percentile(latencies, 95),
+        _percentile(latencies, 99),
+        {
+            "crashed_count": crashed_count,
+            "crash_rate_pct": 100.0 * crashed_count / CRASH_N,
+            "hash_mismatches": hash_mismatches,
+            "hash_match_pct": 100.0 * (1 - hash_mismatches / CRASH_N),
+        },
+    )
 
 
 REPLAY_PROGRAM = {
     "name": "replay_target",
     "max_steps": 10,
     "steps": [
-        {"id": "classify", "type": "llm", "prompt": "Classify: $input. Reply refund.", "output_key": "intent"},
-        {"id": "route", "type": "condition", "condition": "'refund' in $intent", "then": "process", "otherwise": "reject"},
-        {"id": "process", "type": "tool", "tool": "issue_refund", "args": {"order_id": "$order_id"}},
-        {"id": "reject", "type": "tool", "tool": "send_rejection", "args": {"order_id": "$order_id"}},
+        {
+            "id": "classify",
+            "type": "llm",
+            "prompt": "Classify: $input. Reply refund.",
+            "output_key": "intent",
+        },
+        {
+            "id": "route",
+            "type": "condition",
+            "condition": "'refund' in $intent",
+            "then": "process",
+            "otherwise": "reject",
+        },
+        {
+            "id": "process",
+            "type": "tool",
+            "tool": "issue_refund",
+            "args": {"order_id": "$order_id"},
+        },
+        {
+            "id": "reject",
+            "type": "tool",
+            "tool": "send_rejection",
+            "args": {"order_id": "$order_id"},
+        },
     ],
 }
 
@@ -706,9 +883,23 @@ async def run_bm_int_08(cycle: int, run: int, progress: Any, task: Any) -> RunRe
     elapsed = time.perf_counter() - t0
     progress.advance(task, N)
     latencies.sort()
-    return RunResult("BM-INT-08", cycle, run, REPLAY_N, elapsed, REPLAY_N / elapsed, ok, 0, 0, violations, 0.0,
-                     _percentile(latencies, 50), _percentile(latencies, 95), _percentile(latencies, 99),
-                     {"hash_match_pct": 100.0 * ok / REPLAY_N})
+    return RunResult(
+        "BM-INT-08",
+        cycle,
+        run,
+        REPLAY_N,
+        elapsed,
+        REPLAY_N / elapsed,
+        ok,
+        0,
+        0,
+        violations,
+        0.0,
+        _percentile(latencies, 50),
+        _percentile(latencies, 95),
+        _percentile(latencies, 99),
+        {"hash_match_pct": 100.0 * ok / REPLAY_N},
+    )
 
 
 ADV_N = 3_000
@@ -726,11 +917,39 @@ ADV_PROGRAM = {
     "name": "adversarial_target",
     "max_steps": 8,
     "steps": [
-        {"id": "classify", "type": "llm", "prompt": "Classify: $input. Reply refund.", "output_key": "intent"},
-        {"id": "route", "type": "condition", "condition": "'refund' in $intent", "then": "process", "otherwise": "reject"},
-        {"id": "process", "type": "tool", "tool": "issue_refund", "args": {"order_id": "$order_id"}, "max_retries": 2, "on_error": "skip"},
-        {"id": "audit", "type": "tool", "tool": "audit_log", "args": {"trace_id": "$tid", "step_id": "done"}},
-        {"id": "reject", "type": "tool", "tool": "send_rejection", "args": {"order_id": "$order_id"}},
+        {
+            "id": "classify",
+            "type": "llm",
+            "prompt": "Classify: $input. Reply refund.",
+            "output_key": "intent",
+        },
+        {
+            "id": "route",
+            "type": "condition",
+            "condition": "'refund' in $intent",
+            "then": "process",
+            "otherwise": "reject",
+        },
+        {
+            "id": "process",
+            "type": "tool",
+            "tool": "issue_refund",
+            "args": {"order_id": "$order_id"},
+            "max_retries": 2,
+            "on_error": "skip",
+        },
+        {
+            "id": "audit",
+            "type": "tool",
+            "tool": "audit_log",
+            "args": {"trace_id": "$tid", "step_id": "done"},
+        },
+        {
+            "id": "reject",
+            "type": "tool",
+            "tool": "send_rejection",
+            "args": {"order_id": "$order_id"},
+        },
     ],
 }
 
@@ -743,7 +962,9 @@ def _adv_invariant(trace: Any) -> bool:
 async def run_bm_int_09(cycle: int, run: int, progress: Any, task: Any) -> RunResult:
     program = Program.from_dict(ADV_PROGRAM)
     rng = random.Random(SEED + cycle * 400 + run + 9)
-    base_contexts = [{"input": f"refund order {i}", "order_id": str(i), "tid": str(i)} for i in range(ADV_N)]
+    base_contexts = [
+        {"input": f"refund order {i}", "order_id": str(i), "tid": str(i)} for i in range(ADV_N)
+    ]
     sem = asyncio.Semaphore(BATCH_CONCURRENCY)
     latencies: list[float] = []
     ok = violations = 0
@@ -752,9 +973,9 @@ async def run_bm_int_09(cycle: int, run: int, progress: Any, task: Any) -> RunRe
     dup_contexts = []
     for ctx in base_contexts[: ADV_N // 3]:
         dup_contexts.extend([ctx] * DUP_FACTOR)
-    ooo_contexts = list(base_contexts[ADV_N // 3: 2 * ADV_N // 3])
+    ooo_contexts = list(base_contexts[ADV_N // 3 : 2 * ADV_N // 3])
     rng.shuffle(ooo_contexts)
-    delayed_contexts = base_contexts[2 * ADV_N // 3:]
+    delayed_contexts = base_contexts[2 * ADV_N // 3 :]
 
     async def _run_one(ctx: dict, tools_override: dict | None = None) -> None:
         nonlocal ok, violations
@@ -780,9 +1001,27 @@ async def run_bm_int_09(cycle: int, run: int, progress: Any, task: Any) -> RunRe
     progress.advance(task, N)
     total = len(dup_contexts) + len(ooo_contexts) + len(delayed_contexts)
     latencies.sort()
-    return RunResult("BM-INT-09", cycle, run, total, elapsed, total / elapsed, ok, 0, 0, violations, 0.0,
-                     _percentile(latencies, 50), _percentile(latencies, 95), _percentile(latencies, 99),
-                     {"sub_a_dup_n": len(dup_contexts), "sub_b_ooo_n": len(ooo_contexts), "sub_c_delayed_n": len(delayed_contexts)})
+    return RunResult(
+        "BM-INT-09",
+        cycle,
+        run,
+        total,
+        elapsed,
+        total / elapsed,
+        ok,
+        0,
+        0,
+        violations,
+        0.0,
+        _percentile(latencies, 50),
+        _percentile(latencies, 95),
+        _percentile(latencies, 99),
+        {
+            "sub_a_dup_n": len(dup_contexts),
+            "sub_b_ooo_n": len(ooo_contexts),
+            "sub_c_delayed_n": len(delayed_contexts),
+        },
+    )
 
 
 LONG_STEPS = 1_000
@@ -795,7 +1034,12 @@ def _make_long_program(n_steps: int) -> dict:
         "name": "long_horizon",
         "max_steps": n_steps + 2,
         "steps": [
-            {"id": f"s{i:04d}", "type": "tool", "tool": "audit_log", "args": {"trace_id": "long", "step_id": f"s{i:04d}"}}
+            {
+                "id": f"s{i:04d}",
+                "type": "tool",
+                "tool": "audit_log",
+                "args": {"trace_id": "long", "step_id": f"s{i:04d}"},
+            }
             for i in range(n_steps)
         ],
     }
@@ -835,10 +1079,28 @@ async def run_bm_int_10(cycle: int, run: int, progress: Any, task: Any) -> RunRe
     if peak_rss_mb > RSS_LIMIT_MB:
         violations += 1
     latencies.sort()
-    return RunResult("BM-INT-10", cycle, run, LONG_PROGRAMS * LONG_STEPS, elapsed, total_steps_executed / elapsed,
-                     ok, 0, 0, violations, float(LONG_STEPS), _percentile(latencies, 50), _percentile(latencies, 95),
-                     _percentile(latencies, 99),
-                     {"peak_rss_mb": round(peak_rss_mb, 1), "peak_alloc_mb": round(peak_alloc_mb, 2), "total_steps": total_steps_executed, "rss_limit_mb": RSS_LIMIT_MB})
+    return RunResult(
+        "BM-INT-10",
+        cycle,
+        run,
+        LONG_PROGRAMS * LONG_STEPS,
+        elapsed,
+        total_steps_executed / elapsed,
+        ok,
+        0,
+        0,
+        violations,
+        float(LONG_STEPS),
+        _percentile(latencies, 50),
+        _percentile(latencies, 95),
+        _percentile(latencies, 99),
+        {
+            "peak_rss_mb": round(peak_rss_mb, 1),
+            "peak_alloc_mb": round(peak_alloc_mb, 2),
+            "total_steps": total_steps_executed,
+            "rss_limit_mb": RSS_LIMIT_MB,
+        },
+    )
 
 
 SCENARIOS_ORIGINAL = [
@@ -914,7 +1176,9 @@ def render_cycle_table(cycle: int, summaries: list[ScenarioSummary]) -> Table:
     return t
 
 
-def render_final_table(all_summaries: dict[str, ScenarioSummary], scenarios: list) -> tuple[Table, bool]:
+def render_final_table(
+    all_summaries: dict[str, ScenarioSummary], scenarios: list
+) -> tuple[Table, bool]:
     t = Table(
         title=f"[bold]FINAL SUMMARY — {CYCLES} cycles × {RUNS} runs × {N:,} items[/bold]",
         box=box.DOUBLE_EDGE,
@@ -971,8 +1235,14 @@ async def main() -> None:
         scenarios = SCENARIOS_NEW
 
     console.print()
-    console.print(Rule("[bold cyan]llm-nano-vm × nano-vm-mcp — Integration Benchmark[/bold cyan]", style="cyan"))
-    console.print(f"[dim]{CYCLES} cycles · {RUNS} runs · {N:,} items/run · seed={SEED} · suite={args.suite} · scenarios={len(scenarios)}[/dim]")
+    console.print(
+        Rule(
+            "[bold cyan]llm-nano-vm × nano-vm-mcp — Integration Benchmark[/bold cyan]", style="cyan"
+        )
+    )
+    console.print(
+        f"[dim]{CYCLES} cycles · {RUNS} runs · {N:,} items/run · seed={SEED} · suite={args.suite} · scenarios={len(scenarios)}[/dim]"
+    )
     console.print()
 
     all_summaries: dict[str, ScenarioSummary] = {
@@ -1004,14 +1274,19 @@ async def main() -> None:
             }
             for run in range(1, RUNS + 1):
                 for sid, label, tag, runner in scenarios:
-                    task = progress.add_task(f"[cyan]{sid}[/cyan] [dim]{label[:22]}[/dim] [bright_black]c={cycle} r={run}[/bright_black]", total=N)
+                    task = progress.add_task(
+                        f"[cyan]{sid}[/cyan] [dim]{label[:22]}[/dim] [bright_black]c={cycle} r={run}[/bright_black]",
+                        total=N,
+                    )
                     result = await runner(cycle, run, progress, task)
                     progress.update(task, completed=N, visible=False)
                     progress.advance(master, N)
                     cycle_summaries[sid].results.append(result)
                     all_summaries[sid].results.append(result)
             console.print()
-            console.print(render_cycle_table(cycle, [cycle_summaries[sid] for sid, *_ in scenarios]))
+            console.print(
+                render_cycle_table(cycle, [cycle_summaries[sid] for sid, *_ in scenarios])
+            )
 
     console.print()
     console.print(Rule("[bold white]Final Results[/bold white]", style="cyan"))
@@ -1021,7 +1296,9 @@ async def main() -> None:
 
     total_viol = sum(s.total_violations for s in all_summaries.values())
     total_items = sum(s.total_n for s in all_summaries.values())
-    verdict = "DETERMINISTIC EXECUTION VERIFIED" if total_viol == 0 else "INVARIANT VIOLATIONS DETECTED"
+    verdict = (
+        "DETERMINISTIC EXECUTION VERIFIED" if total_viol == 0 else "INVARIANT VIOLATIONS DETECTED"
+    )
     panel = Panel(
         f"{verdict}\n\nTotal operations: {total_items:,}\nTotal violations: {total_viol}\n",
         title="Invariant Audit",
