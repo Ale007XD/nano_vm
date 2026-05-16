@@ -167,7 +167,8 @@ class TestASTEngineOperators:
         assert self.engine.evaluate(node, {}) is True  # None == None
 
     def test_var_step_output(self):
-        ctx = {"__step_outputs__": {"classify": "refund"}}
+        # ctx = {**state.step_outputs, **state.data} — flat dict, as built by vm._execute_condition
+        ctx = {"classify": "refund"}
         node = BinaryNode(
             op="in",
             left=LitNode(value="refund"),

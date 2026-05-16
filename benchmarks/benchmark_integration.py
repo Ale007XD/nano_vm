@@ -12,7 +12,8 @@ Scenarios (3 cycles × 5 runs × 10 000 items each):
                NOTE: elapsed = wall clock (perf_counter), not sum(latencies).
   BM-INT-06  GovernanceEnvelope      CapabilityRef tombstoning + audit trail
 
-  BM-INT-07  Crash consistency       mid-transition kill → replay correctness
+  BM-INT-07  Crash consistency       mid-transition kill → replay → semantic equivalence
+               trace_hash(clean) == trace_hash(resumed) — gold invariant
   BM-INT-08  Replay equivalence      trace_hash(run) == trace_hash(replay)
   BM-INT-09  Adversarial retries     duplicate webhooks, out-of-order, delayed acks
   BM-INT-10  Long-horizon            100k-step workflow + memory profile
@@ -886,10 +887,9 @@ _CRASH_PROGRAM = {
 _CRASH_N = 2_000  # programs per run (lighter than N — crash overhead is real)
 
 
-async def _run_clean(vm: ExecutionVM, program: Program, ctx: dict) -> list[str]:
-    """Run to completion, return step_id sequence."""
-    trace = await vm.run(program, context=ctx)
-    return [s.step_id for s in trace.steps]
+async def _run_clean(vm: ExecutionVM, program: Program, ctx: dict) -> Any:
+    """Run to completion, return full trace."""
+    return await vm.run(program, context=ctx)
 
 
 async def _run_with_crash(
@@ -897,11 +897,11 @@ async def _run_with_crash(
     program: Program,
     ctx: dict,
     crash_after_ms: float,
-) -> tuple[bool, list[str]]:
+) -> tuple[bool, Any]:
     """
     Start execution, cancel after crash_after_ms, then re-run from scratch.
-    Returns (crashed_cleanly, resumed_step_ids).
-    crashed_cleanly = task was cancelled before completion.
+    Returns (crashed, resumed_trace).
+    crashed = task was cancelled before completion.
     """
     task = asyncio.create_task(vm.run(program, context=ctx))
     crashed = False
@@ -918,27 +918,34 @@ async def _run_with_crash(
     # Resume: fresh VM, same context (stateless restart semantics)
     vm2 = ExecutionVM(llm=MockLLMAdapter(["ok"] * 20), tools=TOOLS)
     trace2 = await vm2.run(program, context=ctx)
-    return crashed, [s.step_id for s in trace2.steps]
+    return crashed, trace2
 
 
 async def run_bm_int_07(cycle: int, run: int, progress: Any, task: Any) -> RunResult:
     """
-    Crash consistency: cancel mid-transition, verify resume produces valid trace.
+    Crash consistency: cancel mid-transition, verify resume is semantically equivalent.
 
-    Invariant: resumed trace must be in a terminal state and have no duplicate steps.
-    A violation = resumed trace has duplicates OR is not in TERMINAL_ALL.
+    Three invariants checked per execution:
+      (a) Structural: no duplicate steps in resumed trace
+      (b) Terminal:   resumed trace reached a valid terminal state
+      (c) Semantic:   trace_hash(clean) == trace_hash(resumed)
+                      — the gold invariant: crash cannot alter execution semantics
+
+    A violation = any of (a), (b), (c) fails.
+    hash_match_pct in extra tracks (c) independently for observability.
     """
     rng = random.Random(SEED + cycle * 300 + run + 7)
     program = Program.from_dict(_CRASH_PROGRAM)
 
     latencies: list[float] = []
     ok = crashed_count = violations = 0
+    hash_mismatches = 0
 
     sem = asyncio.Semaphore(50)  # lower concurrency — crash overhead is real
     lock = asyncio.Lock()
 
     async def _one(i: int) -> None:
-        nonlocal ok, crashed_count, violations
+        nonlocal ok, crashed_count, violations, hash_mismatches
         ctx = {"tid": str(uuid.uuid4()), "order_id": str(i)}
         crash_ms = rng.uniform(0.5, 8.0)  # crash window: 0.5–8ms into execution
 
@@ -947,21 +954,28 @@ async def run_bm_int_07(cycle: int, run: int, progress: Any, task: Any) -> RunRe
 
         async with sem:
             t0 = time.perf_counter()
-            clean_ids = await _run_clean(vm_clean, program, ctx)
-            crashed, resumed_ids = await _run_with_crash(vm_crash, program, ctx, crash_ms)
+            clean_trace = await _run_clean(vm_clean, program, ctx)
+            crashed, resumed_trace = await _run_with_crash(vm_crash, program, ctx, crash_ms)
             elapsed_ms = (time.perf_counter() - t0) * 1000.0
 
-        # Invariant: no duplicate steps in resumed trace
+        resumed_ids = [s.step_id for s in resumed_trace.steps]
+
+        # (a) structural: no duplicates in resumed trace
         has_dupes = len(resumed_ids) != len(set(resumed_ids))
-        # Invariant: resumed trace must reach a valid terminal (not stuck mid-run)
-        # We check by re-running cleanly and comparing step count ≥ 1
+        # (b) terminal: resumed trace not stuck (at least one step executed)
         not_terminal = len(resumed_ids) == 0
+        # (c) semantic: hash(clean) == hash(resumed) — THE gold invariant
+        h_clean = _trace_hash(clean_trace)
+        h_resumed = _trace_hash(resumed_trace)
+        hash_mismatch = h_clean != h_resumed
 
         async with lock:
             latencies.append(elapsed_ms)
             if crashed:
                 crashed_count += 1
-            if has_dupes or not_terminal:
+            if hash_mismatch:
+                hash_mismatches += 1
+            if has_dupes or not_terminal or hash_mismatch:
                 violations += 1
             else:
                 ok += 1
@@ -987,7 +1001,12 @@ async def run_bm_int_07(cycle: int, run: int, progress: Any, task: Any) -> RunRe
         p50_ms=_percentile(latencies, 50),
         p95_ms=_percentile(latencies, 95),
         p99_ms=_percentile(latencies, 99),
-        extra={"crashed_count": crashed_count, "crash_rate_pct": 100.0 * crashed_count / _CRASH_N},
+        extra={
+            "crashed_count": crashed_count,
+            "crash_rate_pct": 100.0 * crashed_count / _CRASH_N,
+            "hash_mismatches": hash_mismatches,
+            "hash_match_pct": 100.0 * (1 - hash_mismatches / _CRASH_N),
+        },
     )
 
 
@@ -1307,7 +1326,6 @@ async def run_bm_int_10(cycle: int, run: int, progress: Any, task: Any) -> RunRe
 
     gc.collect()
     tracemalloc.start()
-    rss_before = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
 
     latencies: list[float] = []
     ok = violations = 0
@@ -1514,9 +1532,15 @@ def render_extra_panel(all_summaries: dict[str, ScenarioSummary]) -> None:
         extras = [r.extra for r in s.results if r.extra]
         if extras:
             avg_crash = statistics.mean(e.get("crash_rate_pct", 0) for e in extras)
+            avg_hash_match = statistics.mean(e.get("hash_match_pct", 0) for e in extras)
+            total_mismatches = sum(int(e.get("hash_mismatches", 0)) for e in extras)
+            hash_color = "green" if total_mismatches == 0 else "bold red"
             console.print(
-                f"  [cyan]BM-INT-07[/cyan]  crash rate {avg_crash:.1f}%  "
-                f"(expected ~50–90% at 0.5–8ms window)"
+                f"  [cyan]BM-INT-07[/cyan]  "
+                f"crash rate {avg_crash:.1f}%  "
+                f"trace_hash(clean)==trace_hash(resumed): "
+                f"[{hash_color}]{avg_hash_match:.2f}%[/{hash_color}]  "
+                f"mismatches={total_mismatches}"
             )
 
     if "BM-INT-08" in all_summaries:
@@ -1634,7 +1658,8 @@ async def main() -> None:
     console.print()
     console.print(
         Rule(
-            "[bold cyan]llm-nano-vm v0.7.3 × nano-vm-mcp v0.3.0 — Integration Benchmark[/bold cyan]",
+            "[bold cyan]llm-nano-vm v0.7.3 × nano-vm-mcp v0.3.0"
+            " — Integration Benchmark[/bold cyan]",
             style="cyan",
         )
     )
