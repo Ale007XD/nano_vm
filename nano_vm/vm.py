@@ -295,6 +295,16 @@ class ExecutionVM:
                         TraceStatus.FAILED,
                         error=f"Step '{target_step.id}' failed: {target_result.error}",
                     )
+                # If the branch target is itself a condition, chain into it so that
+                # multi-condition routing works (e.g. status_check → check_network_error
+                # → notify_*). For non-condition targets the branch is terminal here.
+                if target_step.type == StepType.CONDITION:
+                    return await self._execute_loop(
+                        program=program,
+                        state=state,
+                        trace=trace,
+                        start_step_id=target_result.output,
+                    )
                 return trace.finish(TraceStatus.SUCCESS, final_output=trace.last_output())
 
             current_idx += 1
