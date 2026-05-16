@@ -40,7 +40,6 @@ from nano_vm import ExecutionVM, Program, TraceStatus
 from nano_vm.adapters import MockLLMAdapter
 from nano_vm.models import StateContext, Step, StepType
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -66,15 +65,22 @@ ECHO = lambda: "done"  # noqa: E731
 async def test_cb01_then_terminal():
     """then branch is terminal — s3 runs, s4 skipped."""
     vm = make_vm({"echo": ECHO})
-    prog = Program.from_dict({
-        "name": "cb01",
-        "steps": [
-            {"id": "check", "type": "condition",
-             "condition": "'yes' == 'yes'", "then": "s3", "otherwise": "s4"},
-            {"id": "s3", "type": "tool", "tool": "echo", "is_terminal": True},
-            {"id": "s4", "type": "tool", "tool": "echo", "is_terminal": True},
-        ],
-    })
+    prog = Program.from_dict(
+        {
+            "name": "cb01",
+            "steps": [
+                {
+                    "id": "check",
+                    "type": "condition",
+                    "condition": "'yes' == 'yes'",
+                    "then": "s3",
+                    "otherwise": "s4",
+                },
+                {"id": "s3", "type": "tool", "tool": "echo", "is_terminal": True},
+                {"id": "s4", "type": "tool", "tool": "echo", "is_terminal": True},
+            ],
+        }
+    )
     trace = await vm.run(prog)
     ids = [s.step_id for s in trace.steps]
     assert trace.status == TraceStatus.SUCCESS
@@ -86,15 +92,22 @@ async def test_cb01_then_terminal():
 async def test_cb02_otherwise_terminal():
     """otherwise branch is terminal — s4 runs, s3 skipped."""
     vm = make_vm({"echo": ECHO})
-    prog = Program.from_dict({
-        "name": "cb02",
-        "steps": [
-            {"id": "check", "type": "condition",
-             "condition": "'yes' == 'no'", "then": "s3", "otherwise": "s4"},
-            {"id": "s3", "type": "tool", "tool": "echo", "is_terminal": True},
-            {"id": "s4", "type": "tool", "tool": "echo", "is_terminal": True},
-        ],
-    })
+    prog = Program.from_dict(
+        {
+            "name": "cb02",
+            "steps": [
+                {
+                    "id": "check",
+                    "type": "condition",
+                    "condition": "'yes' == 'no'",
+                    "then": "s3",
+                    "otherwise": "s4",
+                },
+                {"id": "s3", "type": "tool", "tool": "echo", "is_terminal": True},
+                {"id": "s4", "type": "tool", "tool": "echo", "is_terminal": True},
+            ],
+        }
+    )
     trace = await vm.run(prog)
     ids = [s.step_id for s in trace.steps]
     assert trace.status == TraceStatus.SUCCESS
@@ -106,17 +119,28 @@ async def test_cb02_otherwise_terminal():
 async def test_cb03_inline_branch_next_step():
     """next_step causes inline continuation after branch target."""
     vm = make_vm({"echo": ECHO})
-    prog = Program.from_dict({
-        "name": "cb03",
-        "steps": [
-            {"id": "check", "type": "condition",
-             "condition": "'yes' == 'yes'", "then": "step_a", "otherwise": "dead"},
-            {"id": "dead",   "type": "tool", "tool": "echo", "is_terminal": True},
-            {"id": "step_a", "type": "tool", "tool": "echo",
-             "next_step": "step_b"},  # inline — continues to step_b
-            {"id": "step_b", "type": "tool", "tool": "echo"},
-        ],
-    })
+    prog = Program.from_dict(
+        {
+            "name": "cb03",
+            "steps": [
+                {
+                    "id": "check",
+                    "type": "condition",
+                    "condition": "'yes' == 'yes'",
+                    "then": "step_a",
+                    "otherwise": "dead",
+                },
+                {"id": "dead", "type": "tool", "tool": "echo", "is_terminal": True},
+                {
+                    "id": "step_a",
+                    "type": "tool",
+                    "tool": "echo",
+                    "next_step": "step_b",
+                },  # inline — continues to step_b
+                {"id": "step_b", "type": "tool", "tool": "echo"},
+            ],
+        }
+    )
     trace = await vm.run(prog)
     ids = [s.step_id for s in trace.steps]
     assert trace.status == TraceStatus.SUCCESS
@@ -127,17 +151,29 @@ async def test_cb03_inline_branch_next_step():
 async def test_cb04_condition_chain_then():
     """condition→condition→terminal: then path."""
     vm = make_vm({"echo": ECHO})
-    prog = Program.from_dict({
-        "name": "cb04",
-        "steps": [
-            {"id": "c1", "type": "condition",
-             "condition": "'a' == 'a'", "then": "c2", "otherwise": "leaf_no"},
-            {"id": "c2", "type": "condition",
-             "condition": "'b' == 'b'", "then": "leaf_yes", "otherwise": "leaf_no"},
-            {"id": "leaf_yes", "type": "tool", "tool": "echo", "is_terminal": True},
-            {"id": "leaf_no",  "type": "tool", "tool": "echo", "is_terminal": True},
-        ],
-    })
+    prog = Program.from_dict(
+        {
+            "name": "cb04",
+            "steps": [
+                {
+                    "id": "c1",
+                    "type": "condition",
+                    "condition": "'a' == 'a'",
+                    "then": "c2",
+                    "otherwise": "leaf_no",
+                },
+                {
+                    "id": "c2",
+                    "type": "condition",
+                    "condition": "'b' == 'b'",
+                    "then": "leaf_yes",
+                    "otherwise": "leaf_no",
+                },
+                {"id": "leaf_yes", "type": "tool", "tool": "echo", "is_terminal": True},
+                {"id": "leaf_no", "type": "tool", "tool": "echo", "is_terminal": True},
+            ],
+        }
+    )
     trace = await vm.run(prog)
     ids = [s.step_id for s in trace.steps]
     assert trace.status == TraceStatus.SUCCESS
@@ -148,17 +184,29 @@ async def test_cb04_condition_chain_then():
 async def test_cb05_condition_chain_otherwise():
     """condition→condition→terminal: otherwise path."""
     vm = make_vm({"echo": ECHO})
-    prog = Program.from_dict({
-        "name": "cb05",
-        "steps": [
-            {"id": "c1", "type": "condition",
-             "condition": "'a' == 'b'", "then": "leaf_yes", "otherwise": "c2"},
-            {"id": "c2", "type": "condition",
-             "condition": "'x' == 'y'", "then": "leaf_yes", "otherwise": "leaf_no"},
-            {"id": "leaf_yes", "type": "tool", "tool": "echo", "is_terminal": True},
-            {"id": "leaf_no",  "type": "tool", "tool": "echo", "is_terminal": True},
-        ],
-    })
+    prog = Program.from_dict(
+        {
+            "name": "cb05",
+            "steps": [
+                {
+                    "id": "c1",
+                    "type": "condition",
+                    "condition": "'a' == 'b'",
+                    "then": "leaf_yes",
+                    "otherwise": "c2",
+                },
+                {
+                    "id": "c2",
+                    "type": "condition",
+                    "condition": "'x' == 'y'",
+                    "then": "leaf_yes",
+                    "otherwise": "leaf_no",
+                },
+                {"id": "leaf_yes", "type": "tool", "tool": "echo", "is_terminal": True},
+                {"id": "leaf_no", "type": "tool", "tool": "echo", "is_terminal": True},
+            ],
+        }
+    )
     trace = await vm.run(prog)
     ids = [s.step_id for s in trace.steps]
     assert trace.status == TraceStatus.SUCCESS
@@ -169,13 +217,15 @@ async def test_cb05_condition_chain_otherwise():
 async def test_cb06_is_terminal_on_linear_step():
     """is_terminal on a linear (non-branch) step: FSM halts, next steps skipped."""
     vm = make_vm({"echo": ECHO})
-    prog = Program.from_dict({
-        "name": "cb06",
-        "steps": [
-            {"id": "s1", "type": "tool", "tool": "echo", "is_terminal": True},
-            {"id": "s2", "type": "tool", "tool": "echo"},  # never reached
-        ],
-    })
+    prog = Program.from_dict(
+        {
+            "name": "cb06",
+            "steps": [
+                {"id": "s1", "type": "tool", "tool": "echo", "is_terminal": True},
+                {"id": "s2", "type": "tool", "tool": "echo"},  # never reached
+            ],
+        }
+    )
     trace = await vm.run(prog)
     ids = [s.step_id for s in trace.steps]
     assert trace.status == TraceStatus.SUCCESS
@@ -186,16 +236,22 @@ async def test_cb06_is_terminal_on_linear_step():
 async def test_cb07_next_step_invalid_id():
     """next_step pointing to nonexistent step_id → FAILED."""
     vm = make_vm({"echo": ECHO})
-    prog = Program.from_dict({
-        "name": "cb07",
-        "steps": [
-            {"id": "check", "type": "condition",
-             "condition": "'yes' == 'yes'", "then": "target", "otherwise": "dead"},
-            {"id": "target", "type": "tool", "tool": "echo",
-             "next_step": "nonexistent"},
-            {"id": "dead", "type": "tool", "tool": "echo", "is_terminal": True},
-        ],
-    })
+    prog = Program.from_dict(
+        {
+            "name": "cb07",
+            "steps": [
+                {
+                    "id": "check",
+                    "type": "condition",
+                    "condition": "'yes' == 'yes'",
+                    "then": "target",
+                    "otherwise": "dead",
+                },
+                {"id": "target", "type": "tool", "tool": "echo", "next_step": "nonexistent"},
+                {"id": "dead", "type": "tool", "tool": "echo", "is_terminal": True},
+            ],
+        }
+    )
     trace = await vm.run(prog)
     assert trace.status == TraceStatus.FAILED
     assert "nonexistent" in trace.error
@@ -210,22 +266,32 @@ async def test_cb08_next_step_continues_full_chain():
         order.append(name)
         return name
 
-    vm = ExecutionVM(llm=MockLLMAdapter("ok"), tools={
-        "a": lambda: order.append("a") or "a",
-        "b": lambda: order.append("b") or "b",
-        "c": lambda: order.append("c") or "c",
-    })
-    prog = Program.from_dict({
-        "name": "cb08",
-        "steps": [
-            {"id": "check", "type": "condition",
-             "condition": "'go' == 'go'", "then": "step_a", "otherwise": "dead"},
-            {"id": "dead",   "type": "tool", "tool": "a", "is_terminal": True},
-            {"id": "step_a", "type": "tool", "tool": "a", "next_step": "step_b"},
-            {"id": "step_b", "type": "tool", "tool": "b", "next_step": "step_c"},
-            {"id": "step_c", "type": "tool", "tool": "c"},
-        ],
-    })
+    vm = ExecutionVM(
+        llm=MockLLMAdapter("ok"),
+        tools={
+            "a": lambda: order.append("a") or "a",
+            "b": lambda: order.append("b") or "b",
+            "c": lambda: order.append("c") or "c",
+        },
+    )
+    prog = Program.from_dict(
+        {
+            "name": "cb08",
+            "steps": [
+                {
+                    "id": "check",
+                    "type": "condition",
+                    "condition": "'go' == 'go'",
+                    "then": "step_a",
+                    "otherwise": "dead",
+                },
+                {"id": "dead", "type": "tool", "tool": "a", "is_terminal": True},
+                {"id": "step_a", "type": "tool", "tool": "a", "next_step": "step_b"},
+                {"id": "step_b", "type": "tool", "tool": "b", "next_step": "step_c"},
+                {"id": "step_c", "type": "tool", "tool": "c"},
+            ],
+        }
+    )
     trace = await vm.run(prog)
     ids = [s.step_id for s in trace.steps]
     assert trace.status == TraceStatus.SUCCESS
@@ -238,33 +304,58 @@ async def test_cb09_momo_style_success():
     """MoMo-style inline pipeline: guard→create(next_step=poll)→poll→check→notify_success."""
     calls: list[str] = []
 
-    async def create(**_): calls.append("create"); return {"ok": True}
-    async def poll(**_):   calls.append("poll");   return {"payment_status": "SUCCESS"}
-    async def notify(**_): calls.append("notify"); return {"sent": True}
+    async def create(**_):
+        calls.append("create")
+        return {"ok": True}
 
-    vm = ExecutionVM(llm=MockLLMAdapter("ok"), tools={
-        "create": create, "poll": poll, "notify": notify,
-    })
-    prog = Program.from_dict({
-        "name": "momo_success",
-        "steps": [
-            {"id": "guard", "type": "condition",
-             "condition": "'ok' == 'ok'", "then": "create", "otherwise": "reject"},
-            {"id": "create", "type": "tool", "tool": "create",
-             "output_key": "create_result", "next_step": "poll"},
-            {"id": "poll",   "type": "tool", "tool": "poll",
-             "output_key": "poll_result"},
-            {"id": "check",  "type": "condition",
-             "condition": "$poll_result.payment_status == 'SUCCESS'",
-             "then": "notify_ok", "otherwise": "notify_pending"},
-            {"id": "notify_ok",      "type": "tool", "tool": "notify",
-             "is_terminal": True},
-            {"id": "notify_pending", "type": "tool", "tool": "notify",
-             "is_terminal": True},
-            {"id": "reject",         "type": "tool", "tool": "notify",
-             "is_terminal": True},
-        ],
-    })
+    async def poll(**_):
+        calls.append("poll")
+        return {"payment_status": "SUCCESS"}
+
+    async def notify(**_):
+        calls.append("notify")
+        return {"sent": True}
+
+    vm = ExecutionVM(
+        llm=MockLLMAdapter("ok"),
+        tools={
+            "create": create,
+            "poll": poll,
+            "notify": notify,
+        },
+    )
+    prog = Program.from_dict(
+        {
+            "name": "momo_success",
+            "steps": [
+                {
+                    "id": "guard",
+                    "type": "condition",
+                    "condition": "'ok' == 'ok'",
+                    "then": "create",
+                    "otherwise": "reject",
+                },
+                {
+                    "id": "create",
+                    "type": "tool",
+                    "tool": "create",
+                    "output_key": "create_result",
+                    "next_step": "poll",
+                },
+                {"id": "poll", "type": "tool", "tool": "poll", "output_key": "poll_result"},
+                {
+                    "id": "check",
+                    "type": "condition",
+                    "condition": "$poll_result.payment_status == 'SUCCESS'",
+                    "then": "notify_ok",
+                    "otherwise": "notify_pending",
+                },
+                {"id": "notify_ok", "type": "tool", "tool": "notify", "is_terminal": True},
+                {"id": "notify_pending", "type": "tool", "tool": "notify", "is_terminal": True},
+                {"id": "reject", "type": "tool", "tool": "notify", "is_terminal": True},
+            ],
+        }
+    )
     trace = await vm.run(prog, context={"amount": 50000})
     ids = [s.step_id for s in trace.steps]
     assert trace.status == TraceStatus.SUCCESS
@@ -277,33 +368,52 @@ async def test_cb10_momo_style_pending():
     """MoMo-style inline pipeline: poll PENDING → notify_pending."""
     calls: list[str] = []
 
-    async def create(**_): calls.append("create"); return {"ok": True}
-    async def poll(**_):   calls.append("poll");   return {"payment_status": "PENDING"}
-    async def notify(**_): calls.append("notify"); return {"sent": True}
+    async def create(**_):
+        calls.append("create")
+        return {"ok": True}
 
-    vm = ExecutionVM(llm=MockLLMAdapter("ok"), tools={
-        "create": create, "poll": poll, "notify": notify,
-    })
-    prog = Program.from_dict({
-        "name": "momo_pending",
-        "steps": [
-            {"id": "guard", "type": "condition",
-             "condition": "'ok' == 'ok'", "then": "create", "otherwise": "reject"},
-            {"id": "create", "type": "tool", "tool": "create",
-             "next_step": "poll"},
-            {"id": "poll",   "type": "tool", "tool": "poll",
-             "output_key": "poll_result"},
-            {"id": "check",  "type": "condition",
-             "condition": "$poll_result.payment_status == 'SUCCESS'",
-             "then": "notify_ok", "otherwise": "notify_pending"},
-            {"id": "notify_ok",      "type": "tool", "tool": "notify",
-             "is_terminal": True},
-            {"id": "notify_pending", "type": "tool", "tool": "notify",
-             "is_terminal": True},
-            {"id": "reject",         "type": "tool", "tool": "notify",
-             "is_terminal": True},
-        ],
-    })
+    async def poll(**_):
+        calls.append("poll")
+        return {"payment_status": "PENDING"}
+
+    async def notify(**_):
+        calls.append("notify")
+        return {"sent": True}
+
+    vm = ExecutionVM(
+        llm=MockLLMAdapter("ok"),
+        tools={
+            "create": create,
+            "poll": poll,
+            "notify": notify,
+        },
+    )
+    prog = Program.from_dict(
+        {
+            "name": "momo_pending",
+            "steps": [
+                {
+                    "id": "guard",
+                    "type": "condition",
+                    "condition": "'ok' == 'ok'",
+                    "then": "create",
+                    "otherwise": "reject",
+                },
+                {"id": "create", "type": "tool", "tool": "create", "next_step": "poll"},
+                {"id": "poll", "type": "tool", "tool": "poll", "output_key": "poll_result"},
+                {
+                    "id": "check",
+                    "type": "condition",
+                    "condition": "$poll_result.payment_status == 'SUCCESS'",
+                    "then": "notify_ok",
+                    "otherwise": "notify_pending",
+                },
+                {"id": "notify_ok", "type": "tool", "tool": "notify", "is_terminal": True},
+                {"id": "notify_pending", "type": "tool", "tool": "notify", "is_terminal": True},
+                {"id": "reject", "type": "tool", "tool": "notify", "is_terminal": True},
+            ],
+        }
+    )
     trace = await vm.run(prog, context={"amount": 50000})
     ids = [s.step_id for s in trace.steps]
     assert trace.status == TraceStatus.SUCCESS
@@ -322,9 +432,13 @@ def test_ctx01_scalar_step_output():
         data={},
         step_outputs={"validate": "OK"},
     )
-    step = Step(id="chk", type=StepType.CONDITION,
-                condition="$validate.output == 'OK'",
-                then="yes", otherwise="no")
+    step = Step(
+        id="chk",
+        type=StepType.CONDITION,
+        condition="$validate.output == 'OK'",
+        then="yes",
+        otherwise="no",
+    )
     assert vm._execute_condition(step, state) == "yes"
 
 
@@ -335,9 +449,13 @@ def test_ctx02_dict_step_output_field():
         data={},
         step_outputs={"poll": {"payment_status": "SUCCESS", "amount": 50000}},
     )
-    step = Step(id="chk", type=StepType.CONDITION,
-                condition="$poll.output.payment_status == 'SUCCESS'",
-                then="yes", otherwise="no")
+    step = Step(
+        id="chk",
+        type=StepType.CONDITION,
+        condition="$poll.output.payment_status == 'SUCCESS'",
+        then="yes",
+        otherwise="no",
+    )
     assert vm._execute_condition(step, state) == "yes"
 
 
@@ -345,12 +463,16 @@ def test_ctx03_output_key_flat_alias():
     """output_key alias ($validation) accessible in condition."""
     vm = make_vm()
     state = StateContext(
-        data={"validation": "OK"},      # output_key="validation"
+        data={"validation": "OK"},  # output_key="validation"
         step_outputs={"validate": "OK"},
     )
-    step = Step(id="chk", type=StepType.CONDITION,
-                condition="$validation == 'OK'",
-                then="yes", otherwise="no")
+    step = Step(
+        id="chk",
+        type=StepType.CONDITION,
+        condition="$validation == 'OK'",
+        then="yes",
+        otherwise="no",
+    )
     assert vm._execute_condition(step, state) == "yes"
 
 
@@ -358,9 +480,13 @@ def test_ctx04_missing_step_output_condition_false():
     """Missing step in step_outputs → condition evaluates to False, no crash."""
     vm = make_vm()
     state = StateContext(data={}, step_outputs={})
-    step = Step(id="chk", type=StepType.CONDITION,
-                condition="$nonexistent.output == 'OK'",
-                then="yes", otherwise="no")
+    step = Step(
+        id="chk",
+        type=StepType.CONDITION,
+        condition="$nonexistent.output == 'OK'",
+        then="yes",
+        otherwise="no",
+    )
     assert vm._execute_condition(step, state) == "no"
 
 
@@ -371,9 +497,13 @@ def test_ctx05_two_level_nested_field():
         data={},
         step_outputs={"create": {"data": {"order_id": "ORD-123"}}},
     )
-    step = Step(id="chk", type=StepType.CONDITION,
-                condition="$create.output.data.order_id == 'ORD-123'",
-                then="yes", otherwise="no")
+    step = Step(
+        id="chk",
+        type=StepType.CONDITION,
+        condition="$create.output.data.order_id == 'ORD-123'",
+        then="yes",
+        otherwise="no",
+    )
     assert vm._execute_condition(step, state) == "yes"
 
 
