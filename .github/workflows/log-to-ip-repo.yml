@@ -1,0 +1,74 @@
+name: Log activity to IP Repository
+
+on:
+  push:
+    branches: ['**']
+  pull_request:
+    types: [closed]
+
+jobs:
+  log-to-ip:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout current repo
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Prepare log entry
+        id: log
+        run: |
+          REPO_NAME=${{ github.event.repository.name }}
+          BRANCH=${{ github.ref_name }}
+          BASE_DIR="projects-logs/${REPO_NAME}"
+          BRANCH_DIR="\( {BASE_DIR}/ \){BRANCH}"
+
+          if [[ "${{ github.event_name }}" == "push" ]]; then
+            SHA=${{ github.sha }}
+            MSG=$(git log -1 --format=%s)
+            AUTHOR=$(git log -1 --format=%an)
+            DATE=$(git log -1 --format=%cd --date=iso-local)
+            TYPE="Commit"
+            LINK="https://github.com/\( {{ github.repository }}/commit/ \){SHA}"
+          else
+            SHA=${{ github.event.pull_request.merge_commit_sha || github.sha }}
+            MSG="Merged PR #${{ github.event.pull_request.number }}: ${{ github.event.pull_request.title }}"
+            AUTHOR=${{ github.event.pull_request.user.login }}
+            DATE=$(date -u +"%Y-%m-%d %H:%M:%S")
+            TYPE="PR Merge"
+            LINK="https://github.com/\( {{ github.repository }}/pull/ \){{ github.event.pull_request.number }}"
+          fi
+
+          LOG_ENTRY="# ${DATE} | \( {TYPE}\n** \){AUTHOR}**\n\( {MSG}\n[→ Link]( \){LINK})\n---"
+
+          echo "branch_dir=${BRANCH_DIR}" >> $GITHUB_OUTPUT
+          echo "log_entry<<EOF" >> $GITHUB_OUTPUT
+          echo -e "$LOG_ENTRY" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+
+      - name: Append log to nano-vm-ip
+        run: |
+          git clone https://x-access-token:${{ secrets.IP_REPO_PAT }}@github.com/Ale007XD/nano-vm-ip.git ip-repo
+          cd ip-repo
+
+          BRANCH_DIR="${{ steps.log.outputs.branch_dir }}"
+          mkdir -p "${BRANCH_DIR}"
+
+          LOG_FILE="${BRANCH_DIR}/activity-log.md"
+          
+          # Новые записи сверху (самые свежие в начале файла)
+          echo -e "\( {{ steps.log.outputs.log_entry }}" >> " \){LOG_FILE}.tmp"
+          if [ -f "${LOG_FILE}" ]; then
+            cat "\( {LOG_FILE}" >> " \){LOG_FILE}.tmp"
+          fi
+          mv "\( {LOG_FILE}.tmp" " \){LOG_FILE}"
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          
+          git add "${LOG_FILE}"
+          git commit -m "Log: \( {{ github.repository }}/ \){{ github.ref_name }}" || echo "No changes"
+          git push
