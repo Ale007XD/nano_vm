@@ -489,7 +489,9 @@ class ExecutionVM:
         # $step_id.output.field resolves for dict outputs.
         # state.data is merged last so output_key aliases remain accessible
         # as flat names (e.g. $validation for output_key="validation").
-        wrapped_outputs: dict[str, Any] = {k: {"output": v} for k, v in state.step_outputs.items()}
+        wrapped_outputs: dict[str, Any] = {
+            k: {"output": v} for k, v in state.step_outputs.items()
+        }
         ctx: dict[str, Any] = {**wrapped_outputs, **state.data}
         try:
             result = bool(eval_condition(condition, ctx))
