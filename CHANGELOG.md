@@ -7,6 +7,74 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [0.7.4] — 2026-05-16
+
+### Added
+
+- **`Step.is_terminal: bool = False` — explicit halt marker.**  
+  When `True`, the FSM returns `SUCCESS` immediately after executing that step.
+  Required for leaf steps in condition branches that share the same flat step array
+  with the main flow (e.g. `notify_success`, `reject_payment`, `alert_ops_step`).
+  Without this marker, the FSM would continue linearly to the next step in the array.
+
+- **`Step.next_step: str | None = None` — inline branch continuation.**  
+  When set on a branch target, the FSM jumps to the named step instead of terminating.
+  Enables condition branches that rejoin the main sequential flow
+  (e.g. `amount_check → create_payment(next_step="poll_payment") → poll_payment → …`).
+  Supports multi-hop chains: each step in the chain can specify its own `next_step`.
+
+- **`test_v074_condition_semantics.py` — 22 tests for new branch semantics.**  
+  Coverage: CB (condition branch), CTX (_execute_condition ctx), RES (_resolve typed return).
+
+### Fixed
+
+- **`_execute_condition`: `$step_id.output` and `$step_id.output.field` now resolve correctly.**  
+  Previously `_execute_condition` built ctx as `{**state.step_outputs, **state.data}` where
+  `step_outputs["validate_amount"] = "OK"` (raw scalar). ASTEngine's dotted-path resolver
+  tried `ctx["validate_amount"]["output"]` on a string → `None` → condition always `False`.  
+  Fix: step_outputs are wrapped as `{"output": v}` before merging into ctx, so
+  `$validate_amount.output` → `ctx["validate_amount"]["output"]` = `"OK"` ✓ and
+  `$poll_payment.output.payment_status` → correct field traversal ✓.  
+  `output_key` flat aliases (`$validation`) continue to work via `state.data` merge.
+
+- **`_resolve`: typed return for single-variable expressions.**  
+  Previously `_resolve("$amount", state)` always returned `str("50000")` even when
+  `state.data["amount"] = 50000` (int). Tool functions with typed signatures
+  (e.g. `def validate_amount(amount: int)`) received a string and raised `TypeError`.  
+  Fix: when the entire value is a single `$var` token, the original typed value is returned
+  unchanged. String interpolation (`"order-$id-suffix"`) still stringifies as before.
+
+- **`_resolve`: multi-segment dotted path `$a.b.c.d` in tool args.**  
+  Previously regex `\$(\w+(?:\.\w+)?)` captured only one dot segment.
+  `$generate_ids.output.order_id` was resolved as `$generate_ids.output` — losing `.order_id`.  
+  Fix: regex extended to `\$(\w+(?:\.\w+)*)`, lookup uses full segment traversal with
+  transparent `output` skip for scalar step outputs.
+
+- **Condition branch semantics: terminal by default, `next_step` for inline continuation.**  
+  Previously condition branch executed the target step and returned `SUCCESS` (v0.7.3),
+  which prevented multi-step flows where the branch target was part of the main pipeline
+  (e.g. `amount_check → create_payment → poll_payment`).  
+  The BUG-FSM-CONDITION-CHAIN fix (v0.7.3) introduced condition→condition chaining but
+  did not address non-condition inline targets.  
+  v0.7.4 semantics:
+  1. Execute branch target inline.
+  2. If target is a `condition` step — recurse into its sub-branch (unchanged from v0.7.3).
+  3. If `target.next_step` is set — continue from the named step (new inline continuation).
+  4. Otherwise — return `SUCCESS` (terminal, v0.7.3-compatible default).
+
+### Breaking Changes
+
+None. All v0.7.3 programs without `is_terminal` or `next_step` fields behave identically
+(branch target is terminal by default, condition→condition chains work as before).
+New fields are keyword-optional with safe defaults (`False` / `None`).
+
+| Symbol | Change |
+| :--- | :--- |
+| `Step` | `is_terminal: bool = False` field added |
+| `Step` | `next_step: str | None = None` field added |
+
+---
+
 ## [0.7.3] — 2026-05-14
 
 ### Added
