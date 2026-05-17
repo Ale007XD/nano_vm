@@ -247,6 +247,9 @@ _TOKEN_PATTERNS = [
     ("IN", r"\bin\b"),
     ("CONTAINS", r"\bcontains\b"),
     ("OP", r"==|!=|>=|<=|>|<"),
+    # METHOD_CALL must precede VAR — catches $var.method() before $var.method is
+    # consumed as a dotted VarNode.  Method calls are not supported; fail fast.
+    ("METHOD_CALL", r"\$[\w.]+\s*\("),
     ("VAR", r"\$[\w.]+"),
     ("STR", r"'[^']*'|\"[^\"]*\""),
     ("NUM", r"-?\d+(?:\.\d+)?"),
@@ -264,6 +267,16 @@ def _tokenise(expr: str) -> list[tuple[str, str]]:
         assert kind is not None  # guaranteed by _TOKEN_RE structure
         if kind == "WS":
             continue
+        if kind == "METHOD_CALL":
+            # Method calls (.lower(), .strip(), .upper(), etc.) are not
+            # supported by ASTEngine.  Raise immediately so the DSL author
+            # gets an explicit error instead of a silent False result.
+            raise ASTEvalError(
+                f"Method calls are not supported in condition expressions: "
+                f"'{m.group().rstrip()}'. "
+                f"Remove the method call and control output format via prompt instead "
+                f"(e.g. 'Reply ONLY with: yes or no')."
+            )
         tokens.append((kind, m.group()))
     return tokens
 
