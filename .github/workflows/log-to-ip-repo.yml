@@ -1,4 +1,4 @@
-name: Log activity to IP Repository
+name: Log activity to nano-vm-ip
 
 on:
   push:
@@ -51,7 +51,7 @@ jobs:
 
       - name: Append log to nano-vm-ip
         run: |
-          git clone https://x-access-token:${{ secrets.IP_REPO_PAT }}@github.com/Ale007XD/nano-vm-ip.git ip-repo
+          git clone https://x-access-token:${{ secrets.nano_vm_ip }}@github.com/Ale007XD/nano-vm-ip.git ip-repo
           cd ip-repo
 
           BRANCH_DIR="${{ steps.log.outputs.branch_dir }}"
@@ -59,7 +59,7 @@ jobs:
 
           LOG_FILE="${BRANCH_DIR}/activity-log.md"
           
-          # Новые записи сверху (самые свежие в начале файла)
+          # Новые записи сверху (самые свежие в начале)
           echo -e "\( {{ steps.log.outputs.log_entry }}" >> " \){LOG_FILE}.tmp"
           if [ -f "${LOG_FILE}" ]; then
             cat "\( {LOG_FILE}" >> " \){LOG_FILE}.tmp"
