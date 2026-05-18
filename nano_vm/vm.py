@@ -267,7 +267,20 @@ class ExecutionVM:
                     error=f"Step '{step.id}' failed: {result.error}",
                 )
 
-            # Condition step: jump to branch
+            # Explicit halt: non-condition terminal step ends this path.
+            if step.is_terminal:
+                return trace.finish(TraceStatus.SUCCESS, final_output=trace.last_output())
+
+            # Condition step: jump to branch target.
+            #
+            # Branch semantics (v0.7.4):
+            #   1. Execute the branch target step inline.
+            #   2. If the target is a condition, recurse into its sub-branch.
+            #   3. If the target has is_terminal=True (explicit halt marker),
+            #      return SUCCESS immediately.
+            #   4. Otherwise resume the main flow from target_idx + 1, which
+            #      supports "inline" branches where the branch target is the
+            #      next sequential step (e.g. amount_check -> create_payment).
             if step.type == StepType.CONDITION and result.status == StepStatus.SUCCESS:
                 next_id = result.output
                 if not next_id:
@@ -280,7 +293,10 @@ class ExecutionVM:
                         TraceStatus.FAILED,
                         error=f"Step '{step.id}': condition target '{next_id}' not found",
                     )
-                target_step = steps[step_index[next_id]]
+                target_idx = step_index[next_id]
+                target_step = steps[target_idx]
+
+                # Execute the branch target inline.
                 steps_executed += 1
                 target_result, state, target_sub = await self._run_step(target_step, state)
                 for sub_result in target_sub:
@@ -295,9 +311,8 @@ class ExecutionVM:
                         TraceStatus.FAILED,
                         error=f"Step '{target_step.id}' failed: {target_result.error}",
                     )
-                # If the branch target is itself a condition, chain into it so that
-                # multi-condition routing works (e.g. status_check → check_network_error
-                # → notify_*). For non-condition targets the branch is terminal here.
+
+                # Target is itself a condition — recurse into its sub-branch.
                 if target_step.type == StepType.CONDITION:
                     return await self._execute_loop(
                         program=program,
@@ -305,6 +320,31 @@ class ExecutionVM:
                         trace=trace,
                         start_step_id=target_result.output,
                     )
+
+                # Branch target executed. Two cases:
+                #
+                # 1. target_step.next_step is set: the branch is "inline" —
+                #    continue execution from the named step (allows condition
+                #    branches to rejoin the main flow, e.g. amount_check →
+                #    create_payment.next_step="poll_payment" → poll_payment).
+                #
+                # 2. Otherwise: the branch is terminal — return SUCCESS here.
+                #    This is the default (v0.7.3-compatible) semantics and what
+                #    all condition branches that jump to leaf steps must use.
+                next_step_id: str | None = getattr(target_step, "next_step", None)
+                if next_step_id:
+                    if next_step_id not in step_index:
+                        return trace.finish(
+                            TraceStatus.FAILED,
+                            error=(
+                                f"Step '{target_step.id}': next_step "
+                                f"'{next_step_id}' not found in program"
+                            ),
+                        )
+                    current_idx = step_index[next_step_id]
+                    continue
+
+                # Default: terminal branch.
                 return trace.finish(TraceStatus.SUCCESS, final_output=trace.last_output())
 
             current_idx += 1
@@ -444,7 +484,13 @@ class ExecutionVM:
 
     def _execute_condition(self, step: Step, state: StateContext) -> str | None:
         condition = step.condition or ""
-        ctx: dict[str, Any] = {**state.step_outputs, **state.data}
+        # Wrap each step output as {"output": <value>} so that dotted-path
+        # $step_id.output resolves for scalar outputs, and
+        # $step_id.output.field resolves for dict outputs.
+        # state.data is merged last so output_key aliases remain accessible
+        # as flat names (e.g. $validation for output_key="validation").
+        wrapped_outputs: dict[str, Any] = {k: {"output": v} for k, v in state.step_outputs.items()}
+        ctx: dict[str, Any] = {**wrapped_outputs, **state.data}
         try:
             result = bool(eval_condition(condition, ctx))
         except Exception as exc:
@@ -529,26 +575,43 @@ class ExecutionVM:
     # Resolver
     # ------------------------------------------------------------------
 
-    def _resolve(self, value: Any, state: StateContext) -> Any:
+    def _resolve(self, value: Any, state: StateContext) -> Any:  # noqa: C901
         if not isinstance(value, str):
             return value
 
         _MISSING = object()
 
-        def replace(match: re.Match[str]) -> str:
-            expr = match.group(1)
-            if "." in expr:
-                step_id, field = expr.split(".", 1)
-                step_out = state.step_outputs.get(step_id, _MISSING)
-                if step_out is _MISSING:
-                    return str(match.group(0))
-                if field == "output":
-                    return str(step_out)
-                if isinstance(step_out, dict):
-                    val = step_out.get(field, _MISSING)
-                    return str(val) if val is not _MISSING else str(match.group(0))
-                return str(match.group(0))
-            val = state.data.get(expr, _MISSING)
-            return str(val) if val is not _MISSING else str(match.group(0))
+        def _lookup(expr: str) -> Any:
+            """Resolve dotted expression; return _MISSING if not found."""
+            parts = expr.split(".")
+            root = parts[0]
+            if root in state.step_outputs:
+                node: Any = state.step_outputs[root]
+                for seg in parts[1:]:
+                    if seg == "output":
+                        # transparent — node IS the raw output already
+                        continue
+                    if isinstance(node, dict):
+                        node = node.get(seg, _MISSING)
+                        if node is _MISSING:
+                            return _MISSING
+                    else:
+                        return _MISSING
+                return node
+            if len(parts) == 1:
+                return state.data.get(root, _MISSING)
+            return _MISSING
 
-        return re.sub(r"\$(\w+(?:\.\w+)?)", replace, value)
+        # Fast path: entire value is a single $var — return typed value unchanged.
+        # Preserves int/float/dict/list types for tool args (e.g. amount: int).
+        single = re.fullmatch(r"\$(\w+(?:\.\w+)*)", value)
+        if single:
+            resolved = _lookup(single.group(1))
+            return resolved if resolved is not _MISSING else value
+
+        # Interpolation path: $var embedded in a larger string — stringify.
+        def replace(match: re.Match[str]) -> str:
+            resolved = _lookup(match.group(1))
+            return str(resolved) if resolved is not _MISSING else str(match.group(0))
+
+        return re.sub(r"\$(\w+(?:\.\w+)*)", replace, value)

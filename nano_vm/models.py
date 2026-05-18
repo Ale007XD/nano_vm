@@ -127,6 +127,8 @@ class Step(BaseModel):
     # error handling
     on_error: OnError = OnError.FAIL
     max_retries: int = 3
+    is_terminal: bool = False  # v0.7.4: if True, FSM halts after this step
+    next_step: str | None = None  # v0.7.4: inline branch continuation step id
 
     @model_validator(mode="after")
     def _validate_by_type(self) -> Step:
