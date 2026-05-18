@@ -10,12 +10,11 @@ v0.6.0 additions (vault-layer primitives):
   - VaultStepError / VaultStepMetadata / VaultStepResult
   - Trace.trace_id, suspended_at, suspended_step_id
 
-v0.7.0 Sprint 1-3:
-  - Re-exports CapabilityRef, PolicySnapshot, GovernanceEnvelope from contracts
-  - GdprEraseEvent — GDPR erasure system event
-  - Trace.add_snapshot() — Merkle chain node
-  - Trace.canonical_snapshot_hash() — Merkle root
-  - Trace.program_name field
+v0.7.4 additions:
+  - Step.is_terminal, Step.next_step — branch semantics
+
+v0.8.0 additions:
+  - Step.allowed_outputs — LLM output validation against enum at step level
 """
 
 from __future__ import annotations
@@ -130,6 +129,13 @@ class Step(BaseModel):
     is_terminal: bool = False  # v0.7.4: if True, FSM halts after this step
     next_step: str | None = None  # v0.7.4: inline branch continuation step id
 
+    # llm output validation (v0.8.0)
+    # If set, LLM output must be one of these values (exact match after strip).
+    # on_error=fail  → VMError raised immediately.
+    # on_error=skip  → output replaced with allowed_outputs[0] (fallback sentinel).
+    # on_error=retry → retried up to max_retries; VMError if exhausted.
+    allowed_outputs: list[str] | None = None
+
     @model_validator(mode="after")
     def _validate_by_type(self) -> Step:
         if self.type == StepType.LLM and not self.prompt:
@@ -153,6 +159,16 @@ class Step(BaseModel):
                         f"Step '{self.id}': parallel sub-step '{sub.id}' "
                         f"cannot be of type '{sub.type}' (only llm/tool allowed)"
                     )
+        if self.allowed_outputs is not None:
+            if self.type != StepType.LLM:
+                raise ValueError(
+                    f"Step '{self.id}': allowed_outputs is only valid for llm steps, "
+                    f"got type='{self.type}'"
+                )
+            if not self.allowed_outputs:
+                raise ValueError(
+                    f"Step '{self.id}': allowed_outputs must not be empty if set"
+                )
         return self
 
 

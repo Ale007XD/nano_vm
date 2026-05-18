@@ -95,6 +95,33 @@ class InMemoryCursorRepository:
 
 
 # ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+
+def _check_allowed_outputs(step: Step, text: str) -> str:
+    """Validate LLM output against step.allowed_outputs (v0.8.0).
+
+    Returns the (possibly-fallback) output string — always stripped.
+    Raises VMError if output not in allowed set and on_error != skip.
+    """
+    if step.allowed_outputs is None:
+        return text
+    stripped = text.strip()
+    if stripped in step.allowed_outputs:
+        return stripped
+    # Not in allowed set.
+    if step.on_error == OnError.SKIP:
+        return step.allowed_outputs[0]  # fallback sentinel
+    # FAIL or RETRY: raise — retry loop in _execute_with_retry will catch VMError
+    # and retry up to max_retries; if exhausted, VMError propagates.
+    raise VMError(
+        f"Step '{step.id}': LLM output {stripped!r} not in "
+        f"allowed_outputs={step.allowed_outputs}"
+    )
+
+
+# ---------------------------------------------------------------------------
 # ExecutionVM
 # ---------------------------------------------------------------------------
 
@@ -458,6 +485,7 @@ class ExecutionVM:
         else:
             text = result
             usage = None
+        text = _check_allowed_outputs(step, text)
         return text, usage
 
     # ------------------------------------------------------------------
