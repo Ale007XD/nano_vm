@@ -166,9 +166,7 @@ class Step(BaseModel):
                     f"got type='{self.type}'"
                 )
             if not self.allowed_outputs:
-                raise ValueError(
-                    f"Step '{self.id}': allowed_outputs must not be empty if set"
-                )
+                raise ValueError(f"Step '{self.id}': allowed_outputs must not be empty if set")
         return self
 
 

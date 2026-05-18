@@ -116,8 +116,7 @@ def _check_allowed_outputs(step: Step, text: str) -> str:
     # FAIL or RETRY: raise — retry loop in _execute_with_retry will catch VMError
     # and retry up to max_retries; if exhausted, VMError propagates.
     raise VMError(
-        f"Step '{step.id}': LLM output {stripped!r} not in "
-        f"allowed_outputs={step.allowed_outputs}"
+        f"Step '{step.id}': LLM output {stripped!r} not in allowed_outputs={step.allowed_outputs}"
     )
 
 
