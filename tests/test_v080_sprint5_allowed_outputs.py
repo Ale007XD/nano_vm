@@ -17,34 +17,37 @@ AO-10  allowed_outputs match is case-sensitive ('Yes' != 'yes')
 
 import pytest
 
-from nano_vm.models import OnError, Program, Step, StepType, TraceStatus
 from nano_vm.adapters import MockLLMAdapter
+from nano_vm.models import Program, TraceStatus
 from nano_vm.vm import ExecutionVM, VMError
-
 
 # ---------------------------------------------------------------------------
 # helpers
 # ---------------------------------------------------------------------------
 
+
 def _program(llm_output: str, allowed: list[str] | None, on_error: str = "fail") -> Program:
-    return Program.from_dict({
-        "name": "test_allowed_outputs",
-        "steps": [
-            {
-                "id": "classify",
-                "type": "llm",
-                "prompt": "Classify the request: $input",
-                "output_key": "decision",
-                **({"allowed_outputs": allowed} if allowed is not None else {}),
-                "on_error": on_error,
-            }
-        ],
-    })
+    return Program.from_dict(
+        {
+            "name": "test_allowed_outputs",
+            "steps": [
+                {
+                    "id": "classify",
+                    "type": "llm",
+                    "prompt": "Classify the request: $input",
+                    "output_key": "decision",
+                    **({"allowed_outputs": allowed} if allowed is not None else {}),
+                    "on_error": on_error,
+                }
+            ],
+        }
+    )
 
 
 # ---------------------------------------------------------------------------
 # AO-01  match → SUCCESS, output unchanged
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.asyncio
 async def test_ao_01_match_success():
@@ -59,6 +62,7 @@ async def test_ao_01_match_success():
 # AO-02  no match, on_error=fail → VMError
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.asyncio
 async def test_ao_02_no_match_fail():
     program = _program("dunno", ["refund", "query", "other"], on_error="fail")
@@ -70,6 +74,7 @@ async def test_ao_02_no_match_fail():
 # ---------------------------------------------------------------------------
 # AO-03  no match, on_error=skip → fallback = allowed_outputs[0]
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.asyncio
 async def test_ao_03_no_match_skip_fallback():
@@ -84,20 +89,25 @@ async def test_ao_03_no_match_skip_fallback():
 # AO-04  no match, on_error=retry → retried; still wrong → VMError
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.asyncio
 async def test_ao_04_no_match_retry_exhausted():
-    program = Program.from_dict({
-        "name": "retry_test",
-        "steps": [{
-            "id": "classify",
-            "type": "llm",
-            "prompt": "classify: $input",
-            "output_key": "decision",
-            "allowed_outputs": ["refund", "query"],
-            "on_error": "retry",
-            "max_retries": 2,
-        }],
-    })
+    program = Program.from_dict(
+        {
+            "name": "retry_test",
+            "steps": [
+                {
+                    "id": "classify",
+                    "type": "llm",
+                    "prompt": "classify: $input",
+                    "output_key": "decision",
+                    "allowed_outputs": ["refund", "query"],
+                    "on_error": "retry",
+                    "max_retries": 2,
+                }
+            ],
+        }
+    )
     # MockLLMAdapter always returns "dunno" — all retries fail
     vm = ExecutionVM(llm=MockLLMAdapter("dunno"))
     with pytest.raises(VMError, match="allowed_outputs"):
@@ -107,6 +117,7 @@ async def test_ao_04_no_match_retry_exhausted():
 # ---------------------------------------------------------------------------
 # AO-05  allowed_outputs=None → no validation, any output passes
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.asyncio
 async def test_ao_05_none_no_validation():
@@ -121,41 +132,54 @@ async def test_ao_05_none_no_validation():
 # AO-06  allowed_outputs on tool step → ValidationError
 # ---------------------------------------------------------------------------
 
+
 def test_ao_06_allowed_outputs_non_llm_raises():
     from pydantic import ValidationError
+
     with pytest.raises(ValidationError, match="allowed_outputs"):
-        Program.from_dict({
-            "name": "bad",
-            "steps": [{
-                "id": "pay",
-                "type": "tool",
-                "tool": "charge",
-                "allowed_outputs": ["OK", "FAIL"],
-            }],
-        })
+        Program.from_dict(
+            {
+                "name": "bad",
+                "steps": [
+                    {
+                        "id": "pay",
+                        "type": "tool",
+                        "tool": "charge",
+                        "allowed_outputs": ["OK", "FAIL"],
+                    }
+                ],
+            }
+        )
 
 
 # ---------------------------------------------------------------------------
 # AO-07  allowed_outputs=[] → ValidationError
 # ---------------------------------------------------------------------------
 
+
 def test_ao_07_empty_allowed_outputs_raises():
     from pydantic import ValidationError
+
     with pytest.raises(ValidationError, match="allowed_outputs"):
-        Program.from_dict({
-            "name": "bad",
-            "steps": [{
-                "id": "classify",
-                "type": "llm",
-                "prompt": "classify: $x",
-                "allowed_outputs": [],
-            }],
-        })
+        Program.from_dict(
+            {
+                "name": "bad",
+                "steps": [
+                    {
+                        "id": "classify",
+                        "type": "llm",
+                        "prompt": "classify: $x",
+                        "allowed_outputs": [],
+                    }
+                ],
+            }
+        )
 
 
 # ---------------------------------------------------------------------------
 # AO-08  strip() — whitespace ignored
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.asyncio
 async def test_ao_08_strip_whitespace():
@@ -171,27 +195,30 @@ async def test_ao_08_strip_whitespace():
 # AO-09  multi-step, both allowed → both succeed
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.asyncio
 async def test_ao_09_multi_step_both_allowed():
-    program = Program.from_dict({
-        "name": "multi",
-        "steps": [
-            {
-                "id": "s1",
-                "type": "llm",
-                "prompt": "step1: $x",
-                "output_key": "r1",
-                "allowed_outputs": ["yes", "no"],
-            },
-            {
-                "id": "s2",
-                "type": "llm",
-                "prompt": "step2: $x",
-                "output_key": "r2",
-                "allowed_outputs": ["approve", "reject"],
-            },
-        ],
-    })
+    program = Program.from_dict(
+        {
+            "name": "multi",
+            "steps": [
+                {
+                    "id": "s1",
+                    "type": "llm",
+                    "prompt": "step1: $x",
+                    "output_key": "r1",
+                    "allowed_outputs": ["yes", "no"],
+                },
+                {
+                    "id": "s2",
+                    "type": "llm",
+                    "prompt": "step2: $x",
+                    "output_key": "r2",
+                    "allowed_outputs": ["approve", "reject"],
+                },
+            ],
+        }
+    )
     vm = ExecutionVM(llm=MockLLMAdapter(["yes", "approve"]))
     trace = await vm.run(program, context={"x": "test"})
     assert trace.status == TraceStatus.SUCCESS
@@ -202,6 +229,7 @@ async def test_ao_09_multi_step_both_allowed():
 # ---------------------------------------------------------------------------
 # AO-10  case-sensitive: 'Yes' != 'yes' → fail
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.asyncio
 async def test_ao_10_case_sensitive():
