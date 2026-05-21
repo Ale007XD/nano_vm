@@ -120,9 +120,7 @@ def _check_allowed_outputs(step: Step, text: str) -> str:
     )
 
 
-async def _llm_call_with_timeout(
-    step: Step, coro: Any
-) -> Any:
+async def _llm_call_with_timeout(step: Step, coro: Any) -> Any:
     """Wrap an LLM coroutine with optional timeout (v0.8.0).
 
     Returns the raw result from the LLM adapter.
@@ -139,9 +137,7 @@ async def _llm_call_with_timeout(
             if step.allowed_outputs:
                 return step.allowed_outputs[0]
             return ""
-        raise VMError(
-            f"Step '{step.id}': LLM call timed out after {step.timeout_seconds}s"
-        )
+        raise VMError(f"Step '{step.id}': LLM call timed out after {step.timeout_seconds}s")
 
 
 # ---------------------------------------------------------------------------
