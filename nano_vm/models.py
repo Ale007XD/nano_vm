@@ -136,6 +136,13 @@ class Step(BaseModel):
     # on_error=retry → retried up to max_retries; VMError if exhausted.
     allowed_outputs: list[str] | None = None
 
+    # llm timeout (v0.8.0)
+    # If set, LLM call is cancelled after this many seconds.
+    # on_timeout=fail     → VMError (default).
+    # on_timeout=fallback → allowed_outputs[0] if set, else empty string.
+    timeout_seconds: float | None = None
+    on_timeout: str = "fail"
+
     @model_validator(mode="after")
     def _validate_by_type(self) -> Step:
         if self.type == StepType.LLM and not self.prompt:

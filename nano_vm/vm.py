@@ -120,6 +120,30 @@ def _check_allowed_outputs(step: Step, text: str) -> str:
     )
 
 
+async def _llm_call_with_timeout(
+    step: Step, coro: Any
+) -> Any:
+    """Wrap an LLM coroutine with optional timeout (v0.8.0).
+
+    Returns the raw result from the LLM adapter.
+    Raises VMError on timeout according to step.on_timeout:
+      "fail"     → VMError (default)
+      "fallback" → returns allowed_outputs[0] if set, else empty string
+    """
+    if step.timeout_seconds is None:
+        return await coro
+    try:
+        return await asyncio.wait_for(coro, timeout=step.timeout_seconds)
+    except asyncio.TimeoutError:
+        if step.on_timeout == "fallback":
+            if step.allowed_outputs:
+                return step.allowed_outputs[0]
+            return ""
+        raise VMError(
+            f"Step '{step.id}': LLM call timed out after {step.timeout_seconds}s"
+        )
+
+
 # ---------------------------------------------------------------------------
 # ExecutionVM
 # ---------------------------------------------------------------------------
@@ -477,7 +501,7 @@ class ExecutionVM:
             messages.append({"role": "system", "content": self._resolve(step.system, state)})
         messages.append({"role": "user", "content": prompt})
 
-        result = await self._llm.complete(messages)
+        result = await _llm_call_with_timeout(step, self._llm.complete(messages))
         if isinstance(result, tuple):
             text, usage_data = result
             usage = LLMUsage(**usage_data) if usage_data else None
