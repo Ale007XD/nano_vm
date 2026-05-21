@@ -32,10 +32,10 @@ from nano_vm.adapters.mock_adapter import MockLLMAdapter
 from nano_vm.models import Program, TraceStatus
 from nano_vm.vm import ExecutionVM
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _prog(steps: list[dict]) -> dict:
     return {"name": "test", "steps": steps}
@@ -45,18 +45,23 @@ def _prog(steps: list[dict]) -> dict:
 # AO-01: output в allowed_outputs → SUCCESS, output stripped
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.asyncio
 async def test_ao_01_output_in_allowed():
     vm = ExecutionVM(llm=MockLLMAdapter("refund"))
-    program = Program.from_dict(_prog([
-        {
-            "id": "classify",
-            "type": "llm",
-            "prompt": "classify: $input",
-            "output_key": "decision",
-            "allowed_outputs": ["refund", "query", "other"],
-        },
-    ]))
+    program = Program.from_dict(
+        _prog(
+            [
+                {
+                    "id": "classify",
+                    "type": "llm",
+                    "prompt": "classify: $input",
+                    "output_key": "decision",
+                    "allowed_outputs": ["refund", "query", "other"],
+                },
+            ]
+        )
+    )
     trace = await vm.run(program, context={"input": "I want a refund"})
 
     assert trace.status == TraceStatus.SUCCESS
@@ -68,19 +73,24 @@ async def test_ao_01_output_in_allowed():
 # AO-02: output НЕ в allowed_outputs + on_error=fail → FAILED
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.asyncio
 async def test_ao_02_not_in_allowed_fail():
     vm = ExecutionVM(llm=MockLLMAdapter("REFUND"))  # wrong case
-    program = Program.from_dict(_prog([
-        {
-            "id": "classify",
-            "type": "llm",
-            "prompt": "classify: $input",
-            "output_key": "decision",
-            "allowed_outputs": ["refund", "query", "other"],
-            "on_error": "fail",
-        },
-    ]))
+    program = Program.from_dict(
+        _prog(
+            [
+                {
+                    "id": "classify",
+                    "type": "llm",
+                    "prompt": "classify: $input",
+                    "output_key": "decision",
+                    "allowed_outputs": ["refund", "query", "other"],
+                    "on_error": "fail",
+                },
+            ]
+        )
+    )
     trace = await vm.run(program, context={"input": "test"})
 
     assert trace.status == TraceStatus.FAILED
@@ -93,19 +103,24 @@ async def test_ao_02_not_in_allowed_fail():
 # AO-03: output НЕ в allowed_outputs + on_error=skip → output=allowed_outputs[0]
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.asyncio
 async def test_ao_03_not_in_allowed_skip_returns_first():
     vm = ExecutionVM(llm=MockLLMAdapter("UNEXPECTED"))
-    program = Program.from_dict(_prog([
-        {
-            "id": "classify",
-            "type": "llm",
-            "prompt": "classify: $input",
-            "output_key": "decision",
-            "allowed_outputs": ["other", "refund", "query"],
-            "on_error": "skip",
-        },
-    ]))
+    program = Program.from_dict(
+        _prog(
+            [
+                {
+                    "id": "classify",
+                    "type": "llm",
+                    "prompt": "classify: $input",
+                    "output_key": "decision",
+                    "allowed_outputs": ["other", "refund", "query"],
+                    "on_error": "skip",
+                },
+            ]
+        )
+    )
     trace = await vm.run(program, context={"input": "test"})
 
     assert trace.status == TraceStatus.SUCCESS
@@ -116,12 +131,17 @@ async def test_ao_03_not_in_allowed_skip_returns_first():
 # AO-04: allowed_outputs=None → любой вывод принимается, regression
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.asyncio
 async def test_ao_04_allowed_outputs_none_regression():
     vm = ExecutionVM(llm=MockLLMAdapter("anything goes 123"))
-    program = Program.from_dict(_prog([
-        {"id": "s1", "type": "llm", "prompt": "go", "output_key": "out"},
-    ]))
+    program = Program.from_dict(
+        _prog(
+            [
+                {"id": "s1", "type": "llm", "prompt": "go", "output_key": "out"},
+            ]
+        )
+    )
     trace = await vm.run(program, context={})
 
     assert trace.status == TraceStatus.SUCCESS
@@ -132,16 +152,21 @@ async def test_ao_04_allowed_outputs_none_regression():
 # AO-05: allowed_outputs=[] → ValidationError при построении Program
 # ---------------------------------------------------------------------------
 
+
 def test_ao_05_empty_allowed_outputs_validation_error():
     with pytest.raises(ValidationError) as exc_info:
-        Program.from_dict(_prog([
-            {
-                "id": "classify",
-                "type": "llm",
-                "prompt": "go",
-                "allowed_outputs": [],
-            },
-        ]))
+        Program.from_dict(
+            _prog(
+                [
+                    {
+                        "id": "classify",
+                        "type": "llm",
+                        "prompt": "go",
+                        "allowed_outputs": [],
+                    },
+                ]
+            )
+        )
     assert "allowed_outputs" in str(exc_info.value).lower()
 
 
@@ -149,16 +174,21 @@ def test_ao_05_empty_allowed_outputs_validation_error():
 # AO-06: allowed_outputs на tool-шаге → ValidationError
 # ---------------------------------------------------------------------------
 
+
 def test_ao_06_allowed_outputs_on_tool_step_validation_error():
     with pytest.raises(ValidationError) as exc_info:
-        Program.from_dict(_prog([
-            {
-                "id": "act",
-                "type": "tool",
-                "tool": "some_tool",
-                "allowed_outputs": ["ok", "fail"],
-            },
-        ]))
+        Program.from_dict(
+            _prog(
+                [
+                    {
+                        "id": "act",
+                        "type": "tool",
+                        "tool": "some_tool",
+                        "allowed_outputs": ["ok", "fail"],
+                    },
+                ]
+            )
+        )
     assert "allowed_outputs" in str(exc_info.value).lower()
 
 
@@ -166,20 +196,25 @@ def test_ao_06_allowed_outputs_on_tool_step_validation_error():
 # AO-07: on_error=retry, LLM всегда возвращает неверный вывод → FAILED
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.asyncio
 async def test_ao_07_retry_exhausted():
     vm = ExecutionVM(llm=MockLLMAdapter("WRONG"))
-    program = Program.from_dict(_prog([
-        {
-            "id": "classify",
-            "type": "llm",
-            "prompt": "classify: $input",
-            "output_key": "decision",
-            "allowed_outputs": ["refund", "query", "other"],
-            "on_error": "retry",
-            "max_retries": 2,
-        },
-    ]))
+    program = Program.from_dict(
+        _prog(
+            [
+                {
+                    "id": "classify",
+                    "type": "llm",
+                    "prompt": "classify: $input",
+                    "output_key": "decision",
+                    "allowed_outputs": ["refund", "query", "other"],
+                    "on_error": "retry",
+                    "max_retries": 2,
+                },
+            ]
+        )
+    )
     trace = await vm.run(program, context={"input": "test"})
 
     assert trace.status == TraceStatus.FAILED
@@ -191,25 +226,35 @@ async def test_ao_07_retry_exhausted():
 # AO-08: regression — шаг без allowed_outputs рядом с шагом с allowed_outputs
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.asyncio
 async def test_ao_08_mixed_steps_regression():
     vm = ExecutionVM(
         llm=MockLLMAdapter(["free text", "refund"]),
         tools={"act": lambda **kw: "done"},
     )
-    program = Program.from_dict(_prog([
-        # шаг без allowed_outputs — любой вывод OK
-        {"id": "summarize", "type": "llm", "prompt": "summarize $input", "output_key": "summary"},
-        # шаг с allowed_outputs
-        {
-            "id": "classify",
-            "type": "llm",
-            "prompt": "classify $input",
-            "output_key": "decision",
-            "allowed_outputs": ["refund", "query", "other"],
-        },
-        {"id": "act", "type": "tool", "tool": "act"},
-    ]))
+    program = Program.from_dict(
+        _prog(
+            [
+                # шаг без allowed_outputs — любой вывод OK
+                {
+                    "id": "summarize",
+                    "type": "llm",
+                    "prompt": "summarize $input",
+                    "output_key": "summary",
+                },
+                # шаг с allowed_outputs
+                {
+                    "id": "classify",
+                    "type": "llm",
+                    "prompt": "classify $input",
+                    "output_key": "decision",
+                    "allowed_outputs": ["refund", "query", "other"],
+                },
+                {"id": "act", "type": "tool", "tool": "act"},
+            ]
+        )
+    )
     trace = await vm.run(program, context={"input": "I want refund"})
 
     assert trace.status == TraceStatus.SUCCESS
@@ -222,19 +267,24 @@ async def test_ao_08_mixed_steps_regression():
 # AO-09: case-sensitive — "Yes" не равно "yes"
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.asyncio
 async def test_ao_09_case_sensitive():
     vm = ExecutionVM(llm=MockLLMAdapter("Yes"))
-    program = Program.from_dict(_prog([
-        {
-            "id": "classify",
-            "type": "llm",
-            "prompt": "classify: $input",
-            "output_key": "decision",
-            "allowed_outputs": ["yes", "no"],
-            "on_error": "fail",
-        },
-    ]))
+    program = Program.from_dict(
+        _prog(
+            [
+                {
+                    "id": "classify",
+                    "type": "llm",
+                    "prompt": "classify: $input",
+                    "output_key": "decision",
+                    "allowed_outputs": ["yes", "no"],
+                    "on_error": "fail",
+                },
+            ]
+        )
+    )
     trace = await vm.run(program, context={"input": "test"})
 
     assert trace.status == TraceStatus.FAILED
