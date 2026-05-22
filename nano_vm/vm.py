@@ -95,6 +95,52 @@ class InMemoryCursorRepository:
 
 
 # ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+
+def _check_allowed_outputs(step: Step, text: str) -> str:
+    """Validate LLM output against step.allowed_outputs (v0.8.0).
+
+    Returns the (possibly-fallback) output string — always stripped.
+    Raises VMError if output not in allowed set and on_error != skip.
+    """
+    if step.allowed_outputs is None:
+        return text
+    stripped = text.strip()
+    if stripped in step.allowed_outputs:
+        return stripped
+    # Not in allowed set.
+    if step.on_error == OnError.SKIP:
+        return step.allowed_outputs[0]  # fallback sentinel
+    # FAIL or RETRY: raise — retry loop in _execute_with_retry will catch VMError
+    # and retry up to max_retries; if exhausted, VMError propagates.
+    raise VMError(
+        f"Step '{step.id}': LLM output {stripped!r} not in allowed_outputs={step.allowed_outputs}"
+    )
+
+
+async def _llm_call_with_timeout(step: Step, coro: Any) -> Any:
+    """Wrap an LLM coroutine with optional timeout (v0.8.0).
+
+    Returns the raw result from the LLM adapter.
+    Raises VMError on timeout according to step.on_timeout:
+      "fail"     → VMError (default)
+      "fallback" → returns allowed_outputs[0] if set, else empty string
+    """
+    if step.timeout_seconds is None:
+        return await coro
+    try:
+        return await asyncio.wait_for(coro, timeout=step.timeout_seconds)
+    except asyncio.TimeoutError:
+        if step.on_timeout == "fallback":
+            if step.allowed_outputs:
+                return step.allowed_outputs[0]
+            return ""
+        raise VMError(f"Step '{step.id}': LLM call timed out after {step.timeout_seconds}s")
+
+
+# ---------------------------------------------------------------------------
 # ExecutionVM
 # ---------------------------------------------------------------------------
 
@@ -451,13 +497,14 @@ class ExecutionVM:
             messages.append({"role": "system", "content": self._resolve(step.system, state)})
         messages.append({"role": "user", "content": prompt})
 
-        result = await self._llm.complete(messages)
+        result = await _llm_call_with_timeout(step, self._llm.complete(messages))
         if isinstance(result, tuple):
             text, usage_data = result
             usage = LLMUsage(**usage_data) if usage_data else None
         else:
             text = result
             usage = None
+        text = _check_allowed_outputs(step, text)
         return text, usage
 
     # ------------------------------------------------------------------

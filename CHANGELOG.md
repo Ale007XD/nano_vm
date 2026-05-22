@@ -7,6 +7,74 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [0.8.0] — 2026-05-21
+
+### Added
+
+- **`Step.allowed_outputs: list[str] | None = None`** — LLM output validation at step level.  
+  When set, the FSM checks the model's output against the enum after every LLM call.  
+  Behaviour by `on_error`:
+  - `on_error=fail` (default) — `VMError` → `trace.FAILED`.
+  - `on_error=skip` — output replaced with `allowed_outputs[0]` (first element = safe default).
+  - `on_error=retry` — retry loop up to `max_retries`; `VMError` if exhausted.  
+  An empty list is rejected at `Program` construction time (`ValidationError`).  
+  Setting `allowed_outputs` on a non-`llm` step also raises `ValidationError`.
+
+- **`Step.timeout_seconds: float | None = None`** — per-step LLM call timeout via
+  `asyncio.wait_for`.  
+  When set, wraps `_execute_llm` in a timed coroutine.
+
+- **`Step.on_timeout: str = 'fail'`** — timeout handling policy.  
+  - `'fail'` — `VMError` → `trace.FAILED`.  
+  - `'fallback'` — output replaced with `allowed_outputs[0]` if set, else `''`.  
+  Both `allowed_outputs` and `timeout_seconds` are independent and fully composable
+  (see test TO-07).
+
+- **`test_v080_sprint5_allowed.py`** — 9 tests (AO-01–09).  
+  Covers: `on_error=fail/skip/retry`, empty list `ValidationError`, non-llm step
+  `ValidationError`, match, no-match, case-sensitive comparison, multi-value enum.
+
+- **`test_v080_sprint5_timeout.py`** — 7 tests (TO-01–07).  
+  Covers: `on_timeout=fail`, `on_timeout=fallback` with and without `allowed_outputs`,
+  no-timeout normal path, combined `allowed_outputs + timeout_seconds`.
+
+### Changed
+
+- **Step fields table in DSL docs** updated to include `allowed_outputs`, `timeout_seconds`,
+  `on_timeout`.
+- **Performance section** updated to v0.8.0 CI counts (432/432 passed).
+- **Roadmap** — `allowed_outputs` and `timeout_seconds` moved from Upcoming to Done.
+
+### Fixed
+
+- **`VMError` is caught inside `_execute_with_retry`** — does not propagate to the caller.  
+  Use `trace.status` and `trace.error` to inspect failures; `pytest.raises(VMError)` at
+  the top level will not fire.
+
+### Known Limitations
+
+- `allowed_outputs` case-sensitive; exact string match only. Normalise via prompt
+  (`Reply ONLY with: refund / query / other`) rather than post-processing in the condition.
+- `timeout_seconds` applies to the LLM call only, not to tool steps.
+- `'PENDING'` remains a reserved FSM suspend sentinel.
+
+### CI
+
+432/432 tests — 416 regression + 9 AO + 7 TO.  
+MoMo PoC v4: 9/9. Stripe PoC v1: 9/9.
+
+### Breaking Changes
+
+None. All v0.7.x programs are fully compatible.
+
+| Symbol | Change |
+| :--- | :--- |
+| `Step` | `allowed_outputs: list[str] \| None = None` added |
+| `Step` | `timeout_seconds: float \| None = None` added |
+| `Step` | `on_timeout: str = 'fail'` added |
+
+---
+
 ## [0.7.5] — 2026-05-18
 
 ### Added
