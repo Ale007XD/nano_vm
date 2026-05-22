@@ -208,6 +208,7 @@ program = Program.from_dict({
             "type": "llm",
             "prompt": "Is this a valid refund request? Reply 'yes' or 'no'.\nRequest: $user_input",
             "output_key": "decision",
+            "allowed_outputs": ["yes", "no"],   # v0.8.0 — enum guard
         },
         {
             "id": "guardrail",
@@ -246,7 +247,7 @@ Four step types:
 | `condition` | branch on an expression; `then` / `otherwise` |
 | `parallel` | run independent sub-steps concurrently via `asyncio.gather` |
 
-**Step fields (v0.7.4+):**
+**Step fields (v0.8.0):**
 
 | Field | Default | Description |
 | :--- | :--- | :--- |
@@ -255,6 +256,9 @@ Four step types:
 | `max_concurrency` | `None` | parallel blocks only |
 | `is_terminal` | `False` | return `SUCCESS` after this step (leaf nodes) |
 | `next_step` | `None` | jump to named step instead of returning `SUCCESS` |
+| `allowed_outputs` | `None` | LLM-only — accepted output enum; `ValidationError` if empty |
+| `timeout_seconds` | `None` | LLM-only — `asyncio.wait_for` timeout in seconds |
+| `on_timeout` | `'fail'` | `'fail'` · `'fallback'` (→ `allowed_outputs[0]` or `''`) |
 
 **Program budget options (v0.4.0+):**
 
@@ -291,6 +295,8 @@ message (v0.7.5+).
   condition expression itself.
 - If you need case-insensitive matching, control the LLM output format via the prompt
   (`Reply ONLY with: yes or no`) rather than calling `.lower()` in the condition.
+- Use `allowed_outputs` (v0.8.0) to enforce exact output values at the step level before
+  the condition is evaluated.
 
 ```python
 # ❌ WRONG — method call raises ASTEvalError (v0.7.5+)
@@ -299,12 +305,60 @@ message (v0.7.5+).
 # ✅ CORRECT — pure value comparison
 {"condition": "'yes' in '$decision'"}
 
-# ❌ WRONG — user input becomes the expression
-{"condition": "$user_input", "then": "pay"}
-
-# ✅ CORRECT — you author the expression; LLM output is only the tested value
-{"condition": "'yes' in '$decision'", "then": "process_refund"}
+# ✅ BEST (v0.8.0) — enum guard + condition
+{
+    "id": "analyze", "type": "llm", "prompt": "...",
+    "allowed_outputs": ["yes", "no"],
+    "on_error": "skip",          # safe default on unexpected output
+}
 ```
+
+---
+
+## LLM Output Validation — `allowed_outputs` (v0.8.0)
+
+Validates the model's raw output string against an explicit enum at the step level.
+
+```python
+{
+    "id": "classify",
+    "type": "llm",
+    "prompt": "Classify the request. Reply ONLY with: refund / query / other",
+    "output_key": "category",
+    "allowed_outputs": ["refund", "query", "other"],
+    "on_error": "skip",          # output → "refund" (first element) on mismatch
+}
+```
+
+Behaviour by `on_error`:
+
+| `on_error` | On mismatch |
+| :--- | :--- |
+| `fail` (default) | `VMError` → `trace.FAILED` |
+| `skip` | output replaced with `allowed_outputs[0]` |
+| `retry` | retry up to `max_retries`; `VMError` if exhausted |
+
+Constraints: non-empty list required; `llm` steps only.
+
+---
+
+## LLM Step Timeout — `timeout_seconds` (v0.8.0)
+
+Prevents a hung LLM call from stalling the entire FSM.
+
+```python
+{
+    "id": "analyze",
+    "type": "llm",
+    "prompt": "...",
+    "allowed_outputs": ["approve", "reject"],
+    "timeout_seconds": 5.0,
+    "on_timeout": "fallback",    # → "approve" (allowed_outputs[0])
+}
+```
+
+`on_timeout=fail` (default) transitions to `FAILED`. `on_timeout=fallback` substitutes
+`allowed_outputs[0]` if set, otherwise `''`.
 
 ---
 
@@ -488,7 +542,7 @@ LiteLLMAdapter("openai/gpt-4o-mini")
 
 The VM introduces near-zero overhead. The bottleneck is the LLM API or external I/O.
 
-### v0.7.5 stress suite (179/179 tests · 0 violations)
+### v0.8.0 stress suite (432/432 tests · 0 violations)
 
 | Suite | Result |
 | :--- | :--- |
@@ -590,11 +644,11 @@ tuning). nano-vm controls *when* and *whether* steps run — orthogonal concerns
 - [x] ASTEngine METHOD_CALL guard — `ASTEvalError` at parse time (v0.7.5)
 - [x] `py.typed` marker — PEP 561 (v0.7.4)
 - [x] MCP server — `nano-vm-mcp` with GovernanceEnvelope, CapabilityRef, SSE + stdio
+- [x] `Step.allowed_outputs` — LLM output validation against enum (v0.8.0)
+- [x] `Step.timeout_seconds` + `on_timeout` — per-step LLM timeout (v0.8.0)
 
 **Upcoming — DSL hardening (v0.8.x):**
 
-- [ ] `Step.allowed_outputs` — LLM output validation against enum at step level
-- [ ] `Step.timeout_seconds` + `asyncio.wait_for` in `_execute_llm`
 - [ ] `ProgramValidator` — static analysis: unreachable steps, missing targets, cycle detection
 
 **Upcoming — execution graph (v0.8.x):**
