@@ -10,8 +10,8 @@ v0.7.0: ASTEngine в _execute_condition (eval() удалён), erase()
 from __future__ import annotations
 
 import asyncio
-import inspect
 import hashlib
+import inspect
 import re
 from collections.abc import Callable
 from datetime import datetime, timezone
