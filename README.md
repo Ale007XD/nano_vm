@@ -544,7 +544,7 @@ LiteLLMAdapter("openai/gpt-4o-mini")
 
 The VM introduces near-zero overhead. The bottleneck is the LLM API or external I/O.
 
-### v0.8.0 stress suite (432/432 tests · 0 violations)
+### v0.8.1 stress suite (435/435 tests · 0 violations)
 
 | Suite | Result |
 | :--- | :--- |
@@ -648,6 +648,7 @@ tuning). nano-vm controls *when* and *whether* steps run — orthogonal concerns
 - [x] MCP server — `nano-vm-mcp` with GovernanceEnvelope, CapabilityRef, SSE + stdio
 - [x] `Step.allowed_outputs` — LLM output validation against enum (v0.8.0)
 - [x] `Step.timeout_seconds` + `on_timeout` — per-step LLM timeout (v0.8.0)
+- [x] `inspect.iscoroutinefunction` — Python 3.14+/3.16 compat fix (v0.8.1)
 
 **Upcoming — DSL hardening (v0.8.x):**
 
@@ -665,6 +666,7 @@ tuning). nano-vm controls *when* and *whether* steps run — orthogonal concerns
 **Upcoming — gateway (v0.9.x):**
 
 - [ ] `nano-vm-mcp`: StateContext SQLite persistence — close inter-session duplicate risk
+- [ ] `nano-vm-dev-agent` — FSM-driven development agent (dogfooding; DA-2 live run planned)
 - [ ] `nano-vm-mcp`: `idempotency_store` — inter-session exactly-once guarantee
 - [ ] `nano-vm-mcp`: `GovernedToolExecutor` + circuit breaker
 - [ ] Blueprint registry — `resume()` without explicit program argument

@@ -7,6 +7,23 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [0.8.1] — 2026-05-23
+
+### Fixed
+
+- **`inspect.iscoroutinefunction`** replaces deprecated `asyncio.iscoroutinefunction`
+  in `vm.py` (line 522).  
+  `asyncio.iscoroutinefunction` is slated for removal in Python 3.16 and emits
+  `DeprecationWarning` on Python 3.14+. No behaviour change — async tool functions
+  continue to be awaited correctly; sync tool functions continue to be called directly.
+
+### Added
+
+- **`test_v081.py`** — 3 regression tests (BF-01–03).  
+  Covers: async tool awaited correctly, sync tool unaffected, mixed async+sync pipeline.
+
+---
+
 ## [0.8.0] — 2026-05-21
 
 ### Added
