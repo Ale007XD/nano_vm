@@ -12,6 +12,7 @@ nano_vm.adapters.litellm_adapter
     OpenAI:      "openai/gpt-4o"
     OpenRouter:  "openrouter/llama-3.3-70b-instruct:free"
     Ollama:      "ollama/llama3"
+    Vibecode:    "openai/claude-sonnet-4.6"  (stream=True required)
 """
 
 from __future__ import annotations
@@ -34,6 +35,7 @@ class LiteLLMAdapter:
         timeout:     таймаут запроса в секундах
         max_retries: количество повторов при ошибке провайдера
         temperature: температура генерации (0.0 — детерминировано)
+        stream:      включить streaming (обязательно для Vibecode/прокси с таймаутом)
         **kwargs:    любые дополнительные параметры litellm.acompletion
     """
 
@@ -44,6 +46,7 @@ class LiteLLMAdapter:
         timeout: float = 30.0,
         max_retries: int = 2,
         temperature: float = 0.0,
+        stream: bool = False,
         **kwargs: Any,
     ) -> None:
         self.model = model
@@ -51,6 +54,7 @@ class LiteLLMAdapter:
         self.timeout = timeout
         self.max_retries = max_retries
         self.temperature = temperature
+        self.stream = stream
         self._extra = kwargs
 
     async def complete(
@@ -65,6 +69,7 @@ class LiteLLMAdapter:
             "temperature": self.temperature,
             "timeout": self.timeout,
             "num_retries": self.max_retries,
+            "stream": self.stream,
             **self._extra,
             **kwargs,  # kwargs из вызова имеют приоритет
         }
@@ -73,6 +78,19 @@ class LiteLLMAdapter:
             params["fallbacks"] = self.fallbacks
 
         response = await acompletion(**params)
+
+        # Stream mode: собираем чанки в строку
+        if self.stream or params.get("stream"):
+            text_parts: list[str] = []
+            async for chunk in response:
+                delta = chunk.choices[0].delta if chunk.choices else None
+                if delta and delta.content:
+                    text_parts.append(delta.content)
+            text = "".join(text_parts)
+            # Usage недоступен в stream — возвращаем None
+            return text, None
+
+        # Non-stream mode (оригинальная логика)
         text = response.choices[0].message.content
 
         usage_dict: dict[str, Any] | None = None
@@ -100,4 +118,6 @@ class LiteLLMAdapter:
         parts = [f"model={self.model!r}"]
         if self.fallbacks:
             parts.append(f"fallbacks={self.fallbacks!r}")
+        if self.stream:
+            parts.append("stream=True")
         return f"LiteLLMAdapter({', '.join(parts)})"
