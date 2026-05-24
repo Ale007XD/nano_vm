@@ -36,6 +36,7 @@ class LiteLLMAdapter:
         max_retries: количество повторов при ошибке провайдера
         temperature: температура генерации (0.0 — детерминировано)
         stream:      включить streaming (обязательно для Vibecode/прокси с таймаутом)
+        max_tokens:  максимальное количество токенов в ответе (None = дефолт провайдера)
         **kwargs:    любые дополнительные параметры litellm.acompletion
     """
 
@@ -47,6 +48,7 @@ class LiteLLMAdapter:
         max_retries: int = 2,
         temperature: float = 0.0,
         stream: bool = False,
+        max_tokens: int | None = None,
         **kwargs: Any,
     ) -> None:
         self.model = model
@@ -55,6 +57,7 @@ class LiteLLMAdapter:
         self.max_retries = max_retries
         self.temperature = temperature
         self.stream = stream
+        self.max_tokens = max_tokens
         self._extra = kwargs
 
     async def complete(
@@ -73,6 +76,9 @@ class LiteLLMAdapter:
             **self._extra,
             **kwargs,
         }
+
+        if self.max_tokens is not None:
+            params["max_tokens"] = self.max_tokens
 
         if self.fallbacks:
             params["fallbacks"] = self.fallbacks
@@ -98,4 +104,6 @@ class LiteLLMAdapter:
             parts.append(f"fallbacks={self.fallbacks!r}")
         if self.stream:
             parts.append("stream=True")
+        if self.max_tokens is not None:
+            parts.append(f"max_tokens={self.max_tokens}")
         return f"LiteLLMAdapter({', '.join(parts)})"
