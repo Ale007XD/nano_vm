@@ -61,8 +61,8 @@ class LiteLLMAdapter:
         self,
         messages: list[dict[str, str]],
         **kwargs: Any,
-    ) -> tuple[str, dict[str, Any] | None]:
-        """Вызов LLM через litellm. Возвращает (text, usage_dict) или (text, None)."""
+    ) -> str:
+        """Вызов LLM через litellm. Возвращает текст ответа."""
         params: dict[str, Any] = {
             "model": self.model,
             "messages": messages,
@@ -71,7 +71,7 @@ class LiteLLMAdapter:
             "num_retries": self.max_retries,
             "stream": self.stream,
             **self._extra,
-            **kwargs,  # kwargs из вызова имеют приоритет
+            **kwargs,
         }
 
         if self.fallbacks:
@@ -86,33 +86,11 @@ class LiteLLMAdapter:
                 delta = chunk.choices[0].delta if chunk.choices else None
                 if delta and delta.content:
                     text_parts.append(delta.content)
-            text = "".join(text_parts)
-            # Usage недоступен в stream — возвращаем None
-            return text, None
+            return "".join(text_parts)
 
-        # Non-stream mode (оригинальная логика)
-        text = response.choices[0].message.content
-
-        usage_dict: dict[str, Any] | None = None
-        raw_usage = getattr(response, "usage", None)
-        if raw_usage is not None:
-            prompt_tokens = getattr(raw_usage, "prompt_tokens", 0) or 0
-            completion_tokens = getattr(raw_usage, "completion_tokens", 0) or 0
-            total_tokens = getattr(raw_usage, "total_tokens", 0) or (
-                prompt_tokens + completion_tokens
-            )
-            cost_usd: float | None = None
-            hidden = getattr(response, "_hidden_params", {}) or {}
-            if "response_cost" in hidden and hidden["response_cost"] is not None:
-                cost_usd = float(hidden["response_cost"])
-            usage_dict = {
-                "prompt_tokens": prompt_tokens,
-                "completion_tokens": completion_tokens,
-                "total_tokens": total_tokens,
-                "cost_usd": cost_usd,
-            }
-
-        return text, usage_dict
+        # Non-stream mode
+        text: str = response.choices[0].message.content
+        return text
 
     def __repr__(self) -> str:
         parts = [f"model={self.model!r}"]
