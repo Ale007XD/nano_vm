@@ -408,7 +408,7 @@ class TestVMConditionNoEval:
     """_execute_condition использует ASTEngine, не eval()."""
 
     def _run(self, coro):
-        return asyncio.get_event_loop().run_until_complete(coro)
+        return asyncio.run(coro)
 
     def _make_program(self):
         return Program.from_dict(
@@ -496,7 +496,7 @@ class TestIdempotency:
     """
 
     def _run(self, coro):
-        return asyncio.get_event_loop().run_until_complete(coro)
+        return asyncio.run(coro)
 
     def test_llm_step_same_output(self):
         step = Step(id="s1", type=StepType.LLM, prompt="Hello $name")
