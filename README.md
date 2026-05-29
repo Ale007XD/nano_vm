@@ -544,17 +544,17 @@ LiteLLMAdapter("openai/gpt-4o-mini")
 
 The VM introduces near-zero overhead. The bottleneck is the LLM API or external I/O.
 
-### v0.8.0 stress suite (432/432 tests · 0 violations)
+### v0.8.2 stress suite (435/435 tests · 0 violations)
 
 | Suite | Result |
 | :--- | :--- |
 | MoMo PoC v4 | 9/9 PASS |
 | Stripe PoC v1 | 9/9 PASS |
 | FSM invariant suite (v0.6.0) | 13/13 · 1,020,000 ops · 0 violations |
-| Integration suite (v0.8.0) | 10/10 · 1,096,500 ops · 0 violations |
+| Integration suite (v0.8.2) | 10/10 · 1,096,500 ops · 0 violations |
 | 10k stress (v0.7.0) | 14,327 graphs/sec · 0.70 s/run |
 
-### Integration benchmark detail (v0.8.0)
+### Integration benchmark detail (v0.8.2)
 
 Environment: WSL2 · Windows 11 · Python 3.12 · Mock adapter · 3 cycles × 5 runs × 10,000 items.
 
@@ -648,6 +648,7 @@ tuning). nano-vm controls *when* and *whether* steps run — orthogonal concerns
 - [x] MCP server — `nano-vm-mcp` with GovernanceEnvelope, CapabilityRef, SSE + stdio
 - [x] `Step.allowed_outputs` — LLM output validation against enum (v0.8.0)
 - [x] `Step.timeout_seconds` + `on_timeout` — per-step LLM timeout (v0.8.0)
+- [x] `asyncio.iscoroutinefunction` → `inspect.iscoroutinefunction` — Python 3.14+ compatibility (v0.8.2)
 
 **Upcoming — DSL hardening (v0.8.x):**
 
@@ -664,9 +665,7 @@ tuning). nano-vm controls *when* and *whether* steps run — orthogonal concerns
 
 **Upcoming — gateway (v0.9.x):**
 
-- [ ] `nano-vm-mcp`: StateContext SQLite persistence — close inter-session duplicate risk
-- [ ] `nano-vm-mcp`: `idempotency_store` — inter-session exactly-once guarantee
-- [ ] `nano-vm-mcp`: `GovernedToolExecutor` + circuit breaker
+- [ ] `nano-vm-mcp`: `GovernedToolExecutor` circuit breaker — degradation isolation
 - [ ] Blueprint registry — `resume()` without explicit program argument
 - [ ] `replan_on_interrupt` — Planner-driven continuation on budget interrupts
 

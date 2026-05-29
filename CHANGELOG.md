@@ -7,6 +7,39 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [0.8.2] — 2026-05-29
+
+### Fixed
+
+- **`asyncio.iscoroutinefunction` → `inspect.iscoroutinefunction` in `vm.py`.**  
+  `asyncio.iscoroutinefunction` is deprecated since Python 3.12 and scheduled for removal
+  in Python 3.16. The call site in `_execute_step` (tool dispatch) has been replaced with
+  `inspect.iscoroutinefunction`, which is the canonical long-term API.  
+  `asyncio.iscoroutine(result)` on the following line is **not** deprecated and was not
+  changed.
+
+- **`test_v070_sprint1.py` — `asyncio.get_event_loop().run_until_complete()` replaced
+  with `asyncio.run()` in `TestVMConditionNoEval` and `TestIdempotency`.**  
+  `asyncio.get_event_loop()` without an active running loop raises `DeprecationWarning`
+  in Python 3.10+ and `RuntimeError` in Python 3.12+ under pytest-asyncio auto mode.  
+  Fix: `_run()` helper now calls `asyncio.run(coro)`, which creates and closes a fresh
+  event loop per call — correct for synchronous test helpers.
+
+### Changed
+
+- No public API changes. All v0.8.x programs are fully compatible.
+
+### CI
+
+435/435 tests — 432 regression + 3 additional (deprecation regression guards).  
+Python 3.10 / 3.11 / 3.12 matrix. MoMo PoC v4: 9/9. Stripe PoC v1: 9/9.
+
+### Breaking Changes
+
+None.
+
+---
+
 ## [0.8.0] — 2026-05-21
 
 ### Added
