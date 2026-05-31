@@ -9,6 +9,7 @@ v0.7.0: ASTEngine в _execute_condition (eval() удалён), erase()
 
 from __future__ import annotations
 
+import inspect
 import asyncio
 import hashlib
 import re
@@ -518,7 +519,7 @@ class ExecutionVM:
             )
         fn = self._tools[step.tool]
         resolved_args = {k: self._resolve(v, state) for k, v in step.args.items()}
-        if asyncio.iscoroutinefunction(fn):
+        if inspect.iscoroutinefunction(tool_fn):
             return await fn(**resolved_args)
         result = fn(**resolved_args)
         if asyncio.iscoroutine(result):
