@@ -519,7 +519,7 @@ class ExecutionVM:
             )
         fn = self._tools[step.tool]
         resolved_args = {k: self._resolve(v, state) for k, v in step.args.items()}
-        if inspect.iscoroutinefunction(tool_fn):
+        if inspect.iscoroutinefunction(fn):
             return await fn(**resolved_args)
         result = fn(**resolved_args)
         if asyncio.iscoroutine(result):
