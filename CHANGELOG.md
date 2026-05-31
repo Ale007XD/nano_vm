@@ -11,6 +11,13 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- **`tool_fn` → `fn` in `nano_vm/vm.py` (`_execute_step`).**  
+  Line 522 referenced an undefined name `tool_fn` instead of the locally bound `fn`
+  (`self._tools[step.tool]` on line 520). This produced an `F821` lint error and would
+  raise `NameError` at runtime when dispatching async tools. Corrected to
+  `inspect.iscoroutinefunction(fn)`, aligning the coroutine check with the actual
+  callable invoked on the following lines.
+
 - **`asyncio.iscoroutinefunction` → `inspect.iscoroutinefunction` in `vm.py`.**  
   `asyncio.iscoroutinefunction` is deprecated since Python 3.12 and scheduled for removal
   in Python 3.16. The call site in `_execute_step` (tool dispatch) has been replaced with
