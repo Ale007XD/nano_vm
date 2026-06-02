@@ -26,7 +26,7 @@ from nano_vm.models import StepResult, StepStatus, Trace, TraceStatus
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__)))
 
-from analyzer import TraceAnalyzer, TraceHealthReport, analyze_batch
+from nano_vm.analyzer import TraceAnalyzer, TraceHealthReport, analyze_batch
 
 # ---------------------------------------------------------------------------
 # Helpers
