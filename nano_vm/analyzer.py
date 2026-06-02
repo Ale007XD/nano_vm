@@ -24,8 +24,8 @@ transition_sequence_variance > 0.4
 
 from __future__ import annotations
 
-from collections.abc import Sequence
 from dataclasses import dataclass, field
+from typing import Sequence
 
 from nano_vm.models import StepStatus, Trace
 
@@ -127,7 +127,8 @@ class TraceAnalyzer:
         alerts: list[str] = []
         if rd > _THRESHOLD_ROLLBACK_DENSITY:
             alerts.append(
-                f"rollback_density {rd:.3f} > {_THRESHOLD_ROLLBACK_DENSITY} (execution instability)"
+                f"rollback_density {rd:.3f} > {_THRESHOLD_ROLLBACK_DENSITY} "
+                "(execution instability)"
             )
         if tcr > _THRESHOLD_TOOL_CHURN_RATE:
             alerts.append(
@@ -145,8 +146,9 @@ class TraceAnalyzer:
                 "(high error rate)"
             )
         if tsv is not None and tsv > _THRESHOLD_TRANSITION_SEQUENCE_VARIANCE:
+            thr = _THRESHOLD_TRANSITION_SEQUENCE_VARIANCE
             alerts.append(
-                f"transition_sequence_variance {tsv:.3f} > {_THRESHOLD_TRANSITION_SEQUENCE_VARIANCE} "
+                f"transition_sequence_variance {tsv:.3f} > {thr} "
                 "(structural path divergence from baseline)"
             )
 
