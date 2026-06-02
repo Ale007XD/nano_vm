@@ -24,8 +24,8 @@ transition_sequence_variance > 0.4
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass, field
-from typing import Sequence
 
 from nano_vm.models import StepStatus, Trace
 
@@ -71,10 +71,10 @@ class TraceHealthReport:
             f"  total_steps    : {self.total_steps}",
             f"  rollback_density          : {self.rollback_density:.3f}",
             f"  tool_churn_rate           : {self.tool_churn_rate:.3f}",
-            f"  path_variance             : "
+            "  path_variance             : "
             + (f"{self.path_variance:.3f}" if self.path_variance is not None else "n/a"),
             f"  invariant_violation_rate  : {self.invariant_violation_rate:.3f}",
-            f"  transition_seq_variance   : "
+            "  transition_seq_variance   : "
             + (
                 f"{self.transition_sequence_variance:.3f}"
                 if self.transition_sequence_variance is not None
@@ -127,8 +127,7 @@ class TraceAnalyzer:
         alerts: list[str] = []
         if rd > _THRESHOLD_ROLLBACK_DENSITY:
             alerts.append(
-                f"rollback_density {rd:.3f} > {_THRESHOLD_ROLLBACK_DENSITY} "
-                "(execution instability)"
+                f"rollback_density {rd:.3f} > {_THRESHOLD_ROLLBACK_DENSITY} (execution instability)"
             )
         if tcr > _THRESHOLD_TOOL_CHURN_RATE:
             alerts.append(

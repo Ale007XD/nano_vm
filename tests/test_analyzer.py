@@ -14,20 +14,19 @@ Coverage:
 from __future__ import annotations
 
 import hashlib
+import os
+
+# Import from the local sprint6 module (copy analyzer.py next to tests or adjust sys.path)
+import sys
 from typing import Any
 
 import pytest
 
 from nano_vm.models import StepResult, StepStatus, Trace, TraceStatus
 
-# Import from the local sprint6 module (copy analyzer.py next to tests or adjust sys.path)
-import sys
-import os
-
 sys.path.insert(0, os.path.join(os.path.dirname(__file__)))
 
 from analyzer import TraceAnalyzer, TraceHealthReport, analyze_batch
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -295,7 +294,9 @@ def test_ta24_tsv_identical_paths() -> None:
     steps = [_step("a"), _step("b"), _step("c")]
     trace = _trace(steps)
     baseline = _trace(steps)
-    assert TraceAnalyzer(trace, baseline=baseline).transition_sequence_variance() == pytest.approx(0.0)
+    assert TraceAnalyzer(trace, baseline=baseline).transition_sequence_variance() == pytest.approx(
+        0.0
+    )
 
 
 def test_ta25_tsv_completely_different_paths() -> None:
@@ -322,14 +323,18 @@ def test_ta27_tsv_single_step_trace() -> None:
     """TA-27: single step → no pairs → 0.0"""
     trace = _trace([_step("a")])
     baseline = _trace([_step("a")])
-    assert TraceAnalyzer(trace, baseline=baseline).transition_sequence_variance() == pytest.approx(0.0)
+    assert TraceAnalyzer(trace, baseline=baseline).transition_sequence_variance() == pytest.approx(
+        0.0
+    )
 
 
 def test_ta28_tsv_empty_traces() -> None:
     """TA-28: both empty → 0.0"""
     trace = _trace([])
     baseline = _trace([])
-    assert TraceAnalyzer(trace, baseline=baseline).transition_sequence_variance() == pytest.approx(0.0)
+    assert TraceAnalyzer(trace, baseline=baseline).transition_sequence_variance() == pytest.approx(
+        0.0
+    )
 
 
 def test_ta29_tsv_alert_fires() -> None:
