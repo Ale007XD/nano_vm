@@ -40,7 +40,7 @@ _THRESHOLD_TOOL_CHURN_RATE: float = 0.4
 _THRESHOLD_PATH_VARIANCE: float = 0.5
 _THRESHOLD_INVARIANT_VIOLATION_RATE: float = 0.2
 _THRESHOLD_TRANSITION_SEQUENCE_VARIANCE: float = 0.4
-_THRESHOLD_TRANSITION_ENTROPY: float = 1.5  # bits; alert when H > 1.5 bits
+_THRESHOLD_TRANSITION_ENTROPY: float = 2.5  # bits; alert when H > 2.5 bits
 
 
 # ---------------------------------------------------------------------------
