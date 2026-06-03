@@ -7,6 +7,15 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 
 ---
 
+## v0.8.3
+
+### Added
+- `TraceAnalyzer.transition_entropy()` — Shannon entropy of step transition
+  distribution within a single trace (bits). Captures internal path
+  non-determinism without requiring a baseline.
+- `TraceHealthReport.transition_entropy` field.
+- Alert threshold: `transition_entropy > 1.5 bits` → non-interrupting warning.
+
 ## [0.8.2] — 2026-05-29
 
 ### Fixed
