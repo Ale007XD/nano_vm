@@ -8,10 +8,12 @@ Metrics
 rollback_density      : retried steps / total steps            → float [0,1]
 tool_churn_rate       : duplicate step_id executions / total   → float [0,1]
 path_variance         : fraction of snapshots diverging from   → float [0,1]
-                        baseline (requires baseline Trace)
+                         baseline (requires baseline Trace)
 invariant_violation_rate    : failed steps / total steps              → float [0,1]
 transition_sequence_variance: fraction of (prev→curr) step_id pairs    → float [0,1]
-                              in trace not present in baseline
+                               in trace not present in baseline
+transition_entropy    : Shannon entropy of transition probability matrix → float [0,∞)
+                               (bits; higher = more unpredictable)
 
 Alert thresholds (non-interrupting — report only)
 -------------------------------------------------
@@ -38,6 +40,7 @@ _THRESHOLD_TOOL_CHURN_RATE: float = 0.4
 _THRESHOLD_PATH_VARIANCE: float = 0.5
 _THRESHOLD_INVARIANT_VIOLATION_RATE: float = 0.2
 _THRESHOLD_TRANSITION_SEQUENCE_VARIANCE: float = 0.4
+_THRESHOLD_TRANSITION_ENTROPY: float = 1.5  # bits; alert when H > 1.5 bits
 
 
 # ---------------------------------------------------------------------------
@@ -58,6 +61,7 @@ class TraceHealthReport:
     path_variance: float | None  # None when no baseline provided
     invariant_violation_rate: float
     transition_sequence_variance: float | None  # None when no baseline provided
+    transition_entropy: float  # Shannon entropy of step transitions in bits
 
     alerts: list[str] = field(default_factory=list)
 
@@ -80,6 +84,7 @@ class TraceHealthReport:
                 if self.transition_sequence_variance is not None
                 else "n/a"
             ),
+            f"  transition_entropy        : {self.transition_entropy:.3f} bits",
         ]
         if self.alerts:
             lines.append("  alerts:")
@@ -123,6 +128,7 @@ class TraceAnalyzer:
         pv = self.path_variance()
         ivr = self.invariant_violation_rate()
         tsv = self.transition_sequence_variance()
+        te = self.transition_entropy()
 
         alerts: list[str] = []
         if rd > _THRESHOLD_ROLLBACK_DENSITY:
@@ -150,6 +156,11 @@ class TraceAnalyzer:
                 f"transition_sequence_variance {tsv:.3f} > {thr} "
                 "(structural path divergence from baseline)"
             )
+        if te > _THRESHOLD_TRANSITION_ENTROPY:
+            alerts.append(
+                f"transition_entropy {te:.3f} > {_THRESHOLD_TRANSITION_ENTROPY} bits "
+                "(high path non-determinism)"
+            )
 
         return TraceHealthReport(
             trace_id=self._trace.trace_id,
@@ -160,6 +171,7 @@ class TraceAnalyzer:
             path_variance=pv,
             invariant_violation_rate=ivr,
             transition_sequence_variance=tsv,
+            transition_entropy=te,
             alerts=alerts,
         )
 
@@ -273,6 +285,34 @@ class TraceAnalyzer:
 
         divergent = len(trace_pairs.symmetric_difference(base_pairs))
         return divergent / len(all_pairs)
+
+    def transition_entropy(self) -> float:
+        """Shannon entropy of (prev_step_id → curr_step_id) transition distribution.
+
+        H = -Σ p_i * log2(p_i)  where p_i = count(pair_i) / total_pairs
+
+        Single or zero steps → 0.0 (deterministic, no transitions).
+        All transitions unique → log2(N) (maximum entropy).
+        Range: [0.0, log2(N)] bits.
+
+        Note: absolute (non-normalized) entropy. A deterministic pipeline
+        typically scores 0.0–0.5; moderate branching 1.0–1.8; values above
+        1.5 trigger an alert. Normalized form (H / log2(N) → [0,1]) is
+        deferred until cross-trace comparison is needed.
+        """
+        import math
+
+        ids = [s.step_id for s in self._trace.steps]
+        if len(ids) < 2:
+            return 0.0
+
+        counts: dict[tuple[str, str], int] = {}
+        for a, b in zip(ids, ids[1:]):
+            key = (a, b)
+            counts[key] = counts.get(key, 0) + 1
+
+        total = sum(counts.values())
+        return -sum((c / total) * math.log2(c / total) for c in counts.values())
 
 
 # ---------------------------------------------------------------------------
