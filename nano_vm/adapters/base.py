@@ -15,7 +15,11 @@ class LLMAdapter(Protocol):
     """
     Минимальный контракт для LLM-адаптера.
 
-    Пример кастомной реализации:
+    complete() возвращает либо строку (legacy / кастомные адаптеры),
+    либо tuple[str, dict | None] (встроенные адаптеры с usage-данными).
+    ExecutionVM обрабатывает оба варианта через isinstance(result, tuple).
+
+    Пример кастомной реализации (минимальная — только str):
 
         class MyAdapter:
             async def complete(self, messages, **kwargs) -> str:
@@ -23,15 +27,26 @@ class LLMAdapter(Protocol):
                 return "ответ"
 
         vm = ExecutionVM(llm=MyAdapter())
+
+    Пример с usage:
+
+        class MyAdapter:
+            async def complete(
+                self, messages, **kwargs
+            ) -> tuple[str, dict[str, Any] | None]:
+                text = ...
+                usage = {"prompt_tokens": 10, "completion_tokens": 5,
+                         "total_tokens": 15, "cost_usd": None}
+                return text, usage
     """
 
     async def complete(
         self,
         messages: list[dict[str, str]],
         **kwargs: Any,
-    ) -> str:
+    ) -> str | tuple[str, dict[str, Any] | None]:
         """
-        Отправить список сообщений в LLM, вернуть текст ответа.
+        Отправить список сообщений в LLM, вернуть ответ.
 
         Args:
             messages: список dict с ключами 'role' и 'content'
@@ -39,6 +54,8 @@ class LLMAdapter(Protocol):
             **kwargs: дополнительные параметры (temperature, max_tokens и т.д.)
 
         Returns:
-            Текст ответа модели (строка).
+            str — текст ответа (legacy / кастомные адаптеры).
+            tuple[str, dict | None] — текст + usage_dict с ключами
+            prompt_tokens, completion_tokens, total_tokens, cost_usd.
         """
         ...
