@@ -34,6 +34,7 @@ class IssueKind(str, Enum):
     MISSING_TARGET = "missing_target"
     UNREACHABLE_STEP = "unreachable_step"
     CYCLE_DETECTED = "cycle_detected"
+    NO_FAILURE_TERMINAL = "no_failure_terminal"
 
 
 @dataclass(frozen=True)
@@ -99,6 +100,7 @@ class ProgramValidator:
         issues.extend(self._check_missing_targets())
         issues.extend(self._check_unreachable_steps())
         issues.extend(self._check_cycles())
+        issues.extend(self._check_failure_terminal())
         return ValidationReport(program_name=self._program.name, issues=issues)
 
     # ------------------------------------------------------------------
@@ -203,8 +205,75 @@ class ProgramValidator:
         return issues
 
     # ------------------------------------------------------------------
-    # Check: cycle detection — DFS WHITE/GRAY/BLACK
+    # Check: PV-13 — no reachable failure terminal (warning)
     # ------------------------------------------------------------------
+
+    # Canonical failure-signalling output prefixes / exact values.
+    # A terminal step whose allowed_outputs contains at least one of these
+    # (or whose id contains a failure keyword) counts as a failure terminal.
+    _FAILURE_KEYWORDS: frozenset[str] = frozenset(
+        {"FAIL", "FAILED", "ERROR", "REJECTED", "INSUFFICIENT", "BLOCKED", "ESCALATED", "HELP"}
+    )
+
+    def _check_failure_terminal(self) -> list[ValidationIssue]:
+        """PV-13: warn when no reachable terminal step signals failure.
+
+        A program with only SUCCESS-type terminals cannot exit cleanly on
+        unresolvable inputs — the FSM will retry-loop or hallucinate.
+        This is a WARNING (not an error): valid for simple linear programs,
+        but structurally risky for LLM steps with open-ended output space.
+        """
+        if not self._program.steps:
+            return []
+
+        # Reachable set (reuse BFS logic inline — adjacency already built)
+        entry = self._program.steps[0].id
+        visited: set[str] = set()
+        queue: list[str] = [entry]
+        while queue:
+            node = queue.pop(0)
+            if node in visited:
+                continue
+            visited.add(node)
+            for neighbor in self._adjacency.get(node, []):
+                if neighbor not in visited:
+                    queue.append(neighbor)
+
+        def _is_failure_terminal(step: Step) -> bool:
+            if not step.is_terminal:
+                return False
+            # Check step id
+            sid_upper = step.id.upper()
+            if any(kw in sid_upper for kw in self._FAILURE_KEYWORDS):
+                return True
+            # Check allowed_outputs values
+            if step.allowed_outputs:
+                for val in step.allowed_outputs:
+                    if any(kw in val.upper() for kw in self._FAILURE_KEYWORDS):
+                        return True
+            return False
+
+        has_failure_terminal = any(
+            _is_failure_terminal(s)
+            for s in self._program.steps
+            if s.id in visited
+        )
+
+        if has_failure_terminal:
+            return []
+
+        return [
+            ValidationIssue(
+                kind=IssueKind.NO_FAILURE_TERMINAL,
+                step_id=self._program.steps[0].id,
+                detail=(
+                    "no reachable terminal step signals failure "
+                    "(id or allowed_outputs containing FAIL/ERROR/REJECTED/BLOCKED/…); "
+                    "program may loop on unresolvable inputs"
+                ),
+            )
+        ]
+
 
     def _check_cycles(self) -> list[ValidationIssue]:
         WHITE, GRAY, BLACK = 0, 1, 2
