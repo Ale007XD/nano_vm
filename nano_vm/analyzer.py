@@ -26,10 +26,11 @@ transition_sequence_variance > 0.4
 
 from __future__ import annotations
 
+import hashlib
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 
-from nano_vm.models import StepStatus, Trace
+from nano_vm.models import StepStatus, Trace, TraceStatus
 
 # ---------------------------------------------------------------------------
 # Thresholds
@@ -116,10 +117,40 @@ class TraceAnalyzer:
     def __init__(self, trace: Trace, baseline: Trace | None = None) -> None:
         self._trace = trace
         self._baseline = baseline
+        self._receipt_cache: ExecutionReceipt | None = None
 
     # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
+
+    def receipt(self) -> ExecutionReceipt:
+        """Return an ExecutionReceipt for this trace (lazy, cached).
+
+        Deterministic: same Trace → same Receipt every call.
+        Post-hoc only: should be called after trace is finished.
+        """
+        if self._receipt_cache is not None:
+            return self._receipt_cache
+
+        trace = self._trace
+        merkle = trace.canonical_snapshot_hash()
+        trace_hash = hashlib.sha256(merkle.encode()).hexdigest()
+
+        failed = sum(1 for s in trace.steps if s.status == StepStatus.FAILED)
+        retried = sum(1 for s in trace.steps if s.retries > 0)
+
+        receipt = ExecutionReceipt(
+            trace_id=trace.trace_id,
+            trace_hash=trace_hash,
+            final_status=trace.status,
+            resumable=trace.status in _RESUMABLE_STATUSES,
+            replayable=trace.status not in _NON_REPLAYABLE_STATUSES,
+            failed_steps=failed,
+            retried_steps=retried,
+            health=self.report(),
+        )
+        self._receipt_cache = receipt
+        return receipt
 
     def report(self) -> TraceHealthReport:
         total = len(self._trace.steps)
@@ -313,6 +344,49 @@ class TraceAnalyzer:
 
         total = sum(counts.values())
         return -sum((c / total) * math.log2(c / total) for c in counts.values())
+
+
+# ---------------------------------------------------------------------------
+# ExecutionReceipt
+# ---------------------------------------------------------------------------
+
+_RESUMABLE_STATUSES: frozenset[TraceStatus] = frozenset({TraceStatus.SUSPENDED})
+_NON_REPLAYABLE_STATUSES: frozenset[TraceStatus] = frozenset({TraceStatus.RUNNING})
+
+
+@dataclass(frozen=True)
+class ExecutionReceipt:
+    """Minimal deterministic extract from a Trace sufficient for continuation decisions.
+
+    Contract: ReceiptProjection(Trace) — deterministic, recomputable, Receipt ⊆ Trace.
+    Generation: TraceAnalyzer.receipt() — post-hoc only, lazy + internal cache.
+
+    Fields
+    ------
+    trace_id      : copied from Trace.trace_id
+    trace_hash    : SHA-256 over Trace.canonical_snapshot_hash() (Merkle root)
+    final_status  : copied from Trace.status at receipt time
+    resumable     : True when status == SUSPENDED (FSM can resume from suspended_step_id)
+    replayable    : True when status != RUNNING (running trace has no stable replay point)
+    failed_steps  : count of StepResult with status == FAILED
+    retried_steps : count of StepResult with retries > 0
+    health        : embedded TraceHealthReport
+
+    Deferred (no source data in current model)
+    ------------------------------------------
+    blocked_actions / escalations : requires GovernanceEnvelope.decision field (not in StepResult)
+    receipt_hash                  : only meaningful with OperatorDecision entity
+    LLM summary                   : non-goal — deterministic only
+    """
+
+    trace_id: str
+    trace_hash: str
+    final_status: TraceStatus
+    resumable: bool
+    replayable: bool
+    failed_steps: int
+    retried_steps: int
+    health: TraceHealthReport
 
 
 # ---------------------------------------------------------------------------
