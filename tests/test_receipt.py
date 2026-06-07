@@ -1,47 +1,15 @@
-"""Tests for ExecutionReceipt — ER-01..08.
+"""Tests for ExecutionReceipt — ER-01..10.
 
 Run from nano-vm repo root:
     pytest tests/test_receipt.py -v
-
-These tests import TraceAnalyzer and ExecutionReceipt from nano_vm.analyzer.
 """
-
 from __future__ import annotations
 
 import hashlib
-import importlib.util
-import sys
-from pathlib import Path
-from typing import Any
 
 import pytest
-
-# ---------------------------------------------------------------------------
-# Bootstrap: load analyzer_orig.py as if it were nano_vm.analyzer
-# (replace with `from nano_vm.analyzer import ...` when file is in repo)
-# ---------------------------------------------------------------------------
-
-
-def _load_analyzer() -> Any:
-    path = Path(__file__).parent / "analyzer_orig.py"
-    spec = importlib.util.spec_from_file_location("analyzer_mod", path)
-    mod = importlib.util.module_from_spec(spec)  # type: ignore[arg-type]
-    sys.modules["analyzer_mod"] = mod
-    spec.loader.exec_module(mod)  # type: ignore[union-attr]
-    return mod
-
-
-_mod = _load_analyzer()
-TraceAnalyzer = _mod.TraceAnalyzer
-ExecutionReceipt = _mod.ExecutionReceipt
-TraceHealthReport = _mod.TraceHealthReport
-
-from nano_vm.models import (
-    StepResult,
-    StepStatus,
-    Trace,
-    TraceStatus,
-)
+from nano_vm.analyzer import TraceAnalyzer, TraceHealthReport
+from nano_vm.models import StepResult, StepStatus, Trace, TraceStatus
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -49,12 +17,7 @@ from nano_vm.models import (
 
 
 def _step(step_id: str, status: StepStatus = StepStatus.SUCCESS, retries: int = 0) -> StepResult:
-    return StepResult(
-        step_id=step_id,
-        status=status,
-        output="ok",
-        retries=retries,
-    )
+    return StepResult(step_id=step_id, status=status, output="ok", retries=retries)
 
 
 def _make_trace(
@@ -71,7 +34,7 @@ def _make_trace(
 
 
 # ---------------------------------------------------------------------------
-# ER-01: receipt() is deterministic — two calls return identical object
+# ER-01: receipt() is deterministic — two calls return identical cached object
 # ---------------------------------------------------------------------------
 
 
@@ -96,7 +59,7 @@ def test_er02_trace_hash() -> None:
     expected = hashlib.sha256(merkle.encode()).hexdigest()
     r = TraceAnalyzer(trace).receipt()
     assert r.trace_hash == expected
-    assert len(r.trace_hash) == 64  # hex SHA-256
+    assert len(r.trace_hash) == 64
 
 
 # ---------------------------------------------------------------------------
@@ -138,7 +101,7 @@ def test_er05_not_replayable_running() -> None:
 
 
 # ---------------------------------------------------------------------------
-# ER-06: replayable=True for terminal statuses (SUCCESS, FAILED, SUSPENDED)
+# ER-06: replayable=True for all terminal statuses
 # ---------------------------------------------------------------------------
 
 
@@ -194,7 +157,7 @@ def test_er08_retried_steps_count() -> None:
 
 
 # ---------------------------------------------------------------------------
-# ER-09: health is TraceHealthReport embedded
+# ER-09: health is TraceHealthReport embedded with correct trace_id
 # ---------------------------------------------------------------------------
 
 
@@ -206,7 +169,7 @@ def test_er09_health_embedded() -> None:
 
 
 # ---------------------------------------------------------------------------
-# ER-10: two independent TraceAnalyzer instances same trace → equal receipts
+# ER-10: two independent TraceAnalyzer instances, same trace → equal receipts
 # ---------------------------------------------------------------------------
 
 
