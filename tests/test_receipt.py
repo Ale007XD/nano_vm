@@ -3,11 +3,13 @@
 Run from nano-vm repo root:
     pytest tests/test_receipt.py -v
 """
+
 from __future__ import annotations
 
 import hashlib
 
 import pytest
+
 from nano_vm.analyzer import TraceAnalyzer, TraceHealthReport
 from nano_vm.models import StepResult, StepStatus, Trace, TraceStatus
 
