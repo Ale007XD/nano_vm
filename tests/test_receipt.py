@@ -5,12 +5,12 @@ Run from nano-vm repo root:
 
 These tests import TraceAnalyzer and ExecutionReceipt from nano_vm.analyzer.
 """
+
 from __future__ import annotations
 
 import hashlib
-import sys
 import importlib.util
-from datetime import datetime, timezone
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -21,6 +21,7 @@ import pytest
 # (replace with `from nano_vm.analyzer import ...` when file is in repo)
 # ---------------------------------------------------------------------------
 
+
 def _load_analyzer() -> Any:
     path = Path(__file__).parent / "analyzer_orig.py"
     spec = importlib.util.spec_from_file_location("analyzer_mod", path)
@@ -29,23 +30,23 @@ def _load_analyzer() -> Any:
     spec.loader.exec_module(mod)  # type: ignore[union-attr]
     return mod
 
+
 _mod = _load_analyzer()
 TraceAnalyzer = _mod.TraceAnalyzer
 ExecutionReceipt = _mod.ExecutionReceipt
 TraceHealthReport = _mod.TraceHealthReport
 
 from nano_vm.models import (
-    Trace,
-    TraceStatus,
     StepResult,
     StepStatus,
-    LLMUsage,
+    Trace,
+    TraceStatus,
 )
-
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _step(step_id: str, status: StepStatus = StepStatus.SUCCESS, retries: int = 0) -> StepResult:
     return StepResult(
@@ -62,9 +63,9 @@ def _make_trace(
     snapshots: list[tuple[int, str]] | None = None,
 ) -> Trace:
     t = Trace(program_name="test_program", status=status)
-    for s in (steps or []):
+    for s in steps or []:
         t = t.add_step(s)
-    for idx, fp in (snapshots or []):
+    for idx, fp in snapshots or []:
         t = t.add_snapshot(idx, fp)
     return t.finish(status)
 
@@ -72,6 +73,7 @@ def _make_trace(
 # ---------------------------------------------------------------------------
 # ER-01: receipt() is deterministic — two calls return identical object
 # ---------------------------------------------------------------------------
+
 
 def test_er01_deterministic() -> None:
     trace = _make_trace([_step("a"), _step("b")])
@@ -85,6 +87,7 @@ def test_er01_deterministic() -> None:
 # ---------------------------------------------------------------------------
 # ER-02: trace_hash is SHA-256 over canonical_snapshot_hash (Merkle root)
 # ---------------------------------------------------------------------------
+
 
 def test_er02_trace_hash() -> None:
     snapshots = [(0, "aabbcc"), (1, "ddeeff")]
@@ -100,6 +103,7 @@ def test_er02_trace_hash() -> None:
 # ER-03: resumable=True when status == SUSPENDED
 # ---------------------------------------------------------------------------
 
+
 def test_er03_resumable_suspended() -> None:
     t = Trace(program_name="p")
     t = t.add_step(_step("a"))
@@ -113,6 +117,7 @@ def test_er03_resumable_suspended() -> None:
 # ER-04: resumable=False when status == SUCCESS
 # ---------------------------------------------------------------------------
 
+
 def test_er04_not_resumable_success() -> None:
     trace = _make_trace([_step("a"), _step("b")])
     r = TraceAnalyzer(trace).receipt()
@@ -123,6 +128,7 @@ def test_er04_not_resumable_success() -> None:
 # ---------------------------------------------------------------------------
 # ER-05: replayable=False when status == RUNNING
 # ---------------------------------------------------------------------------
+
 
 def test_er05_not_replayable_running() -> None:
     t = Trace(program_name="p", status=TraceStatus.RUNNING)
@@ -135,13 +141,17 @@ def test_er05_not_replayable_running() -> None:
 # ER-06: replayable=True for terminal statuses (SUCCESS, FAILED, SUSPENDED)
 # ---------------------------------------------------------------------------
 
-@pytest.mark.parametrize("status", [
-    TraceStatus.SUCCESS,
-    TraceStatus.FAILED,
-    TraceStatus.SUSPENDED,
-    TraceStatus.BUDGET_EXCEEDED,
-    TraceStatus.STALLED,
-])
+
+@pytest.mark.parametrize(
+    "status",
+    [
+        TraceStatus.SUCCESS,
+        TraceStatus.FAILED,
+        TraceStatus.SUSPENDED,
+        TraceStatus.BUDGET_EXCEEDED,
+        TraceStatus.STALLED,
+    ],
+)
 def test_er06_replayable_terminal(status: TraceStatus) -> None:
     t = Trace(program_name="p", status=status)
     t = t.add_step(_step("a"))
@@ -152,6 +162,7 @@ def test_er06_replayable_terminal(status: TraceStatus) -> None:
 # ---------------------------------------------------------------------------
 # ER-07: failed_steps count
 # ---------------------------------------------------------------------------
+
 
 def test_er07_failed_steps_count() -> None:
     steps = [
@@ -169,6 +180,7 @@ def test_er07_failed_steps_count() -> None:
 # ER-08: retried_steps count
 # ---------------------------------------------------------------------------
 
+
 def test_er08_retried_steps_count() -> None:
     steps = [
         _step("a", retries=0),
@@ -185,6 +197,7 @@ def test_er08_retried_steps_count() -> None:
 # ER-09: health is TraceHealthReport embedded
 # ---------------------------------------------------------------------------
 
+
 def test_er09_health_embedded() -> None:
     trace = _make_trace([_step("a"), _step("b")])
     r = TraceAnalyzer(trace).receipt()
@@ -195,6 +208,7 @@ def test_er09_health_embedded() -> None:
 # ---------------------------------------------------------------------------
 # ER-10: two independent TraceAnalyzer instances same trace → equal receipts
 # ---------------------------------------------------------------------------
+
 
 def test_er10_cross_instance_determinism() -> None:
     trace = _make_trace([_step("x"), _step("y"), _step("z")])
