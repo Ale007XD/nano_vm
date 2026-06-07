@@ -3,6 +3,7 @@
 Run from nano-vm repo root:
     pytest tests/test_validator.py -v
 """
+
 from __future__ import annotations
 
 from nano_vm.models import Program, Step, StepType
@@ -127,7 +128,7 @@ def test_pv06_unreachable_branch_bypass() -> None:
     # entry → skip_me explicitly, so 'middle' never reached
     report = _validate(
         _llm("entry", next_step="terminal"),
-        _llm("middle"),           # unreachable: entry skips it
+        _llm("middle"),  # unreachable: entry skips it
         _tool("terminal", terminal=True),
     )
     issues = report.by_kind(IssueKind.UNREACHABLE_STEP)
@@ -203,8 +204,8 @@ def test_pv10_terminal_no_outgoing() -> None:
 
 def test_pv11_multiple_issues() -> None:
     report = _validate(
-        _llm("a", next_step="missing"),   # missing target
-        _tool("orphan", terminal=True),   # unreachable (a skips sequential)
+        _llm("a", next_step="missing"),  # missing target
+        _tool("orphan", terminal=True),  # unreachable (a skips sequential)
     )
     assert not report.is_valid()
     kinds = {i.kind for i in report.issues}
