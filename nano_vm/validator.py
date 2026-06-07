@@ -17,6 +17,7 @@ Invariants
 - Condition steps never have implicit sequential edge (they branch explicitly)
 - Terminal steps (is_terminal=True) have no outgoing edges regardless of fields
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field
