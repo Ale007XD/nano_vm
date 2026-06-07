@@ -254,9 +254,7 @@ class ProgramValidator:
             return False
 
         has_failure_terminal = any(
-            _is_failure_terminal(s)
-            for s in self._program.steps
-            if s.id in visited
+            _is_failure_terminal(s) for s in self._program.steps if s.id in visited
         )
 
         if has_failure_terminal:
@@ -273,7 +271,6 @@ class ProgramValidator:
                 ),
             )
         ]
-
 
     def _check_cycles(self) -> list[ValidationIssue]:
         WHITE, GRAY, BLACK = 0, 1, 2
