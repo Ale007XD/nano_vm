@@ -1,19 +1,21 @@
-cat > tests/test_receipt_v2.py << 'EOF'
+cat > tests / test_receipt_v2.py << "EOF"
 """ER-11..15 — RejectedTransition + новые поля ExecutionReceipt."""
 
 from __future__ import annotations
 
-import pytest
-
-from nano_vm.analyzer import ExecutionReceipt, RejectedTransition, TraceAnalyzer
+from nano_vm.analyzer import RejectedTransition, TraceAnalyzer
 from nano_vm.models import StepResult, StepStatus, Trace, TraceStatus
 
 
-def _step(step_id: str, status: StepStatus = StepStatus.SUCCESS, error: str | None = None) -> StepResult:
+def _step(
+    step_id: str, status: StepStatus = StepStatus.SUCCESS, error: str | None = None
+) -> StepResult:
     return StepResult(step_id=step_id, status=status, error=error)
 
 
-def _trace(steps: list[StepResult] | None = None, status: TraceStatus = TraceStatus.SUCCESS) -> Trace:
+def _trace(
+    steps: list[StepResult] | None = None, status: TraceStatus = TraceStatus.SUCCESS
+) -> Trace:
     t = Trace(program_name="p", status=status)
     for s in steps or []:
         t = t.add_step(s)
@@ -84,4 +86,6 @@ def test_er17_rejected_transition_timestamp_nonempty() -> None:
     t = t.add_step(step)
     r = TraceAnalyzer(t).receipt()
     assert r.rejected_transitions[0].timestamp != ""
+
+
 EOF
