@@ -139,6 +139,24 @@ class TraceAnalyzer:
         failed = sum(1 for s in trace.steps if s.status == StepStatus.FAILED)
         retried = sum(1 for s in trace.steps if s.retries > 0)
 
+        rejected: list[RejectedTransition] = []
+        for s in trace.steps:
+            if s.status == StepStatus.FAILED:
+                if s.finished_at is not None:
+                    ts = s.finished_at.isoformat()
+                elif s.started_at is not None:
+                    ts = s.started_at.isoformat()
+                else:
+                    ts = ""
+                rejected.append(
+                    RejectedTransition(
+                        step_id=s.step_id,
+                        rule_id=None,  # deferred: GovernanceEnvelope.decision not yet available
+                        reason=s.error or _UNKNOWN_REJECTION_REASON,
+                        timestamp=ts,
+                    )
+                )
+
         receipt = ExecutionReceipt(
             trace_id=trace.trace_id,
             trace_hash=trace_hash,
@@ -147,6 +165,9 @@ class TraceAnalyzer:
             replayable=trace.status not in _NON_REPLAYABLE_STATUSES,
             failed_steps=failed,
             retried_steps=retried,
+            blocked_actions=0,
+            escalations=0,
+            rejected_transitions=tuple(rejected),
             health=self.report(),
         )
         self._receipt_cache = receipt
@@ -350,8 +371,27 @@ class TraceAnalyzer:
 # ExecutionReceipt
 # ---------------------------------------------------------------------------
 
+_UNKNOWN_REJECTION_REASON = "unknown"
 _RESUMABLE_STATUSES: frozenset[TraceStatus] = frozenset({TraceStatus.SUSPENDED})
 _NON_REPLAYABLE_STATUSES: frozenset[TraceStatus] = frozenset({TraceStatus.RUNNING})
+
+
+@dataclass(frozen=True)
+class RejectedTransition:
+    """Projection of a failed step from Trace onto a receipt-level artifact.
+
+    Projection source: StepResult entries with status == FAILED.
+    Future governance-native rejection events (GovernanceEnvelope.decision)
+    may supersede this mapping when available.
+
+    rule_id: None until GovernanceEnvelope.decision is available (deferred).
+    timestamp: finished_at if set, started_at if set, else empty string.
+    """
+
+    step_id: str
+    rule_id: str | None
+    reason: str
+    timestamp: str
 
 
 @dataclass(frozen=True)
@@ -363,20 +403,22 @@ class ExecutionReceipt:
 
     Fields
     ------
-    trace_id      : copied from Trace.trace_id
-    trace_hash    : SHA-256 over Trace.canonical_snapshot_hash() (Merkle root)
-    final_status  : copied from Trace.status at receipt time
-    resumable     : True when status == SUSPENDED (FSM can resume from suspended_step_id)
-    replayable    : True when status != RUNNING (running trace has no stable replay point)
-    failed_steps  : count of StepResult with status == FAILED
-    retried_steps : count of StepResult with retries > 0
-    health        : embedded TraceHealthReport
+    trace_id             : copied from Trace.trace_id
+    trace_hash           : SHA-256 over Trace.canonical_snapshot_hash() (Merkle root)
+    final_status         : copied from Trace.status at receipt time
+    resumable            : True when status == SUSPENDED
+    replayable           : True when status != RUNNING
+    failed_steps         : count of StepResult with status == FAILED (kept for backward compat)
+    retried_steps        : count of StepResult with retries > 0 (kept for backward compat)
+    blocked_actions      : 0 — deferred (requires GovernanceEnvelope.decision)
+    escalations          : 0 — deferred (requires GovernanceEnvelope.decision)
+    rejected_transitions : FAILED steps projected as RejectedTransition; deterministic order
+                           matches trace.steps iteration order
 
-    Deferred (no source data in current model)
-    ------------------------------------------
-    blocked_actions / escalations : requires GovernanceEnvelope.decision field (not in StepResult)
-    receipt_hash                  : only meaningful with OperatorDecision entity
-    LLM summary                   : non-goal — deterministic only
+    Deferred
+    --------
+    receipt_hash : only meaningful with OperatorDecision entity
+    LLM summary  : non-goal — deterministic only
     """
 
     trace_id: str
@@ -386,6 +428,9 @@ class ExecutionReceipt:
     replayable: bool
     failed_steps: int
     retried_steps: int
+    blocked_actions: int
+    escalations: int
+    rejected_transitions: tuple[RejectedTransition, ...]
     health: TraceHealthReport
 
 
