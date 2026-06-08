@@ -1,4 +1,3 @@
-cat > tests / test_receipt_v2.py << "EOF"
 """ER-11..15 — RejectedTransition + новые поля ExecutionReceipt."""
 
 from __future__ import annotations
@@ -86,6 +85,3 @@ def test_er17_rejected_transition_timestamp_nonempty() -> None:
     t = t.add_step(step)
     r = TraceAnalyzer(t).receipt()
     assert r.rejected_transitions[0].timestamp != ""
-
-
-EOF
