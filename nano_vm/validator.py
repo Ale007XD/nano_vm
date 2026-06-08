@@ -37,11 +37,17 @@ class IssueKind(str, Enum):
     NO_FAILURE_TERMINAL = "no_failure_terminal"
 
 
+class IssueSeverity(str, Enum):
+    ERROR = "error"
+    WARNING = "warning"
+
+
 @dataclass(frozen=True)
 class ValidationIssue:
     kind: IssueKind
     step_id: str
     detail: str
+    severity: IssueSeverity = IssueSeverity.ERROR
 
 
 # ---------------------------------------------------------------------------
@@ -57,7 +63,7 @@ class ValidationReport:
     issues: list[ValidationIssue] = field(default_factory=list)
 
     def is_valid(self) -> bool:
-        return len(self.issues) == 0
+        return all(i.severity != IssueSeverity.ERROR for i in self.issues)
 
     def by_kind(self, kind: IssueKind) -> list[ValidationIssue]:
         return [i for i in self.issues if i.kind == kind]
@@ -269,6 +275,7 @@ class ProgramValidator:
                     "(id or allowed_outputs containing FAIL/ERROR/REJECTED/BLOCKED/…); "
                     "program may loop on unresolvable inputs"
                 ),
+                severity=IssueSeverity.WARNING,
             )
         ]
 
