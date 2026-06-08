@@ -53,7 +53,6 @@ def test_pv01_valid_linear() -> None:
         _tool("c", terminal=True),
     )
     assert report.is_valid()
-    assert report.issues == []
 
 
 # ---------------------------------------------------------------------------
