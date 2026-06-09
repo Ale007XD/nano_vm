@@ -7,6 +7,31 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [0.8.5] — 2026-06-09
+
+### Added
+- `ProgramValidator` — static analysis of FSM programs before execution
+  - Checks: `missing_targets` (ERROR), `unreachable_steps` (ERROR),
+    `cycle_detection` (ERROR), `no_failure_terminal` (WARNING)
+  - `IssueSeverity` enum: ERROR blocks `is_valid()`; WARNING is informational
+  - `is_valid()` = `all(severity != ERROR)` — not `len(issues) == 0`
+- `ExecutionReceipt` — deterministic post-hoc projection of Trace
+  - Fields: `trace_id`, `trace_hash`, `final_status`, `resumable`, `replayable`,
+    `failed_steps`, `retried_steps`, `blocked_actions`, `escalations`,
+    `rejected_transitions`, `health`
+  - Frozen dataclass; `Receipt ⊆ Trace` — no independent state, no LLM generation
+- `RejectedTransition` — structured audit artifact per FAILED step
+  - Fields: `step_id`, `rule_id | None`, `reason`, `timestamp`
+  - Source: `StepResult(status=FAILED)` projections; timestamp safety:
+    `finished_at ?? started_at ?? ''`
+- `TraceAnalyzer.receipt()` — lazy + cached; generated post-hoc only
+
+### Changed
+- `TraceAnalyzer` — extended with `.receipt()` projection method
+
+### Tests
+- PV-01..13 GREEN, ER-01..17 GREEN; CI 476/476
+
 ## v0.8.3
 
 ### Added
