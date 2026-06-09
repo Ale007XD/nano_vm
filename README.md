@@ -10,64 +10,46 @@
 </p>
 
 <p align="center">
-  <strong>Governed Agent Execution runtime for LLM workflows.</strong><br>
-  Deterministic. Replayable. Enforcement-first.<br>
-  LLM support is optional.
-</p>
-
-<p align="center">
-  <em>LLMs are signal generators. Execution authority belongs to the runtime.</em>
+  <strong>Execution governance runtime with deterministic receipts and replayable traces.</strong><br>
+  LLMs are signal generators. Execution authority belongs to the runtime.
 </p>
 
 ---
 
-## What nano-vm Is
+## What nano-vm produces
 
 Most AI frameworks answer: *how do you coordinate agents?*  
-Almost nobody answers: *who guarantees execution correctness?*
+Almost nobody answers: *what proof do you have that execution happened correctly?*
 
-nano-vm is the answer to the second question.
+nano-vm answers the second question by producing verifiable artifacts at every layer:
 
-It is a **deterministic FSM execution kernel** for LLM workflows and stateful business processes. The runtime — not the model, not the tool, not the prompt — controls state transitions.
+| Artifact | What it is | How it's produced |
+| :--- | :--- | :--- |
+| **Trace** | Step-by-step execution record with SHA-256 Merkle chain | Runtime — one entry per step |
+| **ExecutionReceipt** | Minimal decision state derived from Trace | `TraceAnalyzer.receipt()` — deterministic projection |
+| **GovernanceEnvelope** | Per-step policy hash + canonical state snapshot | Runtime — stored in SQLite WAL |
 
-Core invariant:
-
-```
-δ(S, E) → S'
-```
-
-Where S is current execution state, E is a validated event, S' is the next deterministic state.
-
-**Why not Temporal?** Temporal solves durable execution for distributed systems. nano-vm solves governed execution for LLM workflows — embedded, no infrastructure, Python-native, with a governance layer that understands LLM-specific failure modes (output enum violations, retry storms, evaluator awareness).
-
----
-
-## Architecture
+The core contract:
 
 ```
-events / webhooks / tools / LLMs
-              ↓
-        ExecutionVM          ← FSM, step lifecycle, budget guards
-              ↓
-        deterministic FSM    ← ASTEngine (no eval()), sandboxed conditions
-              ↓
-        replayable trace     ← sha256 snapshot per step, Merkle chain
+Receipt = f(Trace)
 ```
 
-Formally:
+The receipt is a deterministic, recomputable projection of the trace. It never contains information that isn't already in the trace. It never requires the LLM to generate it.
 
 ```
-nondeterminism ∈ signal generation
-determinism    ∈ runtime execution
+Program
+  ↓
+Validator        ← static analysis before execution
+  ↓
+ExecutionVM      ← FSM transition authority
+  ↓
+Trace            ← authoritative execution record
+  ↓
+TraceAnalyzer    ← post-hoc interpretation
+  ↓
+Receipt          ← minimal state for continuation decisions
 ```
-
-| Layer | Role | Deterministic |
-| :--- | :--- | :---: |
-| Signal | LLM / webhook / API / user input | ❌ |
-| Validator | schema + policy validation | ✅ |
-| FSM | transition authority | ✅ |
-| Policy | transition selection | ✅ |
-| Tool executor | side effects | enforced |
 
 ---
 
@@ -80,7 +62,7 @@ pip install llm-nano-vm[litellm]   # for LLM provider support
 
 ---
 
-## Using nano-vm Without LLMs
+## Quick Start — Tool Pipeline
 
 LLMs are not required. nano-vm runs as a pure deterministic workflow engine.
 
@@ -106,12 +88,12 @@ trace = await vm.run(program)
 print(trace.status)  # SUCCESS
 ```
 
-No LLM. The runtime still guarantees: deterministic ordering, replayable execution,
+The runtime still guarantees: deterministic ordering, replayable execution,
 trace visibility, transition enforcement, idempotent re-execution across restarts.
 
 ---
 
-## Quick Start — LLM Pipeline (guardrail that never skips)
+## Quick Start — LLM Pipeline
 
 ```python
 from nano_vm import ExecutionVM, Program
@@ -125,7 +107,7 @@ program = Program.from_dict({
             "type": "llm",
             "prompt": "Is this a valid refund request? Reply 'yes' or 'no'.\nRequest: $user_input",
             "output_key": "decision",
-            "allowed_outputs": ["yes", "no"],   # v0.8.0 — runtime enum gate
+            "allowed_outputs": ["yes", "no"],   # runtime enum gate — not a prompt hint
         },
         {
             "id": "guardrail",
@@ -153,9 +135,9 @@ The `guardrail` step cannot be skipped, reordered, or overridden by the model.
 
 ---
 
-## Suspend / Resume — Async Business Processes
+## Suspend / Resume
 
-Return the sentinel `"PENDING"` from any tool to suspend execution:
+Return `"PENDING"` from any tool to suspend execution:
 
 ```python
 async def initiate_payment(**kwargs) -> str:
@@ -180,15 +162,13 @@ trace = await vm.resume_with_program(
 assert trace.status.name == "SUCCESS"
 ```
 
-> **Note:** `"PENDING"` is a reserved FSM sentinel. Do not return it as a domain status.
-> Use `"REQUIRES_ACTION"`, `"AWAITING_3DS"`, or any other string for domain-specific states.
+> **Note:** `"PENDING"` is a reserved FSM sentinel. Use `"REQUIRES_ACTION"` or `"AWAITING_3DS"` for domain-specific states.
 
 ---
 
-## LLM Output Enforcement — `allowed_outputs` (v0.8.0)
+## LLM Output Enforcement — `allowed_outputs`
 
-Validates the model's raw output against an explicit enum *before* it enters the FSM context.
-This isn't a prompt hint. It's a runtime gate.
+Validates the model's raw output against an explicit enum *before* it enters the FSM context. This is a runtime gate, not a prompt hint.
 
 ```python
 {
@@ -206,6 +186,109 @@ This isn't a prompt hint. It's a runtime gate.
 | `fail` (default) | `VMError` → `trace.FAILED` |
 | `skip` | output replaced with `allowed_outputs[0]` |
 | `retry` | retry up to `max_retries`; `VMError` if exhausted |
+
+Per-step LLM timeout:
+
+```python
+{
+    "id": "classify",
+    "type": "llm",
+    "timeout_seconds": 10.0,
+    "on_timeout": "fail",   # or "fallback" → allowed_outputs[0] or ''
+}
+```
+
+---
+
+## ProgramValidator — Pre-flight Static Analysis
+
+Validates a program before execution. Catches structural issues that would cause runtime failures.
+
+```python
+from nano_vm import ProgramValidator
+
+validator = ProgramValidator(program)
+report = validator.validate()
+
+print(report.is_valid())   # False if any ERROR-severity issue found
+for issue in report.issues:
+    print(issue.severity, issue.code, issue.message)
+```
+
+Checks performed:
+
+| Check | Severity | Description |
+| :--- | :--- | :--- |
+| `missing_targets` | ERROR | branch targets that reference non-existent steps |
+| `unreachable_steps` | ERROR | steps unreachable from any execution path |
+| `cycle_detection` | ERROR | cycles that would cause infinite loops |
+| `no_failure_terminal` | WARNING | no reachable terminal step with a failure outcome |
+
+`is_valid()` returns `True` only when no `ERROR`-severity issues exist. `WARNING` is informational — simple linear programs without failure terminals are valid.
+
+---
+
+## TraceAnalyzer — Post-hoc Execution Analysis
+
+Analyzes a completed trace. Pure post-processing — no changes to the runtime state.
+
+```python
+from nano_vm import TraceAnalyzer
+
+analyzer = TraceAnalyzer(trace)
+report = analyzer.report()     # TraceHealthReport — lazy, cached
+
+print(report.rollback_density)          # 0.0 – 1.0
+print(report.tool_churn_rate)           # 0.0 – 1.0
+print(report.path_variance)             # 0.0 – 1.0
+print(report.transition_entropy)        # bits
+print(report.invariant_violation_rate)  # 0.0 – 1.0
+```
+
+Alert thresholds (informational — do not interrupt FSM):
+
+| Metric | Alert threshold | Signal |
+| :--- | ---: | :--- |
+| `rollback_density` | > 0.3 | excessive compensating transitions |
+| `tool_churn_rate` | > 0.4 | unstable tool selection |
+| `path_variance` | > 0.5 | non-deterministic branching |
+| `transition_entropy` | > 2.5 bits | ~5+ unique transition pairs |
+| `invariant_violation_rate` | > 0.2 | repeated constraint failures |
+
+Alerts are warnings, not errors. The FSM is never interrupted by the analyzer.
+
+---
+
+## ExecutionReceipt — Receipt = f(Trace)
+
+The receipt is a deterministic projection of the trace. It contains the minimal state needed for a continuation decision — whether to resume, replay, or escalate.
+
+```python
+receipt = analyzer.receipt()   # lazy, cached; recomputable at any time
+
+print(receipt.trace_id)
+print(receipt.final_status)         # TraceStatus
+print(receipt.resumable)            # bool
+print(receipt.replayable)           # bool
+print(receipt.failed_steps)         # int
+print(receipt.retried_steps)        # int
+print(receipt.rejected_transitions) # tuple[RejectedTransition, ...]
+print(receipt.health)               # TraceHealthReport
+```
+
+`RejectedTransition` captures each failed step with its reason and timestamp:
+
+```python
+for rt in receipt.rejected_transitions:
+    print(rt.step_id, rt.reason, rt.timestamp)
+```
+
+**Contract invariants:**
+
+- `Receipt ⊆ Trace` — the receipt never contains information outside the trace
+- No LLM generation — the receipt is computed, never summarized
+- No operator-specific fields — the receipt is infrastructure, not application logic
+- Recomputable — given the same trace, `receipt()` always returns the same result
 
 ---
 
@@ -236,6 +319,8 @@ The `ProjectionLayer` gives the LLM only a `target=LLM` projection of state. Gov
 
 Terminal states: `SUCCESS`, `FAILED`, `BUDGET_EXCEEDED`, `STALLED`.
 
+Failure states are first-class outcomes. `FAILED`, `NEED_HELP`, `INSUFFICIENT_DATA`, `POLICY_BLOCKED` are legitimate terminal states equivalent to `SUCCESS` — not exceptions to be swallowed.
+
 ---
 
 ## Program DSL
@@ -249,7 +334,7 @@ Four step types:
 | `condition` | branch on an expression; `then` / `otherwise` |
 | `parallel` | run independent sub-steps concurrently via `asyncio.gather` |
 
-**Step fields (v0.8.0):**
+**Step fields:**
 
 | Field | Default | Description |
 | :--- | :--- | :--- |
@@ -262,7 +347,7 @@ Four step types:
 | `timeout_seconds` | `None` | LLM-only — `asyncio.wait_for` timeout in seconds |
 | `on_timeout` | `'fail'` | `'fail'` · `'fallback'` (→ `allowed_outputs[0]` or `''`) |
 
-**Program budget options (v0.4.0+):**
+**Program budget options:**
 
 | Option | Default | Description |
 | :--- | :--- | :--- |
@@ -278,14 +363,14 @@ Four step types:
 | `$step_id.output` | output of a previous step |
 | `$step_id.output.field` | field within a step's dict output |
 
-### Condition expressions — Security
+### Condition expressions
 
 > **⚠ ASTEngine replaces `eval()`.** Conditions are parsed into a validated JSON AST
 > and evaluated by a pure, sandboxed interpreter. No Python builtins are accessible.
 
 **Supported:** `==`, `!=`, `>`, `<`, `in`, `not in`, `and`, `or`, `not`, `contains`, dotted-path `$var.field`.
 
-**Not supported:** method calls (`.lower()`, `.strip()`), arithmetic, parentheses grouping. Using an unsupported form raises `ASTEvalError` at parse time (v0.7.5+).
+**Not supported:** method calls (`.lower()`, `.strip()`), arithmetic, parentheses grouping. Using an unsupported form raises `ASTEvalError` at parse time.
 
 ```python
 # ❌ WRONG — method call raises ASTEvalError
@@ -308,7 +393,7 @@ Claude Code / MCP Client
         ↓
   nano-vm-mcp              ← decides how execution is allowed to proceed
         ↓
-  deterministic FSM        ← guarantees correctness
+  ExecutionVM              ← transition authority
         ↓
   GovernanceEnvelope       ← proves it happened
 ```
@@ -373,52 +458,19 @@ assert trace.status == TraceStatus.SUCCESS
 
 Same input → same step sequence. No API key required.
 
-### State Determinism vs Semantic Determinism
-
-nano-vm guarantees **State Determinism** — step execution order, no skipping, reproducible
-trace structure — regardless of LLM output. It does not guarantee **Semantic Determinism**
-(LLM text may differ across runs even at `temperature=0.0`). Use `MockLLMAdapter` for both.
-
----
-
-## Planner (Optional)
-
-```python
-from nano_vm import Planner
-
-planner = Planner(llm=adapter, max_retries=2, temperature=0.0)
-program = await planner.generate(
-    "Fetch latest AI news, summarize, classify by topic",
-    available_tools=["fetch_rss", "summarize", "classify"],
-    context_keys=["user_id"],
-)
-trace = await vm.run(program)
-```
-
-Exactly 1 LLM call → validated `Program`. Planner output is probabilistic; execution
-remains deterministic. Review Planner-generated programs before deploying to production.
+**State Determinism vs Semantic Determinism:** nano-vm guarantees step execution order, no skipping, reproducible trace structure — regardless of LLM output. It does not guarantee that LLM text is identical across runs. Use `MockLLMAdapter` for both.
 
 ---
 
 ## Performance
 
-The VM introduces near-zero overhead. The bottleneck is the LLM API or external I/O.
-
-### v0.8.2 test suite (435/435 · 0 violations)
-
 | Suite | Result |
 | :--- | :--- |
+| FSM invariant suite | 13/13 · 1,020,000 ops · 0 violations |
+| Integration suite | 10/10 · 1,096,500 ops · 0 violations |
+| 10k stress | 14,327 graphs/sec · 0.70 s/run |
 | MoMo PoC v4 | 9/9 PASS |
 | Stripe PoC v1 | 9/9 PASS |
-| FSM invariant suite (v0.6.0) | 13/13 · 1,020,000 ops · 0 violations |
-| Integration suite (v0.7.3) | 10/10 · 1,096,500 ops · 0 violations |
-| 10k stress (v0.7.0) | 14,327 graphs/sec · 0.70 s/run |
-
-Invariants verified: no step skipping, no out-of-order execution, no duplicate step_id in trace, all terminal states absorbing.
-
-### Integration benchmark detail (v0.7.3)
-
-Environment: QEMU/KVM · Intel Xeon E5-2697A v4 · 2 cores · Python 3.12 · Mock adapter.
 
 | ID | Scenario | Mean TPS | p95 avg |
 | :--- | :--- | ---: | ---: |
@@ -433,6 +485,8 @@ Environment: QEMU/KVM · Intel Xeon E5-2697A v4 · 2 cores · Python 3.12 · Moc
 | BM-INT-09 | Adversarial retries | 2,400/s | 0.64 ms |
 | BM-INT-10 | Long-horizon | 30/s | 3,606 ms |
 
+Environment: QEMU/KVM · Intel Xeon E5-2697A v4 · 2 cores · Python 3.12 · Mock adapter.
+
 ---
 
 ## Comparison
@@ -440,21 +494,19 @@ Environment: QEMU/KVM · Intel Xeon E5-2697A v4 · 2 cores · Python 3.12 · Moc
 | | LangChain | CrewAI | Temporal | **nano-vm** |
 | :--- | :---: | :---: | :---: | :---: |
 | LLM-native | ✅ | ✅ | ❌ | ✅ |
-| Deterministic FSM | ❌ | ❌ | ✅ | ✅ |
+| Deterministic execution | ❌ | ❌ | ✅ | ✅ |
 | Replayable traces | partial | minimal | ✅ | ✅ |
+| Deterministic receipt | ❌ | ❌ | ❌ | ✅ |
 | Suspend/resume | partial | partial | ✅ | ✅ |
 | Runtime guardrails | ❌ | ❌ | partial | ✅ |
 | LLM output enforcement | ❌ | ❌ | ❌ | ✅ |
+| Pre-flight validator | ❌ | ❌ | ❌ | ✅ |
 | Evaluator blindness | ❌ | ❌ | ❌ | ✅ |
 | Lightweight / embedded | ❌ | ❌ | ❌ | ✅ |
-| Business workflows | partial | ❌ | ✅ | ✅ |
-| AI workflows | ✅ | ✅ | partial | ✅ |
 
-**vs Marvin / DSPy:** those optimize *what* the LLM produces (structured outputs, prompt
-tuning). nano-vm controls *when* and *whether* steps run — orthogonal concerns, composable.
+**vs Marvin / DSPy:** those optimize *what* the LLM produces. nano-vm controls *when* and *whether* steps run — orthogonal concerns, composable.
 
-**vs Temporal / Cadence:** Temporal solves durable execution for distributed systems.
-nano-vm solves governed execution for LLM workflows — embedded, no infrastructure, Python-native.
+**vs Temporal / Cadence:** Temporal solves durable execution for distributed systems. nano-vm solves governed execution for LLM workflows — embedded, no infrastructure, Python-native.
 
 ---
 
@@ -464,12 +516,12 @@ nano-vm solves governed execution for LLM workflows — embedded, no infrastruct
 
 - workflow structure is known in advance
 - correctness and auditability matter (fintech, compliance, enterprise)
-- you need a reproducible trace for debugging or logging
+- you need a reproducible trace for debugging or audit
 - guardrails must be enforced at the system level, not in the prompt
 - async orchestration with suspend/resume is required
-- you need LLM output validated at the runtime level before it affects state
+- you need a deterministic receipt to prove what happened
 
-**Do NOT use when:**
+**Do not use when:**
 
 - workflow must be discovered fully at runtime
 - the task is open-ended creative reasoning
@@ -501,22 +553,17 @@ nano-vm solves governed execution for LLM workflows — embedded, no infrastruct
 - [x] `Step.allowed_outputs` — LLM output validation against enum (v0.8.0)
 - [x] `Step.timeout_seconds` + `on_timeout` — per-step LLM timeout (v0.8.0)
 - [x] `inspect.iscoroutinefunction` — Python 3.14 deprecation fix (v0.8.2)
+- [x] `TraceAnalyzer` — rollback density, tool churn rate, path variance, transition entropy, invariant violation rate (v0.8.3)
+- [x] `LLMAdapter.complete()` — `str | tuple[str, dict | None]` Protocol (v0.8.4)
+- [x] `ProgramValidator` — missing targets, unreachable steps, cycle detection, no_failure_terminal (v0.8.5)
+- [x] `ExecutionReceipt` + `RejectedTransition` — `Receipt = f(Trace)` contract (v0.8.5)
 
-**Upcoming — observability (v0.8.x):**
+**Upcoming:**
 
-- [ ] `TraceAnalyzer` — rollback density, tool churn rate, path variance, invariant violation rate
-- [ ] `ProgramValidator` — static analysis: unreachable steps, missing targets, cycle detection
 - [ ] OpenTelemetry span per FSM step
-- [ ] Incremental counters in `Trace`: `llm_calls`, `tool_calls`, `retries_total`
-
-**Upcoming — execution graph (v0.8.x):**
-
-- [ ] `depends_on` + `TopologicalSorter` — declarative dependency graph over `parallel`
-
-**Upcoming — gateway (v0.9.x):**
-
-- [ ] `nano-vm-mcp`: `GovernedToolExecutor` + circuit breaker
-- [ ] `replan_on_interrupt` — Planner-driven continuation on budget interrupts
+- [ ] `nano-vm-mcp`: `GovernedToolExecutor` circuit breaker
+- [ ] `vm.step()` incremental execution endpoint
+- [ ] `depends_on` + `TopologicalSorter` — declarative dependency graph
 
 ---
 

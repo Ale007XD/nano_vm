@@ -26,10 +26,11 @@ transition_sequence_variance > 0.4
 
 from __future__ import annotations
 
+import hashlib
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 
-from nano_vm.models import StepStatus, Trace
+from nano_vm.models import StepStatus, Trace, TraceStatus
 
 # ---------------------------------------------------------------------------
 # Thresholds
@@ -116,10 +117,61 @@ class TraceAnalyzer:
     def __init__(self, trace: Trace, baseline: Trace | None = None) -> None:
         self._trace = trace
         self._baseline = baseline
+        self._receipt_cache: ExecutionReceipt | None = None
 
     # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
+
+    def receipt(self) -> ExecutionReceipt:
+        """Return an ExecutionReceipt for this trace (lazy, cached).
+
+        Deterministic: same Trace → same Receipt every call.
+        Post-hoc only: should be called after trace is finished.
+        """
+        if self._receipt_cache is not None:
+            return self._receipt_cache
+
+        trace = self._trace
+        merkle = trace.canonical_snapshot_hash()
+        trace_hash = hashlib.sha256(merkle.encode()).hexdigest()
+
+        failed = sum(1 for s in trace.steps if s.status == StepStatus.FAILED)
+        retried = sum(1 for s in trace.steps if s.retries > 0)
+
+        rejected: list[RejectedTransition] = []
+        for s in trace.steps:
+            if s.status == StepStatus.FAILED:
+                if s.finished_at is not None:
+                    ts = s.finished_at.isoformat()
+                elif s.started_at is not None:
+                    ts = s.started_at.isoformat()
+                else:
+                    ts = ""
+                rejected.append(
+                    RejectedTransition(
+                        step_id=s.step_id,
+                        rule_id=None,  # deferred: GovernanceEnvelope.decision not yet available
+                        reason=s.error or _UNKNOWN_REJECTION_REASON,
+                        timestamp=ts,
+                    )
+                )
+
+        receipt = ExecutionReceipt(
+            trace_id=trace.trace_id,
+            trace_hash=trace_hash,
+            final_status=trace.status,
+            resumable=trace.status in _RESUMABLE_STATUSES,
+            replayable=trace.status not in _NON_REPLAYABLE_STATUSES,
+            failed_steps=failed,
+            retried_steps=retried,
+            blocked_actions=0,
+            escalations=0,
+            rejected_transitions=tuple(rejected),
+            health=self.report(),
+        )
+        self._receipt_cache = receipt
+        return receipt
 
     def report(self) -> TraceHealthReport:
         total = len(self._trace.steps)
@@ -313,6 +365,73 @@ class TraceAnalyzer:
 
         total = sum(counts.values())
         return -sum((c / total) * math.log2(c / total) for c in counts.values())
+
+
+# ---------------------------------------------------------------------------
+# ExecutionReceipt
+# ---------------------------------------------------------------------------
+
+_UNKNOWN_REJECTION_REASON = "unknown"
+_RESUMABLE_STATUSES: frozenset[TraceStatus] = frozenset({TraceStatus.SUSPENDED})
+_NON_REPLAYABLE_STATUSES: frozenset[TraceStatus] = frozenset({TraceStatus.RUNNING})
+
+
+@dataclass(frozen=True)
+class RejectedTransition:
+    """Projection of a failed step from Trace onto a receipt-level artifact.
+
+    Projection source: StepResult entries with status == FAILED.
+    Future governance-native rejection events (GovernanceEnvelope.decision)
+    may supersede this mapping when available.
+
+    rule_id: None until GovernanceEnvelope.decision is available (deferred).
+    timestamp: finished_at if set, started_at if set, else empty string.
+    """
+
+    step_id: str
+    rule_id: str | None
+    reason: str
+    timestamp: str
+
+
+@dataclass(frozen=True)
+class ExecutionReceipt:
+    """Minimal deterministic extract from a Trace sufficient for continuation decisions.
+
+    Contract: ReceiptProjection(Trace) — deterministic, recomputable, Receipt ⊆ Trace.
+    Generation: TraceAnalyzer.receipt() — post-hoc only, lazy + internal cache.
+
+    Fields
+    ------
+    trace_id             : copied from Trace.trace_id
+    trace_hash           : SHA-256 over Trace.canonical_snapshot_hash() (Merkle root)
+    final_status         : copied from Trace.status at receipt time
+    resumable            : True when status == SUSPENDED
+    replayable           : True when status != RUNNING
+    failed_steps         : count of StepResult with status == FAILED (kept for backward compat)
+    retried_steps        : count of StepResult with retries > 0 (kept for backward compat)
+    blocked_actions      : 0 — deferred (requires GovernanceEnvelope.decision)
+    escalations          : 0 — deferred (requires GovernanceEnvelope.decision)
+    rejected_transitions : FAILED steps projected as RejectedTransition; deterministic order
+                           matches trace.steps iteration order
+
+    Deferred
+    --------
+    receipt_hash : only meaningful with OperatorDecision entity
+    LLM summary  : non-goal — deterministic only
+    """
+
+    trace_id: str
+    trace_hash: str
+    final_status: TraceStatus
+    resumable: bool
+    replayable: bool
+    failed_steps: int
+    retried_steps: int
+    blocked_actions: int
+    escalations: int
+    rejected_transitions: tuple[RejectedTransition, ...]
+    health: TraceHealthReport
 
 
 # ---------------------------------------------------------------------------
