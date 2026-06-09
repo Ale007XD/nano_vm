@@ -32,6 +32,15 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 ### Tests
 - PV-01..13 GREEN, ER-01..17 GREEN; CI 476/476
 
+## 0.8.4 — 2026-06-04
+Fixed
+LLMAdapter Protocol: complete() return type widened from str to
+str | tuple[str, dict[str, Any] | None] — resolves mypy arg-type error
+when passing LiteLLMAdapter to ExecutionVM (nano_vm/adapters/base.py).
+ExecutionVM._execute_llm already handled both variants via
+isinstance(result, tuple); the Protocol signature now matches the
+implementation.
+
 ## v0.8.3
 
 ### Added
