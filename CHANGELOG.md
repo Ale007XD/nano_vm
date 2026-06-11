@@ -7,6 +7,13 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [0.8.6] — 2026-06-11
+
+### Fixed
+- `LiteLLMAdapter` now exported from `nano_vm.adapters` package directly;
+  conditional `try/except ImportError` removed — `litellm` is a declared dev
+  dependency and must be resolvable at import time.
+
 ## [0.8.5] — 2026-06-09
 
 ### Added
