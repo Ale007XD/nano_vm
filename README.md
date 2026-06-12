@@ -506,7 +506,10 @@ Environment: QEMU/KVM · Intel Xeon E5-2697A v4 · 2 cores · Python 3.12 · Moc
 
 **vs Marvin / DSPy:** those optimize *what* the LLM produces. nano-vm controls *when* and *whether* steps run — orthogonal concerns, composable.
 
-**vs Temporal / Cadence:** Temporal solves durable execution for distributed systems. nano-vm solves governed execution for LLM workflows — embedded, no infrastructure, Python-native.
+**vs Temporal / Cadence:** Temporal guarantees *durable* execution — your workflow survives crashes, retries,
+and distributed failures. nano-vm guarantees *governed* execution — every transition is policy-constrained,
+every output is bounded, every run produces a verifiable receipt. Different guarantees, different buyer.
+Use Temporal when you need a workflow to finish. Use nano-vm when you need to prove *how* it finished.
 
 ---
 
