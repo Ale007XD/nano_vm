@@ -300,6 +300,87 @@ async def test_cb08_next_step_continues_full_chain():
 
 
 @pytest.mark.asyncio
+async def test_bug_nextstep_01_chain_survives_array_reorder():
+    """BUG-NEXTSTEP-01: CB-08 multi-hop next_step must not depend on
+    steps[] array order. A decoy step inserted between step_b and step_c
+    in the array must NOT execute -- step_b.next_step="step_c" must skip
+    it. Pre-fix, this decoy executed because the second+ hop of a
+    next_step chain fell through to plain current_idx += 1 (array order),
+    never reading step_b.next_step at all. See DECISIONS.md 2026-06-28.
+    """
+    order: list[str] = []
+    vm = ExecutionVM(
+        llm=MockLLMAdapter("ok"),
+        tools={
+            "a": lambda: order.append("a") or "a",
+            "b": lambda: order.append("b") or "b",
+            "c": lambda: order.append("c") or "c",
+        },
+    )
+    prog = Program.from_dict(
+        {
+            "name": "bug_nextstep_01",
+            "steps": [
+                {"id": "check", "type": "condition", "condition": "'go' == 'go'",
+                 "then": "step_a", "otherwise": "dead"},
+                {"id": "dead", "type": "tool", "tool": "a", "is_terminal": True},
+                {"id": "step_a", "type": "tool", "tool": "a", "next_step": "step_b"},
+                {"id": "step_b", "type": "tool", "tool": "b", "next_step": "step_c"},
+                {"id": "decoy", "type": "tool", "tool": "a"},
+                {"id": "step_c", "type": "tool", "tool": "c"},
+            ],
+        }
+    )
+    trace = await vm.run(prog)
+    ids = [s.step_id for s in trace.steps]
+    assert trace.status == TraceStatus.SUCCESS
+    assert ids == ["check", "step_a", "step_b", "step_c"]
+    assert order == ["a", "b", "c"]
+    assert "decoy" not in ids
+
+
+@pytest.mark.asyncio
+async def test_bug_nextstep_02_nested_condition_recursion_honors_next_step():
+    """BUG-NEXTSTEP-02: a step reached as the landing target of a
+    CONDITION->CONDITION recursive call must honor its own next_step.
+    Pre-fix, the recursive _execute_loop(start_step_id=...) call entered
+    the landing step as a plain loop step, never reading its next_step,
+    and fell through to array-sequential order instead. OC-03 (existing
+    test) did not catch this because its array order coincided with the
+    intended next_step target. See DECISIONS.md 2026-06-28.
+    """
+    order: list[str] = []
+    vm = ExecutionVM(
+        llm=MockLLMAdapter("ok"),
+        tools={
+            "a": lambda: order.append("a") or "a",
+            "b": lambda: order.append("b") or "b",
+        },
+    )
+    prog = Program.from_dict(
+        {
+            "name": "bug_nextstep_02",
+            "steps": [
+                {"id": "c1", "type": "condition", "condition": "'x' == 'y'",
+                 "then": "leaf_dead", "otherwise": "c2"},
+                {"id": "c2", "type": "condition", "condition": "'a' == 'a'",
+                 "then": "step_a", "otherwise": "leaf_dead"},
+                {"id": "leaf_dead", "type": "tool", "tool": "a", "is_terminal": True},
+                {"id": "step_a", "type": "tool", "tool": "a", "next_step": "step_b"},
+                {"id": "decoy", "type": "tool", "tool": "a"},
+                {"id": "step_b", "type": "tool", "tool": "b"},
+            ],
+        }
+    )
+    trace = await vm.run(prog)
+    ids = [s.step_id for s in trace.steps]
+    assert trace.status == TraceStatus.SUCCESS
+    assert ids == ["c1", "c2", "step_a", "step_b"]
+    assert order == ["a", "b"]
+    assert "decoy" not in ids
+
+
+@pytest.mark.asyncio
 async def test_cb09_momo_style_success():
     """MoMo-style inline pipeline: guard→create(next_step=poll)→poll→check→notify_success."""
     calls: list[str] = []
