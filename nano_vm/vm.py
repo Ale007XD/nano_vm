@@ -416,8 +416,7 @@ class ExecutionVM:
                     return trace.finish(
                         TraceStatus.FAILED,
                         error=(
-                            f"Step '{step.id}': next_step "
-                            f"'{generic_next_id}' not found in program"
+                            f"Step '{step.id}': next_step '{generic_next_id}' not found in program"
                         ),
                     )
                 current_idx = step_index[generic_next_id]
