@@ -394,6 +394,35 @@ class ExecutionVM:
                 # Default: terminal branch.
                 return trace.finish(TraceStatus.SUCCESS, final_output=trace.last_output())
 
+            # BUG-NEXTSTEP-01/02 fix (2026-06-28, confirmed kernel bug).
+            # Previously next_step was honored ONLY for the immediate
+            # target_step of a single CONDITION's then/otherwise (handled
+            # above). Any step reached via plain sequential loop entry --
+            # i.e. `step = steps[current_idx]` at the top of this loop --
+            # fell straight through to `current_idx += 1` below, silently
+            # ignoring its OWN next_step field. Two previously-undetected
+            # cases were affected:
+            #   (a) second+ hop of a next_step chain (step_b.next_step
+            #       after a first jump from step_a -- step_b lands here
+            #       via plain entry, not as a branch target)
+            #   (b) landing point of a recursive CONDITION->CONDITION call
+            #       (start_step_id=target_result.output above)
+            # Both were masked by pre-existing tests (OC-03, CB-08) whose
+            # steps[] array order happened to coincide with the intended
+            # next_step target. See DECISIONS.md 2026-06-28.
+            generic_next_id: str | None = getattr(step, "next_step", None)
+            if generic_next_id:
+                if generic_next_id not in step_index:
+                    return trace.finish(
+                        TraceStatus.FAILED,
+                        error=(
+                            f"Step '{step.id}': next_step "
+                            f"'{generic_next_id}' not found in program"
+                        ),
+                    )
+                current_idx = step_index[generic_next_id]
+                continue
+
             current_idx += 1
 
         return trace.finish(TraceStatus.SUCCESS, final_output=trace.last_output())
