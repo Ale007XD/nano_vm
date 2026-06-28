@@ -321,8 +321,13 @@ async def test_bug_nextstep_01_chain_survives_array_reorder():
         {
             "name": "bug_nextstep_01",
             "steps": [
-                {"id": "check", "type": "condition", "condition": "'go' == 'go'",
-                 "then": "step_a", "otherwise": "dead"},
+                {
+                    "id": "check",
+                    "type": "condition",
+                    "condition": "'go' == 'go'",
+                    "then": "step_a",
+                    "otherwise": "dead",
+                },
                 {"id": "dead", "type": "tool", "tool": "a", "is_terminal": True},
                 {"id": "step_a", "type": "tool", "tool": "a", "next_step": "step_b"},
                 {"id": "step_b", "type": "tool", "tool": "b", "next_step": "step_c"},
@@ -361,10 +366,20 @@ async def test_bug_nextstep_02_nested_condition_recursion_honors_next_step():
         {
             "name": "bug_nextstep_02",
             "steps": [
-                {"id": "c1", "type": "condition", "condition": "'x' == 'y'",
-                 "then": "leaf_dead", "otherwise": "c2"},
-                {"id": "c2", "type": "condition", "condition": "'a' == 'a'",
-                 "then": "step_a", "otherwise": "leaf_dead"},
+                {
+                    "id": "c1",
+                    "type": "condition",
+                    "condition": "'x' == 'y'",
+                    "then": "leaf_dead",
+                    "otherwise": "c2",
+                },
+                {
+                    "id": "c2",
+                    "type": "condition",
+                    "condition": "'a' == 'a'",
+                    "then": "step_a",
+                    "otherwise": "leaf_dead",
+                },
                 {"id": "leaf_dead", "type": "tool", "tool": "a", "is_terminal": True},
                 {"id": "step_a", "type": "tool", "tool": "a", "next_step": "step_b"},
                 {"id": "decoy", "type": "tool", "tool": "a"},
