@@ -7,6 +7,23 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [0.8.7] — 2026-06-29
+
+### Fixed
+- `next_step` (`Step.next_step`) was only honored for the immediate branch target of a single `CONDITION` step. Any step entering `_execute_loop` by a different path — a second-or-later hop in a `next_step` chain, or the landing step after a `CONDITION → CONDITION` recursion (`start_step_id=target_result.output`) — silently ignored its own `next_step` field; execution fell through to `current_idx += 1` (array order) instead. Two existing regression tests, `OC-03` and `CB-08`, passed on the buggy code only because their `steps[]` array order happened to match the `next_step` target — both were false positives. Fixed by adding a generic `next_step` check that applies to every step regardless of entry path (plain iteration, branch target, or recursion landing), in `nano_vm/vm.py::_execute_loop`.
+
+### Breaking Changes
+- Any program where `next_step` pointed at a step unreachable by the old mechanism, and whose correct behavior depended on that step instead running next by array order, will execute differently after this upgrade. Validate downstream programs before pinning `0.8.7`.
+- Ecosystem audit (6 repos: `tarot-bot`, `provider-fallback-demo`, `kyc-demo-streamlit`, `nano-vm-demo-fintech`, `traceguard`, `nano-vm-dev-agent`) found no behavior change in any of them — `tarot-bot` uses `next_step` only as a single-hop `CONDITION` target (already correct pre-fix); `provider-fallback-demo` and `nano-vm-demo-fintech` don't use `next_step` at all; `kyc-demo-streamlit` and `traceguard` don't import `nano_vm.ExecutionVM`; `nano-vm-dev-agent`'s multi-hop `next_step` chain in `PROGRAM_SPRINT` always pointed at the array-adjacent step, so the fix is a no-op there too. Upgrade confirmed safe for all six, but each new caller must audit independently — the mechanism is now live.
+
+### Added
+- `CONSTRAINTS.md`: `ProgramValidator(program).validate().is_valid()` is now a required call before any `vm.run()` in production code. `ExecutionVM.run()` / `resume_with_program()` do not call `ProgramValidator` themselves — validation remains opt-in at the engine level; cycle protection (including self-loops) is covered by `ProgramValidator.cycle_detection` (DFS, WHITE/GRAY/BLACK) at the graph level, not by a runtime guard inside the `vm.py` hot loop.
+
+### Tests
+- `BUG-NEXTSTEP-01` (multi-hop chain + decoy step), `BUG-NEXTSTEP-02` (nested `CONDITION` recursion landing + decoy step) added to `tests/test_v074_condition_semantics.py`.
+- `OC-03`, `CB-08` rewritten to use a decoy step, so they now fail on the pre-fix code instead of passing by coincidence.
+- 478/478 passed (476 pre-existing + 2 new), `mypy --strict` 0 errors.
+
 ## [0.8.6] — 2026-06-11
 
 ### Fixed
