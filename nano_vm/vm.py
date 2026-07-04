@@ -34,6 +34,7 @@ from .models import (
     Trace,
     TraceStatus,
 )
+from .telemetry import span_step
 
 
 class VMError(Exception):
@@ -303,6 +304,7 @@ class ExecutionVM:
             for sub_result in sub_results:
                 trace = trace.add_step(sub_result)
             trace = trace.add_step(result)
+            trace = trace.record_step_metric(step.type, result.retries)
 
             if result.status == StepStatus.PENDING:
                 trace = await self._suspend(step, state, trace)
@@ -349,6 +351,7 @@ class ExecutionVM:
                 for sub_result in target_sub:
                     trace = trace.add_step(sub_result)
                 trace = trace.add_step(target_result)
+                trace = trace.record_step_metric(target_step.type, target_result.retries)
 
                 if target_result.status == StepStatus.PENDING:
                     trace = await self._suspend(target_step, state, trace)
@@ -457,7 +460,8 @@ class ExecutionVM:
 
         while True:
             try:
-                output, usage, sub_results = await self._execute_step(step, state)
+                with span_step(step.id, step.type.value, attempt=attempt):
+                    output, usage, sub_results = await self._execute_step(step, state)
 
                 if output == "PENDING" and step.type == StepType.TOOL:
                     result = result.model_copy(

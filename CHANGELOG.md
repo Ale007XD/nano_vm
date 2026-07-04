@@ -7,6 +7,38 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [0.8.8] — 2026-07-04
+
+### Added
+- `nano_vm/telemetry.py`: `span_step(step_id, step_type, attempt)` — opens one
+  OTel span per `_run_step()` attempt (`nano_vm.step.<type>`), with attributes
+  `nano_vm.step_id` / `nano_vm.step_type` / `nano_vm.attempt`. Soft dependency,
+  same pattern as `LiteLLMAdapter`: `opentelemetry-api` is not a hard
+  dependency — absent, `span_step()` degrades to a no-op context manager, and
+  `StepMetrics` accounting is unaffected either way (no OTel dependency there
+  at all). New optional extra: `pip install llm-nano-vm[otel]`.
+- `StepMetrics` (`nano_vm/models.py`): `llm_calls`, `tool_calls`,
+  `condition_evals`, `retries_total` — counted once per completed
+  `_run_step()` call (final outcome after any internal retry loop, not once
+  per attempt). New `Trace.step_metrics: StepMetrics` field, populated via
+  `Trace.record_step_metric(step_type, retries)` in both `_execute_loop` main-
+  path and `CONDITION` branch-target execution paths in `nano_vm/vm.py`.
+- Pure post-processing / observation on both fronts: neither `span_step` nor
+  `StepMetrics` change control flow — `span_step` records exceptions on the
+  span and re-raises unchanged; retry/`on_error` semantics remain owned
+  exclusively by `vm.py::_run_step`.
+
+### Tests
+- `tests/test_sprint6_otel.py`: OT-01..12 — `StepMetrics` unit behavior
+  (defaults, per-type increment, frozen-record immutability, `PARALLEL`
+  no-bump), `Trace.record_step_metric` roundtrip, mixed LLM→CONDITION→TOOL
+  integration pipeline, `retries_total` accumulation on eventual success,
+  `span_step` no-op (OTel absent), real-span attribute verification
+  (`opentelemetry-sdk`, dev-only test dependency — not a runtime dependency),
+  exception-record-and-reraise.
+- 490/490 passed (478 pre-existing + 12 new), `mypy --ignore-missing-imports`
+  0 errors (14 files), `ruff` clean.
+
 ## [0.8.7] — 2026-06-29
 
 ### Fixed

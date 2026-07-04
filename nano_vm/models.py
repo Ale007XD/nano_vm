@@ -281,6 +281,38 @@ class StepResult(BaseModel):
 
 
 # ---------------------------------------------------------------------------
+# StepMetrics — sprint_6_core_otel
+# ---------------------------------------------------------------------------
+
+
+class StepMetrics(BaseModel):
+    """Per-Trace counters, one increment per completed _run_step() call.
+
+    Counted once per step (final outcome after any internal retry loop),
+    not once per attempt — retries_total is the only field that reflects
+    attempt count, via StepResult.retries on the step's final result.
+    Pure post-hoc accounting: no kernel control-flow depends on these values.
+    """
+
+    llm_calls: int = 0
+    tool_calls: int = 0
+    condition_evals: int = 0
+    retries_total: int = 0
+
+    model_config = {"frozen": True}
+
+    def record(self, step_type: StepType, retries: int) -> StepMetrics:
+        update: dict[str, int] = {"retries_total": self.retries_total + retries}
+        if step_type == StepType.LLM:
+            update["llm_calls"] = self.llm_calls + 1
+        elif step_type == StepType.TOOL:
+            update["tool_calls"] = self.tool_calls + 1
+        elif step_type == StepType.CONDITION:
+            update["condition_evals"] = self.condition_evals + 1
+        return self.model_copy(update=update)
+
+
+# ---------------------------------------------------------------------------
 # Trace
 # ---------------------------------------------------------------------------
 
@@ -298,6 +330,7 @@ class Trace(BaseModel):
     state_snapshots: list[tuple[int, str]] = Field(default_factory=list)
     suspended_step_id: str | None = None
     suspended_at: datetime | None = None
+    step_metrics: StepMetrics = Field(default_factory=StepMetrics)
 
     def finish(
         self,
@@ -328,6 +361,10 @@ class Trace(BaseModel):
 
     def add_step(self, result: StepResult) -> Trace:
         return self.model_copy(update={"steps": [*self.steps, result]})
+
+    def record_step_metric(self, step_type: StepType, retries: int = 0) -> Trace:
+        updated = self.step_metrics.record(step_type, retries)
+        return self.model_copy(update={"step_metrics": updated})
 
     def add_snapshot(self, step_index: int, fp_hex: str) -> Trace:
         entry = (step_index, fp_hex)

@@ -53,6 +53,7 @@ from .models import (
     Program,
     StateContext,
     Step,
+    StepMetrics,
     StepResult,
     StepStatus,
     StepType,
@@ -102,6 +103,7 @@ __all__ = [
     # Trace
     "Trace",
     "TraceStatus",
+    "StepMetrics",
     # v0.6.0 vault primitives
     "InterruptType",
     "VaultStepResult",
