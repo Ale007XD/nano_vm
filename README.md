@@ -112,7 +112,8 @@ program = Program.from_dict({
         {
             "id": "guardrail",
             "type": "condition",
-            "condition": "'yes' in '$decision'",
+            "condition": "$decision == \"yes\"",   # unquoted $var, exact-match against
+                                                    # the allowed_outputs enum above
             "then": "process_refund",
             "otherwise": "reject",
         },
@@ -372,12 +373,24 @@ Four step types:
 
 **Not supported:** method calls (`.lower()`, `.strip()`), arithmetic, parentheses grouping. Using an unsupported form raises `ASTEvalError` at parse time.
 
+**Never wrap a `$variable` in quotes.** Quotes mean "this is a literal string," not
+"resolve this reference" — `'$decision'` evaluates to the four characters `$decision`,
+not the value of `decision`. This fails **silently** — no `ASTEvalError`, the
+comparison is just always `False` — so it is easy to ship without noticing.
+
 ```python
-# ❌ WRONG — method call raises ASTEvalError
+# ❌ WRONG — method call raises ASTEvalError at parse time
 {"condition": "'yes' in '$decision'.lower()"}
 
-# ✅ CORRECT
+# ❌ WRONG — $decision is quoted, so it's a literal string, not a reference.
+# No error is raised; this condition is always False.
 {"condition": "'yes' in '$decision'"}
+
+# ✅ CORRECT — $decision unquoted resolves to the step output. Pair this with
+# allowed_outputs on the upstream LLM step (see Quick Start above) so the value
+# is already an exact, enum-constrained string — then compare with ==, not a
+# substring/`.lower()` check that ASTEngine can't express anyway.
+{"condition": "$decision == \"yes\""}
 ```
 
 ---
