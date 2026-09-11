@@ -28,7 +28,8 @@ external event arrives (payment webhook, courier confirmation, etc.).
 # Suspend — tool returns sentinel "PENDING"
 async def initiate_payment(**kwargs) -> str:
     await register_webhook_handler(order_id=kwargs["order_id"])
-    return "PENDING"   # VM sees this, suspends, persists cursor
+    return "PENDING"  # VM sees this, suspends, persists cursor
+
 
 trace = await vm.run(program, context={"order_id": "123"})
 assert trace.status == TraceStatus.SUSPENDED
@@ -64,9 +65,11 @@ influence it.
 ```python
 from nano_vm.vm import ExecutionVM, InterruptType
 
+
 class InstrumentedVM(ExecutionVM):
     async def _emit_interrupt(self, interrupt_type: InterruptType) -> None:
         await notify_operator(f"interrupt: {interrupt_type.value}")
+
 
 vm = InstrumentedVM(llm=adapter)
 ```

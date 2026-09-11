@@ -69,20 +69,24 @@ LLMs are not required. nano-vm runs as a pure deterministic workflow engine.
 ```python
 from nano_vm import ExecutionVM, Program
 
-program = Program.from_dict({
-    "name": "payment_flow",
-    "steps": [
-        {"id": "reserve",  "type": "tool", "tool": "reserve_funds"},
-        {"id": "capture",  "type": "tool", "tool": "capture_payment"},
-        {"id": "receipt",  "type": "tool", "tool": "send_receipt"},
-    ]
-})
+program = Program.from_dict(
+    {
+        "name": "payment_flow",
+        "steps": [
+            {"id": "reserve", "type": "tool", "tool": "reserve_funds"},
+            {"id": "capture", "type": "tool", "tool": "capture_payment"},
+            {"id": "receipt", "type": "tool", "tool": "send_receipt"},
+        ],
+    }
+)
 
-vm = ExecutionVM(tools={
-    "reserve_funds":   reserve_funds,
-    "capture_payment": capture_payment,
-    "send_receipt":    send_receipt,
-})
+vm = ExecutionVM(
+    tools={
+        "reserve_funds": reserve_funds,
+        "capture_payment": capture_payment,
+        "send_receipt": send_receipt,
+    }
+)
 
 trace = await vm.run(program)
 print(trace.status)  # SUCCESS
@@ -99,28 +103,30 @@ trace visibility, transition enforcement, idempotent re-execution across restart
 from nano_vm import ExecutionVM, Program
 from nano_vm.adapters import LiteLLMAdapter
 
-program = Program.from_dict({
-    "name": "customer_refund",
-    "steps": [
-        {
-            "id": "analyze",
-            "type": "llm",
-            "prompt": "Is this a valid refund request? Reply 'yes' or 'no'.\nRequest: $user_input",
-            "output_key": "decision",
-            "allowed_outputs": ["yes", "no"],   # runtime enum gate — not a prompt hint
-        },
-        {
-            "id": "guardrail",
-            "type": "condition",
-            "condition": "$decision == \"yes\"",   # unquoted $var, exact-match against
-                                                    # the allowed_outputs enum above
-            "then": "process_refund",
-            "otherwise": "reject",
-        },
-        {"id": "process_refund", "type": "tool", "tool": "issue_refund",    "is_terminal": True},
-        {"id": "reject",         "type": "tool", "tool": "send_rejection",  "is_terminal": True},
-    ],
-})
+program = Program.from_dict(
+    {
+        "name": "customer_refund",
+        "steps": [
+            {
+                "id": "analyze",
+                "type": "llm",
+                "prompt": "Is this a valid refund request? Reply 'yes' or 'no'.\nRequest: $user_input",
+                "output_key": "decision",
+                "allowed_outputs": ["yes", "no"],  # runtime enum gate — not a prompt hint
+            },
+            {
+                "id": "guardrail",
+                "type": "condition",
+                "condition": '$decision == "yes"',  # unquoted $var, exact-match against
+                # the allowed_outputs enum above
+                "then": "process_refund",
+                "otherwise": "reject",
+            },
+            {"id": "process_refund", "type": "tool", "tool": "issue_refund", "is_terminal": True},
+            {"id": "reject", "type": "tool", "tool": "send_rejection", "is_terminal": True},
+        ],
+    }
+)
 
 vm = ExecutionVM(
     llm=LiteLLMAdapter("openai/gpt-4o-mini"),
@@ -128,8 +134,8 @@ vm = ExecutionVM(
 )
 
 trace = await vm.run(program, context={"user_input": "I was charged twice"})
-print(trace.status)           # SUCCESS
-print(trace.total_cost_usd()) # e.g. 0.000034
+print(trace.status)  # SUCCESS
+print(trace.total_cost_usd())  # e.g. 0.000034
 ```
 
 The `guardrail` step cannot be skipped, reordered, or overridden by the model.
@@ -143,7 +149,7 @@ Return `"PENDING"` from any tool to suspend execution:
 ```python
 async def initiate_payment(**kwargs) -> str:
     await register_webhook(kwargs["order_id"])
-    return "PENDING"   # FSM → SUSPENDED, cursor persisted
+    return "PENDING"  # FSM → SUSPENDED, cursor persisted
 ```
 
 FSM transition: `RUNNING → SUSPENDED → RUNNING → SUCCESS`
@@ -178,7 +184,7 @@ Validates the model's raw output against an explicit enum *before* it enters the
     "prompt": "Classify the request. Reply ONLY with: refund / query / other",
     "output_key": "category",
     "allowed_outputs": ["refund", "query", "other"],
-    "on_error": "skip",   # output → "refund" (first element) on mismatch
+    "on_error": "skip",  # output → "refund" (first element) on mismatch
 }
 ```
 
@@ -195,7 +201,7 @@ Per-step LLM timeout:
     "id": "classify",
     "type": "llm",
     "timeout_seconds": 10.0,
-    "on_timeout": "fail",   # or "fallback" → allowed_outputs[0] or ''
+    "on_timeout": "fail",  # or "fallback" → allowed_outputs[0] or ''
 }
 ```
 
@@ -211,7 +217,7 @@ from nano_vm import ProgramValidator
 validator = ProgramValidator(program)
 report = validator.validate()
 
-print(report.is_valid())   # False if any ERROR-severity issue found
+print(report.is_valid())  # False if any ERROR-severity issue found
 for issue in report.issues:
     print(issue.severity, issue.code, issue.message)
 ```
@@ -237,12 +243,12 @@ Analyzes a completed trace. Pure post-processing — no changes to the runtime s
 from nano_vm import TraceAnalyzer
 
 analyzer = TraceAnalyzer(trace)
-report = analyzer.report()     # TraceHealthReport — lazy, cached
+report = analyzer.report()  # TraceHealthReport — lazy, cached
 
-print(report.rollback_density)          # 0.0 – 1.0
-print(report.tool_churn_rate)           # 0.0 – 1.0
-print(report.path_variance)             # 0.0 – 1.0
-print(report.transition_entropy)        # bits
+print(report.rollback_density)  # 0.0 – 1.0
+print(report.tool_churn_rate)  # 0.0 – 1.0
+print(report.path_variance)  # 0.0 – 1.0
+print(report.transition_entropy)  # bits
 print(report.invariant_violation_rate)  # 0.0 – 1.0
 ```
 
@@ -265,16 +271,16 @@ Alerts are warnings, not errors. The FSM is never interrupted by the analyzer.
 The receipt is a deterministic projection of the trace. It contains the minimal state needed for a continuation decision — whether to resume, replay, or escalate.
 
 ```python
-receipt = analyzer.receipt()   # lazy, cached; recomputable at any time
+receipt = analyzer.receipt()  # lazy, cached; recomputable at any time
 
 print(receipt.trace_id)
-print(receipt.final_status)         # TraceStatus
-print(receipt.resumable)            # bool
-print(receipt.replayable)           # bool
-print(receipt.failed_steps)         # int
-print(receipt.retried_steps)        # int
-print(receipt.rejected_transitions) # tuple[RejectedTransition, ...]
-print(receipt.health)               # TraceHealthReport
+print(receipt.final_status)  # TraceStatus
+print(receipt.resumable)  # bool
+print(receipt.replayable)  # bool
+print(receipt.failed_steps)  # int
+print(receipt.retried_steps)  # int
+print(receipt.rejected_transitions)  # tuple[RejectedTransition, ...]
+print(receipt.health)  # TraceHealthReport
 ```
 
 `RejectedTransition` captures each failed step with its reason and timestamp:
@@ -390,7 +396,7 @@ comparison is just always `False` — so it is easy to ship without noticing.
 # allowed_outputs on the upstream LLM step (see Quick Start above) so the value
 # is already an exact, enum-constrained string — then compare with ==, not a
 # substring/`.lower()` check that ASTEngine can't express anyway.
-{"condition": "$decision == \"yes\""}
+{"condition": '$decision == "yes"'}
 ```
 
 ---
@@ -434,12 +440,12 @@ On a GDPR erasure event, the ref is tombstoned. All subsequent projections retur
 ## Observability
 
 ```python
-trace.trace_id              # UUID4 — stable for OTel propagation
-trace.status                # TraceStatus.SUCCESS | FAILED | SUSPENDED | BUDGET_EXCEEDED | STALLED
+trace.trace_id  # UUID4 — stable for OTel propagation
+trace.status  # TraceStatus.SUCCESS | FAILED | SUSPENDED | BUDGET_EXCEEDED | STALLED
 trace.final_output
-trace.total_tokens()        # O(1) incremental accumulator
-trace.total_cost_usd()      # requires LiteLLMAdapter
-trace.state_snapshots       # list[(step_index, sha256_hex)]
+trace.total_tokens()  # O(1) incremental accumulator
+trace.total_cost_usd()  # requires LiteLLMAdapter
+trace.state_snapshots  # list[(step_index, sha256_hex)]
 
 for step in trace.steps:
     print(step.step_id, step.status, step.duration_ms, step.usage)
@@ -453,17 +459,21 @@ for step in trace.steps:
 from nano_vm import ExecutionVM, Program, TraceStatus
 from nano_vm.adapters import MockLLMAdapter
 
-vm = ExecutionVM(llm=MockLLMAdapter("yes"))   # always returns "yes"
+vm = ExecutionVM(llm=MockLLMAdapter("yes"))  # always returns "yes"
 
 # Per-call sequence
 vm = ExecutionVM(llm=MockLLMAdapter(["SAFE", "yes"]))
 
 # Per-prompt substring mapping
-vm = ExecutionVM(llm=MockLLMAdapter({
-    "Classify": "SAFE",
-    "eligible": "yes",
-    "__default__": "ok",
-}))
+vm = ExecutionVM(
+    llm=MockLLMAdapter(
+        {
+            "Classify": "SAFE",
+            "eligible": "yes",
+            "__default__": "ok",
+        }
+    )
+)
 
 trace = await vm.run(program, context={"user_input": "refund"})
 assert trace.status == TraceStatus.SUCCESS

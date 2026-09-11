@@ -30,7 +30,7 @@ All v0.7.x programs are fully compatible. No breaking changes.
     "prompt": "Classify the request. Reply ONLY with: refund / query / other",
     "output_key": "category",
     "allowed_outputs": ["refund", "query", "other"],
-    "on_error": "skip",   # safe fallback → "refund" on unexpected output
+    "on_error": "skip",  # safe fallback → "refund" on unexpected output
 }
 ```
 
@@ -62,7 +62,7 @@ into conditions and branches, producing wrong paths instead of an explicit failu
     "prompt": "...",
     "allowed_outputs": ["approve", "reject"],
     "timeout_seconds": 5.0,
-    "on_timeout": "fallback",   # → "approve" (allowed_outputs[0])
+    "on_timeout": "fallback",  # → "approve" (allowed_outputs[0])
 }
 ```
 
@@ -161,7 +161,7 @@ For LLM steps where latency is critical:
     "prompt": "...",
     "allowed_outputs": ["approve", "reject"],
     "timeout_seconds": 10.0,
-    "on_timeout": "fallback",   # safe degradation
+    "on_timeout": "fallback",  # safe degradation
 }
 ```
 
