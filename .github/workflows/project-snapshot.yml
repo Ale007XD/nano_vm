@@ -1,0 +1,77 @@
+name: Project Snapshot for LLM
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '0 0 1 * *'
+
+jobs:
+  snapshot:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install tools
+        run: sudo apt-get update && sudo apt-get install -y tree jq
+
+      # ИСПРАВЛЕНО: добавлено отсутствующее свойство name
+      - name: Generate tree.json
+        run: tree -I '.git|node_modules|dist|build|*.log' -a -J > tree.json
+
+      - name: Generate JSON snapshot
+        run: |
+          git ls-files --cached --exclude-standard > files_list.txt
+
+          # ИСПРАВЛЕНО: добавлена инициализация с пустым массивом файлов
+          echo '{"commit": "'$(git rev-parse HEAD)'", "branch": "'$(git branch --show-current)'", "files": []}' > project-snapshot.json
+
+          while IFS= read -r file; do
+            rel_path="./$file"
+            if [ -f "$rel_path" ]; then
+              size=$(stat -c%s "$rel_path" 2>/dev/null || echo 0)
+              if [[ "$file" == "Dockerfile" ]] || [[ "$file" =~ \.(py|js|ts|json|md|txt|yml|yaml|sh|toml)$ ]]; then
+                content=$(cat "$rel_path" 2>/dev/null | base64 -w0 || echo "[Error]")
+              else
+                content="[File excluded or too large]"
+              fi
+              # ИСПРАВЛЕНО: оптимизирована запись в JSON через sponge (из пакета moreutils)
+              # Альтернатива без sponge: использование временного файла
+              jq --arg path "$file" --arg content "$content" --arg size "$size" \
+                '.files += [{path: $path, size: ($size | tonumber), content: $content}]' \
+                project-snapshot.json > tmp.json && mv tmp.json project-snapshot.json
+            fi
+          done < files_list.txt
+
+          # ИСПРАВЛЕНО: удаление временных файлов
+          rm -f files_list.txt
+
+      - name: Generate MD dump
+        run: |
+          echo "# Полный снапшот проекта для LLM" > project-snapshot.md
+          echo "## Commit: $(git rev-parse HEAD)" >> project-snapshot.md
+          echo "## Branch: $(git branch --show-current)" >> project-snapshot.md
+          echo "## Дата: $(date)" >> project-snapshot.md
+          echo "## Файлов: $(jq '.files | length' project-snapshot.json)" >> project-snapshot.md
+          echo "" >> project-snapshot.md
+          tree -I '.git|node_modules|dist|build|*.log' -a >> project-snapshot.md
+          echo "" >> project-snapshot.md
+
+          # ИСПРАВЛЕНО: исправлен синтаксис jq - select вместо незавершенного условия
+          # ИСПРАВЛЕНО: правильная декодировка base64 и форматирование
+          jq -r '.files[] | select(.content != "[File excluded or too large]") | 
+            "## \(.path) (размер: \(.size) bytes)\n```\n\(.content | @base64d)\n```"' \
+            project-snapshot.json >> project-snapshot.md
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: project-snapshot-${{ github.sha }}
+          path: |
+            project-snapshot.json
+            project-snapshot.md
+            tree.json
+          retention-days: 90
+          
