@@ -70,7 +70,7 @@ tool step:
   {"id": "<id>", "type": "tool", "tool": "<tool_name>", "args": {}, "output_key": "<key>"}
 
 condition step:
-  {"id": "<id>", "type": "condition", "condition": "'<value>' in '$<key>'",
+  {"id": "<id>", "type": "condition", "condition": "$<key> == \"<value>\"",
    "then": "<step_id>", "otherwise": "<step_id>"}
 
 parallel step:
@@ -82,6 +82,12 @@ RULES:
 - llm steps require: prompt, output_key.
 - tool steps require: tool name. Use tool names from the available_tools list if provided.
 - condition steps require: condition expression, at least one of: then, otherwise.
+- NEVER wrap a $variable in quotes inside a condition. '$decision' (quoted) is the four
+  literal characters $decision, not a reference — the comparison silently evaluates to
+  False, no error is raised. Always write the variable unquoted: $decision == "value".
+- Pair every condition with an upstream llm step that sets allowed_outputs to the exact
+  enum of values the condition checks against — compare with ==, not a substring/`in`
+  check, since the LLM output is already constrained to one of those exact strings.
 - parallel sub-steps may only be llm or tool type (no nested parallel or condition).
 - Use $variable_name to reference initial context. Use $step_id to reference a previous step output.
 - Keep steps minimal — only what the user's intent requires.
@@ -99,12 +105,13 @@ Output:
       "type": "llm",
       "prompt": "Classify this message as 'urgent' or 'not_urgent'."
                " Reply with one word only.\\nMessage: $user_input",
-      "output_key": "classification"
+      "output_key": "classification",
+      "allowed_outputs": ["urgent", "not_urgent"]
     },
     {
       "id": "route",
       "type": "condition",
-      "condition": "'urgent' in '$classification'",
+      "condition": "$classification == \"urgent\"",
       "then": "handle_urgent",
       "otherwise": "handle_normal"
     },

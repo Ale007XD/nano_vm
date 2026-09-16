@@ -7,6 +7,19 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [0.8.9] — 2026-09-16
+
+Fixed
+Bare install restored: import nano_vm no longer raises ImportError whenlitellm is not installed. nano_vm/adapters/__init__.py exposesLiteLLMAdapter via lazy module-level __getattr__ — the same soft-dependencypattern as telemetry.py. Supersedes the 0.8.6 approach: with litellm as anoptional extra, an unconditional import broke every pip install llm-nano-vmwithout extras; CI never caught it because its single install path is .[dev],which includes litellm.
+Planner no longer generates always-False conditions. _SYSTEM_PROMPTschema and few-shot example previously taught 'value' in '$var' — a quoted$var is a string literal, so the comparison is always False and the thenbranch is unreachable. Schema/example now use $var == "value" paired withallowed_outputs on the upstream llm step; RULES explicitly forbid quoting$var. Same pattern removed from benchmarks/stress_test.py.
+litellm upper pin: litellm>=1.40,<1.98.0 in both litellm and devextras (same upstream break as Sieshka 2026-08-29 and nano-vm-mcp 2026-09-12).
+Added
+Public API exports: ProgramValidator, ValidationReport, ValidationIssue,IssueKind, IssueSeverity, TraceAnalyzer, TraceHealthReport,ExecutionReceipt, RejectedTransition — previously ImportError despiteboth being documented flagship v0.8.5 features.
+__version__ via importlib.metadata.version("llm-nano-vm") (fallback"0.0.0+unknown"); was hardcoded "0.7.0".
+Note
+No new tests in this release; contract tests for the exports and a CIbare-install job remain open (S0 remainder).
+tools/: local CI-parity gate (clean venv, Python 3.12, pinned lock,import smoke, ruff, mypy, pytest --timeout=10). 490/490, mypy 0/14, ruff clean.
+
 ## [0.8.8] — 2026-07-04
 
 ### Added

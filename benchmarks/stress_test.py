@@ -52,7 +52,7 @@ def create_stress_program(steps_count: int = 20) -> Program:
         Step(
             id="check_logic",
             type=StepType.CONDITION,
-            condition="'o' in '$step_0.output'",
+            condition="'o' in $step_0.output",
             then=f"step_{steps_count - 1}",
             otherwise="step_0",
         )

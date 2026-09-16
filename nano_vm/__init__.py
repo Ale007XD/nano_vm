@@ -41,6 +41,12 @@ CapabilityRef / projection (v0.7.0):
     projected = sanitizer.project(state, target=ProjectionTarget.LLM)
 """
 
+from .analyzer import (
+    ExecutionReceipt,
+    RejectedTransition,
+    TraceAnalyzer,
+    TraceHealthReport,
+)
 from .contracts import (
     CapabilityRef,
     GovernanceEnvelope,
@@ -68,6 +74,13 @@ from .projection import (
     AbstractProjectionLayer,
     DeterministicSanitizer,
     ProjectionTarget,
+)
+from .validator import (
+    IssueKind,
+    IssueSeverity,
+    ProgramValidator,
+    ValidationIssue,
+    ValidationReport,
 )
 from .vm import (
     CursorRepository,
@@ -116,6 +129,28 @@ __all__ = [
     "ProjectionTarget",
     "AbstractProjectionLayer",
     "DeterministicSanitizer",
+    # v0.8.5 — ProgramValidator (pre-flight static analysis)
+    "ProgramValidator",
+    "ValidationReport",
+    "ValidationIssue",
+    "IssueKind",
+    "IssueSeverity",
+    # v0.8.5 — TraceAnalyzer / ExecutionReceipt (post-hoc analysis)
+    "TraceAnalyzer",
+    "TraceHealthReport",
+    "ExecutionReceipt",
+    "RejectedTransition",
 ]
 
-__version__ = "0.7.0"
+from importlib.metadata import PackageNotFoundError as _PackageNotFoundError
+from importlib.metadata import version as _version
+
+try:
+    # Single source of truth: the version hatch-vcs baked into the installed
+    # distribution's metadata at build time. Previously hardcoded here as
+    # "0.7.0" and never updated across 7 releases (actual: 0.8.8+).
+    __version__ = _version("llm-nano-vm")
+except _PackageNotFoundError:
+    # Running from a source checkout with no installed distribution metadata
+    # (e.g. straight `python -c "import nano_vm"` against a git clone).
+    __version__ = "0.0.0+unknown"

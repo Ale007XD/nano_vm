@@ -26,7 +26,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-litellm = ["litellm>=1.40"]
+litellm = ["litellm>=1.40,<1.98.0"]
 yaml    = ["pyyaml>=6.0"]
 otel    = ["opentelemetry-api>=1.20"]
 dev     = [
@@ -34,7 +34,7 @@ dev     = [
     "pytest-asyncio>=0.23",
     "mypy>=1.9",
     "ruff>=0.4",
-    "litellm>=1.40",
+    "litellm>=1.40,<1.98.0",
     "pyyaml>=6.0",
     "types-PyYAML>=6.0",
     "pytest-cov>=5.0",
