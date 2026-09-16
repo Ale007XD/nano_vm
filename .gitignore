@@ -23,4 +23,4 @@ project-snapshot.md
 tree.json
 repo-structure.json
 export/
-query_result/
+query_result/*:Zone.Identifier

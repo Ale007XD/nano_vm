@@ -11,7 +11,7 @@ rm -rf .venv
 # shellcheck disable=SC1091
 source .venv/bin/activate
 pip install --quiet --upgrade pip wheel
-pip install --quiet -e ".[dev]"
+pip install --quiet -e ".[dev]" pytest-timeout
 pip freeze --exclude-editable > tools/requirements-gate.lock
 echo "OK → tools/requirements-gate.lock $(wc -l < tools/requirements-gate.lock) пакетов"
 echo "Закоммить его вместе с изменением зависимостей."
