@@ -150,7 +150,7 @@ async def _llm_call_with_timeout(step: Step, coro: Any) -> Any:
 class ExecutionVM:
     def __init__(
         self,
-        llm: LLMAdapter,
+        llm: LLMAdapter | None = None,
         tools: dict[str, Callable[..., Any]] | None = None,
         cursor_repository: CursorRepository | None = None,
     ) -> None:
@@ -258,6 +258,17 @@ class ExecutionVM:
         stalled_count = 0
 
         while current_idx < len(steps):
+            # Yield to the event loop once per iteration. A purely synchronous
+            # tool chain never suspends internally on its own, so without this
+            # checkpoint asyncio.wait_for()/Task.cancel() from an external
+            # caller cannot deliver CancelledError until the coroutine returns
+            # by itself -- e.g. a cycle in the transition graph (see
+            # ProgramValidator.cycle_detection) combined with sync tools runs
+            # forever and is uncancellable from the outside. This does NOT
+            # make a single blocking tool call interruptible mid-call -- only
+            # the transitions between steps become cooperative checkpoints.
+            await asyncio.sleep(0)
+
             # Budget guards
             if program.max_steps is not None and steps_executed >= program.max_steps:
                 await self._emit_interrupt(InterruptType.BUDGET, trace)
@@ -524,6 +535,13 @@ class ExecutionVM:
     # ------------------------------------------------------------------
 
     async def _execute_llm(self, step: Step, state: StateContext) -> tuple[str, LLMUsage | None]:
+        if self._llm is None:
+            raise VMError(
+                f"Step '{step.id}' is type=llm, but ExecutionVM was constructed without "
+                "an llm adapter (llm=None). Pass llm=<LLMAdapter instance> to "
+                "ExecutionVM(), or remove/replace this step if the program is meant "
+                "to be tool-only."
+            )
         prompt = self._resolve(step.prompt, state)
         messages: list[dict[str, str]] = []
         if step.system:

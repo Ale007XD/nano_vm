@@ -138,7 +138,13 @@ async def test_retry_exponential_backoff_delays(monkeypatch):
     assert trace.status == TraceStatus.SUCCESS
     # attempt=1 → sleep(min(2^0, 30)) = 1.0
     # attempt=2 → sleep(min(2^1, 30)) = 2.0
-    assert sleep_calls == [1.0, 2.0]
+    # sleep(0) is the per-iteration event-loop checkpoint added to
+    # _execute_loop for external cancellability (asyncio.wait_for /
+    # Task.cancel()) -- not a retry backoff. One such call precedes step
+    # execution in this single-step program; filter it out before
+    # asserting on backoff-specific delays.
+    backoff_calls = [d for d in sleep_calls if d != 0]
+    assert backoff_calls == [1.0, 2.0]
 
 
 # ---------------------------------------------------------------------------
