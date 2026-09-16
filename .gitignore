@@ -1,0 +1,26 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+
+# Окружения
+.venv/
+venv/
+
+# Кэши инструментов
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+coverage.xml
+*.log
+
+# Артефакты снапшотов/экспорта — генерятся в CI, коммитить не надо
+project-snapshot.json
+project-snapshot.md
+tree.json
+repo-structure.json
+export/
+query_result/
