@@ -17,7 +17,17 @@ from __future__ import annotations
 
 import pytest
 
-from nano_vm import ExecutionVM, Program, StateContext, Step, StepType, TraceStatus, VMError
+from nano_vm import (
+    ExecutionVM,
+    InMemoryCursorRepository,
+    Program,
+    StateContext,
+    Step,
+    StepType,
+    TraceStatus,
+    VMError,
+    WebhookEvent,
+)
 from nano_vm.adapters import MockLLMAdapter
 
 # ---------------------------------------------------------------------------
@@ -49,6 +59,17 @@ TOOL_ONLY_WITH_DEAD_LLM_STEP = {
     "name": "dead_llm_step",
     "steps": [
         {"id": "t1", "type": "tool", "tool": "spy", "is_terminal": True},
+        {"id": "ask", "type": "llm", "prompt": "hi", "output_key": "x", "is_terminal": True},
+    ],
+}
+
+
+# A step that suspends (PENDING sentinel), THEN an llm step on resume. Used
+# to prove pre-flight fires on the resume() entry point too, not just run().
+SUSPEND_THEN_LLM = {
+    "name": "suspend_then_llm",
+    "steps": [
+        {"id": "p", "type": "tool", "tool": "pend"},
         {"id": "ask", "type": "llm", "prompt": "hi", "output_key": "x", "is_terminal": True},
     ],
 }
@@ -120,6 +141,51 @@ async def test_unreachable_llm_step_still_rejected_preflight():
 
     assert "ask" in str(exc_info.value)
     assert calls == []
+
+
+@pytest.mark.asyncio
+async def test_preflight_fires_on_resume_before_cursor_load():
+    """Q2 on the resume entry point: same rejection, and it must fire
+    before the cursor repository is even touched. run() and
+    resume_with_program() are two separate entry points into the same
+    _execute_loop, and this project has a precedent for entry points
+    diverging silently on a supposedly-shared rule (0.8.7:
+    BUG-NEXTSTEP-01/02 -- next_step was honored on one entry path and
+    silently ignored on the others). Cross-VM resume is deliberate here:
+    the trace was produced by a VM WITH an adapter, then resumed on one
+    WITHOUT -- proving the check depends on the resuming VM's own
+    configuration, not on whatever produced the suspended trace.
+    """
+
+    class CountingRepo(InMemoryCursorRepository):
+        def __init__(self) -> None:
+            super().__init__()
+            self.loads = 0
+
+        async def load(self, trace_id: str):  # type: ignore[override]
+            self.loads += 1
+            return await super().load(trace_id)
+
+    def pend(**kwargs: object) -> str:
+        return "PENDING"  # reserved suspend sentinel
+
+    repo = CountingRepo()
+    program = Program.from_dict(SUSPEND_THEN_LLM)
+
+    suspending_vm = ExecutionVM(
+        llm=MockLLMAdapter("done"), tools={"pend": pend}, cursor_repository=repo
+    )
+    trace = await suspending_vm.run(program)
+    assert trace.status == TraceStatus.SUSPENDED
+
+    vm_no_llm = ExecutionVM(llm=None, tools={"pend": pend}, cursor_repository=repo)
+    with pytest.raises(VMError) as exc_info:
+        await vm_no_llm.resume_with_program(
+            WebhookEvent(trace_id=trace.trace_id, payload={}), program
+        )
+
+    assert "ask" in str(exc_info.value)
+    assert repo.loads == 0, "pre-flight must fire before cursor load on resume"
 
 
 # ---------------------------------------------------------------------------
