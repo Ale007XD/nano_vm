@@ -161,6 +161,33 @@ class ExecutionVM:
     def register_tool(self, name: str, fn: Callable[..., Any]) -> None:
         self._tools[name] = fn
 
+    def _require_llm_if_needed(self, program: Program) -> None:
+        """Fail closed before any step executes (Q2, 2026-09-16 revision):
+        a program declaring type=llm steps cannot run on a VM constructed
+        without an adapter. Deliberately over-approximates reachability --
+        rejects if ANY llm step is declared anywhere in the program,
+        regardless of whether the actual execution path would reach it, so
+        e.g. tool_step -> llm_step never gets to run tool_step (with real
+        side effects) before failing on llm_step.
+
+        Raises VMError directly rather than returning a Trace(FAILED): this
+        is a VM-configuration precondition violation, the same class of
+        error as ResumeError below (caller misused the API), not an
+        in-program step failure. The runtime check inside _execute_llm
+        remains as a backstop for any path that reaches it without going
+        through run()/resume_with_program() first.
+        """
+        if self._llm is not None:
+            return
+        llm_step_ids = [s.id for s in program.steps if s.type == StepType.LLM]
+        if llm_step_ids:
+            raise VMError(
+                f"Program '{program.name}' contains llm step(s) {llm_step_ids}, "
+                "but ExecutionVM was constructed without an llm adapter (llm=None). "
+                "Pass llm=<LLMAdapter instance> to ExecutionVM(), or remove/replace "
+                "these steps if the program is meant to be tool-only."
+            )
+
     # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
@@ -170,6 +197,7 @@ class ExecutionVM:
         program: Program,
         context: dict[str, Any] | None = None,
     ) -> Trace:
+        self._require_llm_if_needed(program)
         state = StateContext(data=context or {})
         trace = Trace(program_name=program.name)
         return await self._execute_loop(program, state, trace, start_step_id=None)
@@ -179,6 +207,7 @@ class ExecutionVM:
         webhook_event: WebhookEvent,
         program: Program,
     ) -> Trace:
+        self._require_llm_if_needed(program)
         cursor = await self._cursor_repo.load(webhook_event.trace_id)
         if cursor is None:
             raise ResumeError(

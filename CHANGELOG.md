@@ -7,6 +7,45 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [Unreleased]
+
+### Added
+- CI: `bare-install` job (Python 3.10/3.11/3.12 matrix) installs with no
+  extras and asserts `import nano_vm` succeeds, the public API exports
+  resolve, and `LiteLLMAdapter` still defers its `ImportError` to first use.
+  Regression guard for the 0.8.9 bare-install fix — `lint`/`test` only ever
+  install `.[dev]`, which pulls litellm in transitively and would not have
+  caught a recurrence.
+- `tests/test_cancellation.py` — regression coverage for the cancellability
+  fix below.
+- `tests/test_llm_optional.py` — regression coverage for `llm=None` and the
+  pre-flight rejection below. Closes the "no new tests" note under 0.8.9.
+
+### Fixed
+- `ExecutionVM.run()` / `resume_with_program()` could not be cancelled
+  externally when stuck in a cycle of purely synchronous tools:
+  `asyncio.wait_for()` / `Task.cancel()` had no cooperative point to deliver
+  `CancelledError` at, so the coroutine ran until killed regardless of
+  caller-side timeouts. `_execute_loop` now awaits `asyncio.sleep(0)` once
+  per iteration. Does not make a single blocking tool call interruptible
+  mid-call — only the transition between steps becomes a cancellation point.
+- A program declaring `type=llm` steps on a VM constructed without an
+  adapter (`llm=None`) is now rejected before any step executes. Previously
+  the check fired only when the llm step itself ran, so earlier tool step(s)
+  in the same program already produced real side effects before the
+  failure. `ExecutionVM._require_llm_if_needed()` rejects conservatively —
+  any declared llm step blocks the program whether or not it is reachable.
+  The runtime check inside `_execute_llm` remains as a backstop.
+
+### Note
+- Closes both open items noted under 0.8.9 ("no new tests", "CI bare-install
+  job remain open").
+- Still open: contract tests asserting the public API exports added in 0.8.9
+  (`ProgramValidator`, `TraceAnalyzer`, `ExecutionReceipt`, …) stay
+  importable; 0.8.9 PyPI publish; trace finalization on cancellation
+  (tracked as Q3 — checkpoint lands `CancelledError` correctly, but no
+  terminal `Trace` is produced or made retrievable for a cancelled run).
+
 ## [0.8.9] — 2026-09-16
 
 Fixed

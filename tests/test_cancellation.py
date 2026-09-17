@@ -37,10 +37,13 @@ def make_vm(tools: dict | None = None) -> ExecutionVM:
 
 
 def make_cycle_program() -> Program:
-    """a -> b -> a: a genuine graph cycle. ProgramValidator flags it, but
-    ExecutionVM.run() does not call the validator itself (validation stays
-    opt-in by design, see DECISIONS.md 2026-06-28) -- so this program runs
-    forever unless the caller enforces max_steps or cancels externally.
+    """a -> b -> a: a genuine graph cycle. ProgramValidator flags it via
+    cycle_detection, but ExecutionVM.run() does not call the validator
+    itself -- validation is opt-in, kept out of the hot path deliberately
+    (the engine constrains what a *valid* program can do; deciding whether
+    a program is valid in the first place is the caller's job, before
+    calling run()). So this program runs forever unless the caller either
+    validates it first, sets Program.max_steps, or cancels externally.
     """
     return Program.from_dict(
         {
