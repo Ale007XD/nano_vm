@@ -35,6 +35,9 @@ pip install --quiet -e "."
 # (первый вызов с локом ставит и litellm==1.97.x, и пакет из локальной директории)
 
 # --- 3. Гейт -------------------------------------------------------------------
+echo "== commit =="
+echo "$(git rev-parse --short HEAD) ($(git status --porcelain | wc -l) dirty)"
+
 echo "== import smoke =="
 python - <<'PY'
 import nano_vm

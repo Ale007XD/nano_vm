@@ -16,6 +16,7 @@ venv/
 .coverage
 coverage.xml
 *.log
+*:Zone.Identifier
 
 # Артефакты снапшотов/экспорта — генерятся в CI, коммитить не надо
 project-snapshot.json
