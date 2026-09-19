@@ -320,11 +320,12 @@ The `ProjectionLayer` gives the LLM only a `target=LLM` projection of state. Gov
 | `RUNNING` | condition branch taken | `RUNNING` (jump to `then`/`otherwise`) |
 | `RUNNING` | `max_steps` / `max_tokens` exceeded | `BUDGET_EXCEEDED` |
 | `RUNNING` | `max_stalled_steps` exceeded | `STALLED` |
+| `RUNNING` | external `Task.cancel()` / `wait_for` timeout | `CANCELLED` (`CancelledError` re-raised; trace in `vm.last_trace`) |
 | `RUNNING` | no more steps | `SUCCESS` |
 | `SUSPENDED` | `resume_with_program()` called | `RUNNING` (from cursor) |
 | terminal | — | absorbing (no further transitions) |
 
-Terminal states: `SUCCESS`, `FAILED`, `BUDGET_EXCEEDED`, `STALLED`.
+Terminal states: `SUCCESS`, `FAILED`, `BUDGET_EXCEEDED`, `STALLED`, `CANCELLED`.
 
 Failure states are first-class outcomes. `FAILED`, `NEED_HELP`, `INSUFFICIENT_DATA`, `POLICY_BLOCKED` are legitimate terminal states equivalent to `SUCCESS` — not exceptions to be swallowed.
 
@@ -441,7 +442,7 @@ On a GDPR erasure event, the ref is tombstoned. All subsequent projections retur
 
 ```python
 trace.trace_id  # UUID4 — stable for OTel propagation
-trace.status  # TraceStatus.SUCCESS | FAILED | SUSPENDED | BUDGET_EXCEEDED | STALLED
+trace.status  # TraceStatus.SUCCESS | FAILED | SUSPENDED | BUDGET_EXCEEDED | STALLED | CANCELLED
 trace.final_output
 trace.total_tokens()  # O(1) incremental accumulator
 trace.total_cost_usd()  # requires LiteLLMAdapter

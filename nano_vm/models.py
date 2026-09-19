@@ -92,6 +92,10 @@ class TraceStatus(str, Enum):
     BUDGET_EXCEEDED = "budget_exceeded"
     STALLED = "stalled"
     SUSPENDED = "suspended"
+    # Terminalized by ExecutionVM when an external asyncio cancellation
+    # (Task.cancel() / asyncio.wait_for timeout) interrupts the run. The
+    # in-flight step, if any, is NOT in Trace.steps -- see ExecutionVM.last_trace.
+    CANCELLED = "cancelled"
 
 
 # ---------------------------------------------------------------------------

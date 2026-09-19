@@ -16,6 +16,19 @@ Versioning follows [Semantic Versioning](https://semver.org/).
   was no supported way to construct a tool-only VM at all.
 
 ### Added
+- `TraceStatus.CANCELLED` and `ExecutionVM.last_trace`. When an external
+  cancellation (`Task.cancel()` / `asyncio.wait_for` timeout) interrupts
+  `run()` / `resume_with_program()`, `_execute_loop` now terminalizes the last
+  consistent `Trace` as `CANCELLED` and re-raises `CancelledError` unchanged.
+  The partial trace is retrievable as `vm.last_trace` — the caller never
+  receives it as a return value. The handler wraps the whole loop, not only
+  the `sleep(0)` checkpoint: retry backoff, llm await, suspend, and
+  CONDITION→CONDITION recursion (the innermost frame's trace wins).
+  `TraceAnalyzer(t).receipt()` on a CANCELLED trace: `resumable=False`,
+  `replayable=True`, in-flight step not counted in `failed_steps`.
+- `tests/test_cancelled_trace.py` — CN-01..09: checkpoint, `wait_for`,
+  retry backoff, llm await, receipt/report, recursion guard, the
+  `resume_with_program()` entry point, reset-on-entry, reset-before-pre-flight.
 - CI: `bare-install` job (Python 3.10/3.11/3.12 matrix) installs with no
   extras and asserts `import nano_vm` succeeds, the public API exports
   resolve, and `LiteLLMAdapter` still defers its `ImportError` to first use.
@@ -55,9 +68,20 @@ Versioning follows [Semantic Versioning](https://semver.org/).
   drift) — that second kind of test is still open.
 - 0.8.9 PyPI publish: done — 0.8.7/0.8.8/0.8.9 all confirmed live on PyPI
   (`pip index versions llm-nano-vm`).
-- Trace finalization on cancellation is still open (Q3): the checkpoint
-  above lets `CancelledError` land correctly, but no terminal `Trace` is
-  produced or made retrievable for a cancelled run yet.
+- Trace finalization on cancellation (Q3) is closed, with documented limits:
+  (1) a step in flight when the cancel lands is NOT recorded, so a cancel
+  during an llm await is crash-equivalent — the provider request may already
+  have been sent (and billed) and the Trace cannot tell "never sent" from
+  "sent, no reply"; (2) `last_trace` is one attribute per `ExecutionVM`
+  instance — overlapping `run()` calls on the same instance race on it, and
+  every `run()` / `resume_with_program()` resets it on entry; (3) it is
+  in-memory only — persisting a caller-supplied `trace_id` plus a
+  `cursor_repository` record before re-raising is deferred; (4) the cursor is
+  deleted before a resumed loop starts, so a cancelled
+  `resume_with_program()` cannot be resumed a second time.
+- `TraceStatus.CANCELLED` is a new enum member: consumers with exhaustive
+  `TraceStatus` handling (e.g. status-mapping tables in downstream gateways)
+  must handle `"cancelled"`.
 
 ## [0.8.9] — 2026-09-16
 

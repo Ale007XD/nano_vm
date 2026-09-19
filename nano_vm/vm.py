@@ -157,9 +157,33 @@ class ExecutionVM:
         self._llm = llm
         self._tools: dict[str, Callable[..., Any]] = tools or {}
         self._cursor_repo: CursorRepository = cursor_repository or InMemoryCursorRepository()
+        self._last_trace: Trace | None = None
 
     def register_tool(self, name: str, fn: Callable[..., Any]) -> None:
         self._tools[name] = fn
+
+    @property
+    def last_trace(self) -> Trace | None:
+        """Trace finalized as CANCELLED by the most recent run() /
+        resume_with_program() call; None if that call did not end in
+        cancellation (normal return, or an exception raised before any
+        trace existed, e.g. the llm pre-flight VMError / ResumeError).
+
+        Why this exists: on cancellation the CancelledError propagates and
+        the caller never receives the Trace as a return value. This is the
+        only handle to the partial Trace (status=CANCELLED, all completed
+        steps, error describing the interruption). Feed it to
+        TraceAnalyzer(vm.last_trace).receipt() -- resumable=False, the
+        in-flight step is not counted in failed_steps.
+
+        Concurrency: one attribute per ExecutionVM instance. Two overlapping
+        run() calls on the same instance race on it (last writer wins, and
+        each run() resets it on entry) -- use one VM per concurrent run if
+        you need last_trace. Not persisted: a process crash loses it
+        (caller-supplied trace_id + cursor_repository persistence is the
+        deferred layer 2, DECISIONS.md 2026-09-18 Q3c).
+        """
+        return self._last_trace
 
     def _require_llm_if_needed(self, program: Program) -> None:
         """Fail closed before any step executes (Q2, 2026-09-16 revision):
@@ -197,6 +221,7 @@ class ExecutionVM:
         program: Program,
         context: dict[str, Any] | None = None,
     ) -> Trace:
+        self._last_trace = None
         self._require_llm_if_needed(program)
         state = StateContext(data=context or {})
         trace = Trace(program_name=program.name)
@@ -207,6 +232,7 @@ class ExecutionVM:
         webhook_event: WebhookEvent,
         program: Program,
     ) -> Trace:
+        self._last_trace = None
         self._require_llm_if_needed(program)
         cursor = await self._cursor_repo.load(webhook_event.trace_id)
         if cursor is None:
@@ -267,207 +293,245 @@ class ExecutionVM:
         start_step_id: str | None,
         resume_after: bool = False,
     ) -> Trace:
-        step_index = {s.id: i for i, s in enumerate(program.steps)}
-        steps = program.steps
+        try:
+            step_index = {s.id: i for i, s in enumerate(program.steps)}
+            steps = program.steps
 
-        if start_step_id is None:
-            current_idx = 0
-        else:
-            if start_step_id not in step_index:
-                return trace.finish(
-                    TraceStatus.FAILED,
-                    error=f"resume: step_id '{start_step_id}' not found in program",
-                )
-            current_idx = step_index[start_step_id]
-            if resume_after:
-                current_idx += 1
+            if start_step_id is None:
+                current_idx = 0
+            else:
+                if start_step_id not in step_index:
+                    return trace.finish(
+                        TraceStatus.FAILED,
+                        error=f"resume: step_id '{start_step_id}' not found in program",
+                    )
+                current_idx = step_index[start_step_id]
+                if resume_after:
+                    current_idx += 1
 
-        steps_executed = len(trace.steps)
-        last_fingerprint: int | None = None
-        stalled_count = 0
+            steps_executed = len(trace.steps)
+            last_fingerprint: int | None = None
+            stalled_count = 0
 
-        while current_idx < len(steps):
-            # Yield to the event loop once per iteration. A purely synchronous
-            # tool chain never suspends internally on its own, so without this
-            # checkpoint asyncio.wait_for()/Task.cancel() from an external
-            # caller cannot deliver CancelledError until the coroutine returns
-            # by itself -- e.g. a cycle in the transition graph (see
-            # ProgramValidator.cycle_detection) combined with sync tools runs
-            # forever and is uncancellable from the outside. This does NOT
-            # make a single blocking tool call interruptible mid-call -- only
-            # the transitions between steps become cooperative checkpoints.
-            await asyncio.sleep(0)
+            while current_idx < len(steps):
+                # Yield to the event loop once per iteration. A purely synchronous
+                # tool chain never suspends internally on its own, so without this
+                # checkpoint asyncio.wait_for()/Task.cancel() from an external
+                # caller cannot deliver CancelledError until the coroutine returns
+                # by itself -- e.g. a cycle in the transition graph (see
+                # ProgramValidator.cycle_detection) combined with sync tools runs
+                # forever and is uncancellable from the outside. This does NOT
+                # make a single blocking tool call interruptible mid-call -- only
+                # the transitions between steps become cooperative checkpoints.
+                await asyncio.sleep(0)
 
-            # Budget guards
-            if program.max_steps is not None and steps_executed >= program.max_steps:
-                await self._emit_interrupt(InterruptType.BUDGET, trace)
-                return trace.finish(
-                    TraceStatus.BUDGET_EXCEEDED,
-                    error=f"max_steps={program.max_steps} exceeded after {steps_executed} step(s)",
-                )
-
-            if program.max_tokens is not None:
-                tokens_used = trace.total_tokens()
-                if tokens_used >= program.max_tokens:
+                # Budget guards
+                if program.max_steps is not None and steps_executed >= program.max_steps:
                     await self._emit_interrupt(InterruptType.BUDGET, trace)
                     return trace.finish(
                         TraceStatus.BUDGET_EXCEEDED,
                         error=(
-                            f"max_tokens={program.max_tokens} exceeded: "
-                            f"{tokens_used} tokens consumed"
+                            f"max_steps={program.max_steps} exceeded "
+                            f"after {steps_executed} step(s)"
                         ),
                     )
 
-            step = steps[current_idx]
-            result, state, sub_results = await self._run_step(step, state)
-            steps_executed += 1
+                if program.max_tokens is not None:
+                    tokens_used = trace.total_tokens()
+                    if tokens_used >= program.max_tokens:
+                        await self._emit_interrupt(InterruptType.BUDGET, trace)
+                        return trace.finish(
+                            TraceStatus.BUDGET_EXCEEDED,
+                            error=(
+                                f"max_tokens={program.max_tokens} exceeded: "
+                                f"{tokens_used} tokens consumed"
+                            ),
+                        )
 
-            # Stalled detection
-            current_fp = self._state_fingerprint(state)
-            if last_fingerprint is not None and current_fp == last_fingerprint:
-                stalled_count += 1
-            else:
-                stalled_count = 0
-            last_fingerprint = current_fp
-
-            if program.max_stalled_steps is not None and stalled_count >= program.max_stalled_steps:
-                return trace.finish(
-                    TraceStatus.STALLED,
-                    error=(
-                        f"max_stalled_steps={program.max_stalled_steps} exceeded: "
-                        f"{stalled_count} consecutive no-op step(s)"
-                    ),
-                )
-
-            trace = trace.add_snapshot(steps_executed - 1, self._state_fingerprint_hex(state))
-
-            for sub_result in sub_results:
-                trace = trace.add_step(sub_result)
-            trace = trace.add_step(result)
-            trace = trace.record_step_metric(step.type, result.retries)
-
-            if result.status == StepStatus.PENDING:
-                trace = await self._suspend(step, state, trace)
-                return trace
-
-            if result.status == StepStatus.FAILED:
-                return trace.finish(
-                    TraceStatus.FAILED,
-                    error=f"Step '{step.id}' failed: {result.error}",
-                )
-
-            # Explicit halt: non-condition terminal step ends this path.
-            if step.is_terminal:
-                return trace.finish(TraceStatus.SUCCESS, final_output=trace.last_output())
-
-            # Condition step: jump to branch target.
-            #
-            # Branch semantics (v0.7.4):
-            #   1. Execute the branch target step inline.
-            #   2. If the target is a condition, recurse into its sub-branch.
-            #   3. If the target has is_terminal=True (explicit halt marker),
-            #      return SUCCESS immediately.
-            #   4. Otherwise resume the main flow from target_idx + 1, which
-            #      supports "inline" branches where the branch target is the
-            #      next sequential step (e.g. amount_check -> create_payment).
-            if step.type == StepType.CONDITION and result.status == StepStatus.SUCCESS:
-                next_id = result.output
-                if not next_id:
-                    return trace.finish(
-                        TraceStatus.FAILED,
-                        error=f"Step '{step.id}': condition produced no branch target",
-                    )
-                if next_id not in step_index:
-                    return trace.finish(
-                        TraceStatus.FAILED,
-                        error=f"Step '{step.id}': condition target '{next_id}' not found",
-                    )
-                target_idx = step_index[next_id]
-                target_step = steps[target_idx]
-
-                # Execute the branch target inline.
+                step = steps[current_idx]
+                result, state, sub_results = await self._run_step(step, state)
                 steps_executed += 1
-                target_result, state, target_sub = await self._run_step(target_step, state)
-                for sub_result in target_sub:
-                    trace = trace.add_step(sub_result)
-                trace = trace.add_step(target_result)
-                trace = trace.record_step_metric(target_step.type, target_result.retries)
 
-                if target_result.status == StepStatus.PENDING:
-                    trace = await self._suspend(target_step, state, trace)
+                # Stalled detection
+                current_fp = self._state_fingerprint(state)
+                if last_fingerprint is not None and current_fp == last_fingerprint:
+                    stalled_count += 1
+                else:
+                    stalled_count = 0
+                last_fingerprint = current_fp
+
+                if (
+                    program.max_stalled_steps is not None
+                    and stalled_count >= program.max_stalled_steps
+                ):
+                    return trace.finish(
+                        TraceStatus.STALLED,
+                        error=(
+                            f"max_stalled_steps={program.max_stalled_steps} exceeded: "
+                            f"{stalled_count} consecutive no-op step(s)"
+                        ),
+                    )
+
+                trace = trace.add_snapshot(steps_executed - 1, self._state_fingerprint_hex(state))
+
+                for sub_result in sub_results:
+                    trace = trace.add_step(sub_result)
+                trace = trace.add_step(result)
+                trace = trace.record_step_metric(step.type, result.retries)
+
+                if result.status == StepStatus.PENDING:
+                    trace = await self._suspend(step, state, trace)
                     return trace
-                if target_result.status == StepStatus.FAILED:
+
+                if result.status == StepStatus.FAILED:
                     return trace.finish(
                         TraceStatus.FAILED,
-                        error=f"Step '{target_step.id}' failed: {target_result.error}",
+                        error=f"Step '{step.id}' failed: {result.error}",
                     )
 
-                # Target is itself a condition — recurse into its sub-branch.
-                if target_step.type == StepType.CONDITION:
-                    return await self._execute_loop(
-                        program=program,
-                        state=state,
-                        trace=trace,
-                        start_step_id=target_result.output,
-                    )
+                # Explicit halt: non-condition terminal step ends this path.
+                if step.is_terminal:
+                    return trace.finish(TraceStatus.SUCCESS, final_output=trace.last_output())
 
-                # Branch target executed. Two cases:
+                # Condition step: jump to branch target.
                 #
-                # 1. target_step.next_step is set: the branch is "inline" —
-                #    continue execution from the named step (allows condition
-                #    branches to rejoin the main flow, e.g. amount_check →
-                #    create_payment.next_step="poll_payment" → poll_payment).
-                #
-                # 2. Otherwise: the branch is terminal — return SUCCESS here.
-                #    This is the default (v0.7.3-compatible) semantics and what
-                #    all condition branches that jump to leaf steps must use.
-                next_step_id: str | None = getattr(target_step, "next_step", None)
-                if next_step_id:
-                    if next_step_id not in step_index:
+                # Branch semantics (v0.7.4):
+                #   1. Execute the branch target step inline.
+                #   2. If the target is a condition, recurse into its sub-branch.
+                #   3. If the target has is_terminal=True (explicit halt marker),
+                #      return SUCCESS immediately.
+                #   4. Otherwise resume the main flow from target_idx + 1, which
+                #      supports "inline" branches where the branch target is the
+                #      next sequential step (e.g. amount_check -> create_payment).
+                if step.type == StepType.CONDITION and result.status == StepStatus.SUCCESS:
+                    next_id = result.output
+                    if not next_id:
+                        return trace.finish(
+                            TraceStatus.FAILED,
+                            error=f"Step '{step.id}': condition produced no branch target",
+                        )
+                    if next_id not in step_index:
+                        return trace.finish(
+                            TraceStatus.FAILED,
+                            error=f"Step '{step.id}': condition target '{next_id}' not found",
+                        )
+                    target_idx = step_index[next_id]
+                    target_step = steps[target_idx]
+
+                    # Execute the branch target inline.
+                    steps_executed += 1
+                    target_result, state, target_sub = await self._run_step(target_step, state)
+                    for sub_result in target_sub:
+                        trace = trace.add_step(sub_result)
+                    trace = trace.add_step(target_result)
+                    trace = trace.record_step_metric(target_step.type, target_result.retries)
+
+                    if target_result.status == StepStatus.PENDING:
+                        trace = await self._suspend(target_step, state, trace)
+                        return trace
+                    if target_result.status == StepStatus.FAILED:
+                        return trace.finish(
+                            TraceStatus.FAILED,
+                            error=f"Step '{target_step.id}' failed: {target_result.error}",
+                        )
+
+                    # Target is itself a condition — recurse into its sub-branch.
+                    if target_step.type == StepType.CONDITION:
+                        return await self._execute_loop(
+                            program=program,
+                            state=state,
+                            trace=trace,
+                            start_step_id=target_result.output,
+                        )
+
+                    # Branch target executed. Two cases:
+                    #
+                    # 1. target_step.next_step is set: the branch is "inline" —
+                    #    continue execution from the named step (allows condition
+                    #    branches to rejoin the main flow, e.g. amount_check →
+                    #    create_payment.next_step="poll_payment" → poll_payment).
+                    #
+                    # 2. Otherwise: the branch is terminal — return SUCCESS here.
+                    #    This is the default (v0.7.3-compatible) semantics and what
+                    #    all condition branches that jump to leaf steps must use.
+                    next_step_id: str | None = getattr(target_step, "next_step", None)
+                    if next_step_id:
+                        if next_step_id not in step_index:
+                            return trace.finish(
+                                TraceStatus.FAILED,
+                                error=(
+                                    f"Step '{target_step.id}': next_step "
+                                    f"'{next_step_id}' not found in program"
+                                ),
+                            )
+                        current_idx = step_index[next_step_id]
+                        continue
+
+                    # Default: terminal branch.
+                    return trace.finish(TraceStatus.SUCCESS, final_output=trace.last_output())
+
+                # BUG-NEXTSTEP-01/02 fix (2026-06-28, confirmed kernel bug).
+                # Previously next_step was honored ONLY for the immediate
+                # target_step of a single CONDITION's then/otherwise (handled
+                # above). Any step reached via plain sequential loop entry --
+                # i.e. `step = steps[current_idx]` at the top of this loop --
+                # fell straight through to `current_idx += 1` below, silently
+                # ignoring its OWN next_step field. Two previously-undetected
+                # cases were affected:
+                #   (a) second+ hop of a next_step chain (step_b.next_step
+                #       after a first jump from step_a -- step_b lands here
+                #       via plain entry, not as a branch target)
+                #   (b) landing point of a recursive CONDITION->CONDITION call
+                #       (start_step_id=target_result.output above)
+                # Both were masked by pre-existing tests (OC-03, CB-08) whose
+                # steps[] array order happened to coincide with the intended
+                # next_step target. See DECISIONS.md 2026-06-28.
+                generic_next_id: str | None = getattr(step, "next_step", None)
+                if generic_next_id:
+                    if generic_next_id not in step_index:
                         return trace.finish(
                             TraceStatus.FAILED,
                             error=(
-                                f"Step '{target_step.id}': next_step "
-                                f"'{next_step_id}' not found in program"
+                                f"Step '{step.id}': next_step "
+                                f"'{generic_next_id}' not found in program"
                             ),
                         )
-                    current_idx = step_index[next_step_id]
+                    current_idx = step_index[generic_next_id]
                     continue
 
-                # Default: terminal branch.
-                return trace.finish(TraceStatus.SUCCESS, final_output=trace.last_output())
+                current_idx += 1
 
-            # BUG-NEXTSTEP-01/02 fix (2026-06-28, confirmed kernel bug).
-            # Previously next_step was honored ONLY for the immediate
-            # target_step of a single CONDITION's then/otherwise (handled
-            # above). Any step reached via plain sequential loop entry --
-            # i.e. `step = steps[current_idx]` at the top of this loop --
-            # fell straight through to `current_idx += 1` below, silently
-            # ignoring its OWN next_step field. Two previously-undetected
-            # cases were affected:
-            #   (a) second+ hop of a next_step chain (step_b.next_step
-            #       after a first jump from step_a -- step_b lands here
-            #       via plain entry, not as a branch target)
-            #   (b) landing point of a recursive CONDITION->CONDITION call
-            #       (start_step_id=target_result.output above)
-            # Both were masked by pre-existing tests (OC-03, CB-08) whose
-            # steps[] array order happened to coincide with the intended
-            # next_step target. See DECISIONS.md 2026-06-28.
-            generic_next_id: str | None = getattr(step, "next_step", None)
-            if generic_next_id:
-                if generic_next_id not in step_index:
-                    return trace.finish(
-                        TraceStatus.FAILED,
-                        error=(
-                            f"Step '{step.id}': next_step '{generic_next_id}' not found in program"
-                        ),
-                    )
-                current_idx = step_index[generic_next_id]
-                continue
-
-            current_idx += 1
-
-        return trace.finish(TraceStatus.SUCCESS, final_output=trace.last_output())
+            return trace.finish(TraceStatus.SUCCESS, final_output=trace.last_output())
+        except asyncio.CancelledError:
+            # External cancellation (Task.cancel() / asyncio.wait_for timeout)
+            # can only be delivered at an await point -- sleep(0) checkpoint,
+            # _emit_interrupt, _run_step (tool / llm / retry-backoff sleep),
+            # _suspend, or the recursive _execute_loop below. `trace` is
+            # therefore always the last consistent value: every add_step /
+            # add_snapshot pair between two awaits is synchronous, so a step
+            # that was in flight when the cancel landed is NOT in trace.steps
+            # (crash-equivalent: no StepResult was ever produced for it).
+            #
+            # Deliberately synchronous: no await inside this handler (a second
+            # cancel would abort it half-way), and CancelledError is always
+            # re-raised -- swallowing it would break asyncio.wait_for /
+            # TaskGroup cancellation semantics for the caller.
+            #
+            # Recursion guard: CONDITION->CONDITION re-enters _execute_loop, so
+            # the innermost frame (which holds the freshest trace) finalizes
+            # first; outer frames hold a stale local `trace` and must not
+            # overwrite it. run()/resume_with_program() reset _last_trace to
+            # None on entry, so same trace_id here means "already finalized".
+            already = self._last_trace
+            if already is None or already.trace_id != trace.trace_id:
+                self._last_trace = trace.finish(
+                    TraceStatus.CANCELLED,
+                    error=(
+                        f"cancelled: asyncio.CancelledError after {len(trace.steps)} "
+                        "recorded step(s); an in-flight step is not recorded"
+                    ),
+                )
+            raise
 
     # ------------------------------------------------------------------
     # suspend / interrupt
