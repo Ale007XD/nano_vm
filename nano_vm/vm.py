@@ -331,8 +331,7 @@ class ExecutionVM:
                     return trace.finish(
                         TraceStatus.BUDGET_EXCEEDED,
                         error=(
-                            f"max_steps={program.max_steps} exceeded "
-                            f"after {steps_executed} step(s)"
+                            f"max_steps={program.max_steps} exceeded after {steps_executed} step(s)"
                         ),
                     )
 

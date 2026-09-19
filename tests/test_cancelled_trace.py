@@ -338,9 +338,11 @@ async def test_cn08_normal_run_resets_stale_last_trace():
     await cancelled_cycle_trace(vm)
     assert vm.last_trace is not None
 
-    ok = await vm.run(Program.from_dict({"name": "quick", "steps": [
-        {"id": "only", "type": "tool", "tool": "noop"}
-    ]}))
+    ok = await vm.run(
+        Program.from_dict(
+            {"name": "quick", "steps": [{"id": "only", "type": "tool", "tool": "noop"}]}
+        )
+    )
 
     assert ok.status == TraceStatus.SUCCESS
     assert vm.last_trace is None  # last_trace describes only the most recent call
