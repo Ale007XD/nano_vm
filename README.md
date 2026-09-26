@@ -320,7 +320,7 @@ The `ProjectionLayer` gives the LLM only a `target=LLM` projection of state. Gov
 | `RUNNING` | condition branch taken | `RUNNING` (jump to `then`/`otherwise`) |
 | `RUNNING` | `max_steps` / `max_tokens` exceeded | `BUDGET_EXCEEDED` |
 | `RUNNING` | `max_stalled_steps` exceeded | `STALLED` |
-| `RUNNING` | external `Task.cancel()` / `wait_for` timeout | `CANCELLED` (`CancelledError` re-raised; trace in `vm.last_trace`) |
+| `RUNNING` | external `Task.cancel()` / `wait_for` timeout | `CANCELLED` (`CancelledError` re-raised; trace in `vm.crash_trace`) |
 | `RUNNING` | no more steps | `SUCCESS` |
 | `SUSPENDED` | `resume_with_program()` called | `RUNNING` (from cursor) |
 | terminal | — | absorbing (no further transitions) |

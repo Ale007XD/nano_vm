@@ -94,7 +94,7 @@ class TraceStatus(str, Enum):
     SUSPENDED = "suspended"
     # Terminalized by ExecutionVM when an external asyncio cancellation
     # (Task.cancel() / asyncio.wait_for timeout) interrupts the run. The
-    # in-flight step, if any, is NOT in Trace.steps -- see ExecutionVM.last_trace.
+    # in-flight step, if any, is NOT in Trace.steps -- see ExecutionVM.crash_trace.
     CANCELLED = "cancelled"
 
 

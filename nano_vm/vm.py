@@ -157,13 +157,13 @@ class ExecutionVM:
         self._llm = llm
         self._tools: dict[str, Callable[..., Any]] = tools or {}
         self._cursor_repo: CursorRepository = cursor_repository or InMemoryCursorRepository()
-        self._last_trace: Trace | None = None
+        self._crash_trace: Trace | None = None
 
     def register_tool(self, name: str, fn: Callable[..., Any]) -> None:
         self._tools[name] = fn
 
     @property
-    def last_trace(self) -> Trace | None:
+    def crash_trace(self) -> Trace | None:
         """Trace finalized as CANCELLED by the most recent run() /
         resume_with_program() call; None if that call did not end in
         cancellation (normal return, or an exception raised before any
@@ -173,17 +173,17 @@ class ExecutionVM:
         the caller never receives the Trace as a return value. This is the
         only handle to the partial Trace (status=CANCELLED, all completed
         steps, error describing the interruption). Feed it to
-        TraceAnalyzer(vm.last_trace).receipt() -- resumable=False, the
+        TraceAnalyzer(vm.crash_trace).receipt() -- resumable=False, the
         in-flight step is not counted in failed_steps.
 
         Concurrency: one attribute per ExecutionVM instance. Two overlapping
         run() calls on the same instance race on it (last writer wins, and
         each run() resets it on entry) -- use one VM per concurrent run if
-        you need last_trace. Not persisted: a process crash loses it
+        you need crash_trace. Not persisted: a process crash loses it
         (caller-supplied trace_id + cursor_repository persistence is the
         deferred layer 2, DECISIONS.md 2026-09-18 Q3c).
         """
-        return self._last_trace
+        return self._crash_trace
 
     def _require_llm_if_needed(self, program: Program) -> None:
         """Fail closed before any step executes (Q2, 2026-09-16 revision):
@@ -221,7 +221,7 @@ class ExecutionVM:
         program: Program,
         context: dict[str, Any] | None = None,
     ) -> Trace:
-        self._last_trace = None
+        self._crash_trace = None
         self._require_llm_if_needed(program)
         state = StateContext(data=context or {})
         trace = Trace(program_name=program.name)
@@ -232,7 +232,7 @@ class ExecutionVM:
         webhook_event: WebhookEvent,
         program: Program,
     ) -> Trace:
-        self._last_trace = None
+        self._crash_trace = None
         self._require_llm_if_needed(program)
         cursor = await self._cursor_repo.load(webhook_event.trace_id)
         if cursor is None:
@@ -519,11 +519,11 @@ class ExecutionVM:
             # Recursion guard: CONDITION->CONDITION re-enters _execute_loop, so
             # the innermost frame (which holds the freshest trace) finalizes
             # first; outer frames hold a stale local `trace` and must not
-            # overwrite it. run()/resume_with_program() reset _last_trace to
+            # overwrite it. run()/resume_with_program() reset _crash_trace to
             # None on entry, so same trace_id here means "already finalized".
-            already = self._last_trace
+            already = self._crash_trace
             if already is None or already.trace_id != trace.trace_id:
-                self._last_trace = trace.finish(
+                self._crash_trace = trace.finish(
                     TraceStatus.CANCELLED,
                     error=(
                         f"cancelled: asyncio.CancelledError after {len(trace.steps)} "

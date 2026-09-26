@@ -8,7 +8,7 @@ CancelledError -- the partial Trace was garbage-collected, and nothing recorded
 that a run had been interrupted or how far it got.
 
 Now: _execute_loop terminalizes the last consistent Trace as
-TraceStatus.CANCELLED, exposes it as ExecutionVM.last_trace, and re-raises
+TraceStatus.CANCELLED, exposes it as ExecutionVM.crash_trace, and re-raises
 CancelledError unchanged.
 
 Cancellation points covered (CN = cancelled-trace):
@@ -19,8 +19,8 @@ Cancellation points covered (CN = cancelled-trace):
   CN-05  TraceAnalyzer.receipt()/report() on a CANCELLED trace do not crash
   CN-06  CONDITION->CONDITION recursion: innermost frame's trace wins
   CN-07  resume_with_program() entry point (run() / resume divergence precedent)
-  CN-08  last_trace reset on entry: stale value never survives a later call
-  CN-09  reset precedes the llm pre-flight (VMError leaves last_trace None)
+  CN-08  crash_trace reset on entry: stale value never survives a later call
+  CN-09  reset precedes the llm pre-flight (VMError leaves crash_trace None)
 
 Non-goals, asserted by absence rather than by test:
   - a single blocking sync tool call is still not interruptible mid-call
@@ -81,8 +81,8 @@ async def cancel_running(coro) -> None:
 
 async def cancelled_cycle_trace(vm: ExecutionVM) -> Trace:
     await cancel_running(vm.run(Program.from_dict(CYCLE)))
-    assert vm.last_trace is not None
-    return vm.last_trace
+    assert vm.crash_trace is not None
+    return vm.crash_trace
 
 
 # ---------------------------------------------------------------------------
@@ -93,7 +93,7 @@ async def cancelled_cycle_trace(vm: ExecutionVM) -> Trace:
 @pytest.mark.asyncio
 async def test_cn01_cancel_at_checkpoint_finalizes_trace():
     vm = make_vm()
-    assert vm.last_trace is None
+    assert vm.crash_trace is None
 
     t = await cancelled_cycle_trace(vm)
 
@@ -114,9 +114,9 @@ async def test_cn02_wait_for_timeout_finalizes_trace():
     with pytest.raises(asyncio.TimeoutError):
         await asyncio.wait_for(vm.run(Program.from_dict(CYCLE)), timeout=0.05)
 
-    assert vm.last_trace is not None
-    assert vm.last_trace.status == TraceStatus.CANCELLED
-    assert len(vm.last_trace.steps) > 0
+    assert vm.crash_trace is not None
+    assert vm.crash_trace.status == TraceStatus.CANCELLED
+    assert len(vm.crash_trace.steps) > 0
 
 
 # ---------------------------------------------------------------------------
@@ -170,7 +170,7 @@ async def test_cn03_cancel_in_retry_backoff_excludes_inflight_step(monkeypatch):
         await task
     assert task.cancelled()
 
-    t = vm.last_trace
+    t = vm.crash_trace
     assert t is not None
     assert t.status == TraceStatus.CANCELLED
     # 'flaky' was in flight: no StepResult was ever produced for it.
@@ -216,7 +216,7 @@ async def test_cn04_cancel_in_llm_await_excludes_inflight_step():
         await task
     assert task.cancelled()
 
-    t = vm.last_trace
+    t = vm.crash_trace
     assert t is not None
     assert t.status == TraceStatus.CANCELLED
     assert [s.step_id for s in t.steps] == ["first"]  # 'ask' absent: crash-equivalent
@@ -278,11 +278,11 @@ async def test_cn06_innermost_frame_trace_is_not_overwritten_by_outer_frame():
     """c1 -> c2 (condition) recurses into _execute_loop(start_step_id='spin_a'),
     which then spins. The cancel is delivered in the INNER frame; the outer
     frame's local `trace` is stale (c1, c2 only). Without the recursion guard
-    the outer handler overwrites last_trace with that stale two-step trace."""
+    the outer handler overwrites crash_trace with that stale two-step trace."""
     vm = make_vm()
     await cancel_running(vm.run(Program.from_dict(NESTED_CONDITION_THEN_SPIN)))
 
-    t = vm.last_trace
+    t = vm.crash_trace
     assert t is not None
     assert t.status == TraceStatus.CANCELLED
     ids = [s.step_id for s in t.steps]
@@ -312,12 +312,12 @@ async def test_cn07_cancel_during_resume_finalizes_trace():
 
     suspended = await vm.run(program)
     assert suspended.status == TraceStatus.SUSPENDED
-    assert vm.last_trace is None  # suspension is not a cancellation
+    assert vm.crash_trace is None  # suspension is not a cancellation
 
     event = WebhookEvent(trace_id=suspended.trace_id, payload={})
     await cancel_running(vm.resume_with_program(event, program))
 
-    t = vm.last_trace
+    t = vm.crash_trace
     assert t is not None
     assert t.status == TraceStatus.CANCELLED
     assert t.trace_id == suspended.trace_id  # same trace, continued then interrupted
@@ -333,10 +333,10 @@ async def test_cn07_cancel_during_resume_finalizes_trace():
 
 
 @pytest.mark.asyncio
-async def test_cn08_normal_run_resets_stale_last_trace():
+async def test_cn08_normal_run_resets_stale_crash_trace():
     vm = make_vm()
     await cancelled_cycle_trace(vm)
-    assert vm.last_trace is not None
+    assert vm.crash_trace is not None
 
     ok = await vm.run(
         Program.from_dict(
@@ -345,14 +345,14 @@ async def test_cn08_normal_run_resets_stale_last_trace():
     )
 
     assert ok.status == TraceStatus.SUCCESS
-    assert vm.last_trace is None  # last_trace describes only the most recent call
+    assert vm.crash_trace is None  # crash_trace describes only the most recent call
 
 
 @pytest.mark.asyncio
 async def test_cn09_reset_precedes_llm_preflight():
     vm = make_vm()  # llm=None
     await cancelled_cycle_trace(vm)
-    assert vm.last_trace is not None
+    assert vm.crash_trace is not None
 
     needs_llm = Program.from_dict(
         {"name": "needs_llm", "steps": [{"id": "ask", "type": "llm", "prompt": "hi"}]}
@@ -360,4 +360,4 @@ async def test_cn09_reset_precedes_llm_preflight():
     with pytest.raises(VMError):
         await vm.run(needs_llm)  # rejected pre-flight, before any trace exists
 
-    assert vm.last_trace is None  # a stale CANCELLED trace must not survive
+    assert vm.crash_trace is None  # a stale CANCELLED trace must not survive

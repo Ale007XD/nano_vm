@@ -16,11 +16,11 @@ Versioning follows [Semantic Versioning](https://semver.org/).
   was no supported way to construct a tool-only VM at all.
 
 ### Added
-- `TraceStatus.CANCELLED` and `ExecutionVM.last_trace`. When an external
+- `TraceStatus.CANCELLED` and `ExecutionVM.crash_trace`. When an external
   cancellation (`Task.cancel()` / `asyncio.wait_for` timeout) interrupts
   `run()` / `resume_with_program()`, `_execute_loop` now terminalizes the last
   consistent `Trace` as `CANCELLED` and re-raises `CancelledError` unchanged.
-  The partial trace is retrievable as `vm.last_trace` — the caller never
+  The partial trace is retrievable as `vm.crash_trace` — the caller never
   receives it as a return value. The handler wraps the whole loop, not only
   the `sleep(0)` checkpoint: retry backoff, llm await, suspend, and
   CONDITION→CONDITION recursion (the innermost frame's trace wins).
@@ -72,7 +72,7 @@ Versioning follows [Semantic Versioning](https://semver.org/).
   (1) a step in flight when the cancel lands is NOT recorded, so a cancel
   during an llm await is crash-equivalent — the provider request may already
   have been sent (and billed) and the Trace cannot tell "never sent" from
-  "sent, no reply"; (2) `last_trace` is one attribute per `ExecutionVM`
+  "sent, no reply"; (2) `crash_trace` is one attribute per `ExecutionVM`
   instance — overlapping `run()` calls on the same instance race on it, and
   every `run()` / `resume_with_program()` resets it on entry; (3) it is
   in-memory only — persisting a caller-supplied `trace_id` plus a
@@ -82,6 +82,14 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 - `TraceStatus.CANCELLED` is a new enum member: consumers with exhaustive
   `TraceStatus` handling (e.g. status-mapping tables in downstream gateways)
   must handle `"cancelled"`.
+- Renamed `last_trace` → `crash_trace` (Q3d) before this line ships — nothing
+  on PyPI ever exposed `last_trace`, so this is a pre-publish correction, not
+  a deprecation. `failure_trace` was considered and rejected: it would
+  collide with the existing `TraceStatus.FAILED` semantics (a controlled,
+  expected step failure the program itself decided to stop on) — a different
+  thing from an external interruption the program was never asked about.
+  `crash_trace` says "interrupted from outside, not the program's decision"
+  without reusing existing vocabulary.
 
 ## [0.8.9] — 2026-09-16
 
