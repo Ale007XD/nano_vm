@@ -25,3 +25,6 @@ tree.json
 repo-structure.json
 export/
 query_result/*:Zone.Identifier
+
+# Текущие патчи
+patchs/
