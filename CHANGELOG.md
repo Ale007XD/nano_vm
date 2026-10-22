@@ -37,9 +37,30 @@ Versioning follows [Semantic Versioning](https://semver.org/).
   caught a recurrence.
 - `tests/test_cancellation.py` — regression coverage for the cancellability
   fix below.
+- `tests/test_readme_examples.py` (RM-01..12) — executes/validates the README
+  python blocks and pins doc claims to behavior (doc-drift guard).
+- `tests/test_public_api_contract.py` (PA-01..07) — `__all__` vs. pinned public
+  surface, README imports, star-import. Closes the open "contract test" note
+  below.
 - `tests/test_llm_optional.py` — regression coverage for `llm=None` and the
   pre-flight rejection below, on both the `run()` and `resume_with_program()`
   entry points. Closes the "no new tests" note under 0.8.9.
+
+### Fixed (docs)
+- README: the Suspend / Resume example called `resume_with_program()` with a
+  `trace_id=` keyword and a dict `webhook_event`; the real signature is
+  `resume_with_program(webhook_event: WebhookEvent, program)`. It raised
+  `TypeError` as written.
+- README: the "method call raises `ASTEvalError`" example used
+  `'$decision'.lower()`, which does not raise (quoted `$var` is a literal and
+  the trailing `.lower()` is ignored by the tokenizer). Replaced with
+  `$decision.lower() == 'yes'`, which does raise.
+- README: removed the "Evaluator Blindness by Design" claims
+  ("structural, not configured") and the comparison-table row. `ExecutionVM`
+  does not route model-facing state through `ProjectionLayer`; the new
+  "What the LLM sees" section states what is and is not enforced.
+  `GovernanceEnvelope` is described as a data model, not as something the VM
+  emits per step.
 
 ### Fixed
 - `ExecutionVM.run()` / `resume_with_program()` could not be cancelled
@@ -65,7 +86,7 @@ Versioning follows [Semantic Versioning](https://semver.org/).
   different failure modes: the job asserts the exports still *resolve* in a
   no-extras environment (import-time); a contract test would assert the
   exported surface still *matches what the docs claim* (`__all__` vs. docs
-  drift) — that second kind of test is still open.
+  drift) — that second kind of test is now `tests/test_public_api_contract.py`.
 - 0.8.9 PyPI publish: done — 0.8.7/0.8.8/0.8.9 all confirmed live on PyPI
   (`pip index versions llm-nano-vm`).
 - Trace finalization on cancellation (Q3) is closed, with documented limits:

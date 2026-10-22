@@ -27,7 +27,7 @@ nano-vm answers the second question by producing verifiable artifacts at every l
 | :--- | :--- | :--- |
 | **Trace** | Step-by-step execution record with SHA-256 Merkle chain | Runtime — one entry per step |
 | **ExecutionReceipt** | Minimal decision state derived from Trace | `TraceAnalyzer.receipt()` — deterministic projection |
-| **GovernanceEnvelope** | Per-step policy hash + canonical state snapshot | Runtime — stored in SQLite WAL |
+| **GovernanceEnvelope** | Data model for a per-step policy hash + canonical state snapshot | Defined in `nano_vm.contracts`; `ExecutionVM` itself does not construct it — it is the record format used by the `nano-vm-mcp` gateway |
 
 The core contract:
 
@@ -161,10 +161,14 @@ human-in-the-loop, webhook orchestration. The process can restart. The cursor su
 trace = await vm.run(program, context={"order_id": "123"})
 assert trace.status.name == "SUSPENDED"
 
+from nano_vm import WebhookEvent
+
 trace = await vm.resume_with_program(
+    webhook_event=WebhookEvent(
+        trace_id=trace.trace_id,
+        payload={"type": "payment.confirmed", "order_id": "123"},
+    ),
     program=program,
-    trace_id=trace.trace_id,
-    webhook_event={"type": "payment.confirmed", "order_id": "123"},
 )
 assert trace.status.name == "SUCCESS"
 ```
@@ -299,13 +303,16 @@ for rt in receipt.rejected_transitions:
 
 ---
 
-## Evaluator Blindness by Design
+## What the LLM sees
 
-Evaluator blindness is structural: `GovernanceEnvelope`, `policy_hash`, `canonical_hash`, and retry counters are not part of the FSM state. The LLM only ever sees `ProjectionLayer.project(state, target=LLM)`, so these governance and audit fields are outside the model-visible execution state by construction.
+The prompt sent to the model is the step's `prompt` / `system` template after `$var` substitution, and nothing else. `ExecutionVM` does not append `canonical_hash`, `policy_hash`, retry counters, or any `GovernanceEnvelope` field to it. A program can still put such values into the model's context if its own template references them, or if a prior step's output carries them.
 
-The `ProjectionLayer` gives the LLM only a `target=LLM` projection of state. Governance metadata — `GovernanceEnvelope`, `canonical_hash`, `policy_hash`, and retry counters — never reaches the prompt. The model cannot observe its own audit trail.
+What is **not** enforced as of this release:
 
-**Evaluator blindness is structural, not configured.**
+- `ExecutionVM` does not route model-facing state through `ProjectionLayer`. `DeterministicSanitizer` and `ProjectionTarget.LLM` exist as library components you can call yourself; the VM has no call site for them.
+- The capability check in `DeterministicSanitizer._project_tool` compares capability strings against data field names and does not enforce a policy as described by `PolicySnapshot`. Treat it as unverified, not as a security boundary.
+
+"The model cannot observe its own audit trail" is therefore a property of how programs are written today, not a guarantee the runtime checks. Wiring projection into the LLM path with a verified capability-to-field mapping is planned work with no committed date.
 
 ---
 
@@ -386,8 +393,8 @@ not the value of `decision`. This fails **silently** — no `ASTEvalError`, the
 comparison is just always `False` — so it is easy to ship without noticing.
 
 ```python
-# ❌ WRONG — method call raises ASTEvalError at parse time
-{"condition": "'yes' in '$decision'.lower()"}
+# ❌ WRONG — method call on a $var raises ASTEvalError at parse time
+{"condition": "$decision.lower() == 'yes'"}
 
 # ❌ WRONG — $decision is quoted, so it's a literal string, not a reference.
 # No error is raised; this condition is always False.
@@ -406,7 +413,7 @@ comparison is just always `False` — so it is easy to ship without noticing.
 
 nano-vm pairs with [nano-vm-mcp](https://github.com/Ale007XD/nano-vm-mcp) — an MCP gateway
 that exposes `run_program`, `get_trace`, `list_programs`, `get_program`, `delete_program`
-over stdio or SSE transport with bearer auth, SQLite WAL persistence, and GovernanceEnvelope audit trail.
+over stdio or SSE transport with bearer auth and SQLite WAL persistence.
 
 ```
 Claude Code / MCP Client
@@ -415,12 +422,12 @@ Claude Code / MCP Client
         ↓
   ExecutionVM              ← transition authority
         ↓
-  GovernanceEnvelope       ← proves it happened
+  Trace / receipt records  ← what happened
 ```
 
 ### GovernanceEnvelope
 
-Each successful execution step produces a `GovernanceEnvelope` stored in SQLite WAL:
+The `GovernanceEnvelope` model (`nano_vm.contracts`) carries these fields:
 
 | Field | Description |
 | :--- | :--- |
@@ -525,7 +532,6 @@ Environment: QEMU/KVM · Intel Xeon E5-2697A v4 · 2 cores · Python 3.12 · Moc
 | Runtime guardrails | ❌ | ❌ | partial | ✅ |
 | LLM output enforcement | ❌ | ❌ | ❌ | ✅ |
 | Pre-flight validator | ❌ | ❌ | ❌ | ✅ |
-| Evaluator blindness | ❌ | ❌ | ❌ | ✅ |
 | Lightweight / embedded | ❌ | ❌ | ❌ | ✅ |
 
 **vs Marvin / DSPy:** those optimize *what* the LLM produces. nano-vm controls *when* and *whether* steps run — orthogonal concerns, composable.
