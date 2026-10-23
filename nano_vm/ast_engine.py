@@ -260,9 +260,30 @@ _TOKEN_PATTERNS = [
 _TOKEN_RE = re.compile("|".join(f"(?P<{name}>{pat})" for name, pat in _TOKEN_PATTERNS))
 
 
+def _unsupported_char(expr: str, pos: int) -> ASTEvalError:
+    """Build the error for a character no token pattern matches."""
+    ch = expr[pos]
+    hint = ""
+    if ch in "()":
+        hint = " Parentheses grouping is not supported; use a flat and/or/not expression."
+    elif ch in "'\"":
+        hint = " Unterminated string literal."
+    elif ch == "$":
+        hint = " A '$' must be followed by a variable name."
+    return ASTEvalError(
+        f"Unsupported character {ch!r} at position {pos} in condition expression {expr!r}.{hint}"
+    )
+
+
 def _tokenise(expr: str) -> list[tuple[str, str]]:
     tokens: list[tuple[str, str]] = []
+    pos = 0
     for m in _TOKEN_RE.finditer(expr):
+        # finditer silently skips text no pattern matches; a gap before this
+        # match means characters were dropped from the token stream.
+        if m.start() != pos:
+            raise _unsupported_char(expr, pos)
+        pos = m.end()
         kind = m.lastgroup
         assert kind is not None  # guaranteed by _TOKEN_RE structure
         if kind == "WS":
@@ -278,6 +299,8 @@ def _tokenise(expr: str) -> list[tuple[str, str]]:
                 f"(e.g. 'Reply ONLY with: yes or no')."
             )
         tokens.append((kind, m.group()))
+    if pos != len(expr):
+        raise _unsupported_char(expr, pos)  # trailing unmatched text
     return tokens
 
 

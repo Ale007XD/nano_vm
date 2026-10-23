@@ -247,9 +247,9 @@ class TestConditionParser:
     # -- Безопасность: попытки инъекций
 
     def test_no_builtins_import(self):
-        """__import__ не выполняется — трактуется как строковый литерал."""
-        result = eval_condition("__import__('os') == None", {})
-        assert result is False or result is True  # нет выполнения
+        """__import__ не выполняется; неопознанные символы — ASTEvalError."""
+        with pytest.raises(ASTEvalError):
+            eval_condition("__import__('os') == None", {})
 
     def test_no_exec(self):
         """exec() не выполняется."""

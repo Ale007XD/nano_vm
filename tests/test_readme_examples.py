@@ -227,6 +227,12 @@ def test_rm07_quoted_var_is_silently_false() -> None:
     assert eval_condition("'yes' in '$decision'", {"decision": "yes"}) is False
 
 
+def test_rm07_quoted_var_with_method_tail_now_raises() -> None:
+    # The tokeniser used to drop the `.lower()` tail silently (returned False).
+    with pytest.raises(ASTEvalError):
+        eval_condition("'yes' in '$decision'.lower()", {"decision": "yes"})
+
+
 def test_rm07_unquoted_var_equality_works() -> None:
     assert eval_condition('$decision == "yes"', {"decision": "yes"}) is True
     assert eval_condition('$decision == "yes"', {"decision": "no"}) is False

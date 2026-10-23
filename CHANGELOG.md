@@ -46,6 +46,24 @@ Versioning follows [Semantic Versioning](https://semver.org/).
   pre-flight rejection below, on both the `run()` and `resume_with_program()`
   entry points. Closes the "no new tests" note under 0.8.9.
 
+### Fixed (behavior change)
+- `ASTEngine` tokeniser no longer silently drops characters it cannot
+  tokenise. `_tokenise` used `re.finditer`, which skips text no pattern
+  matches, so `($a == 1 or $b == 2) and $c == 3` lost its parentheses and
+  evaluated with different precedence, and `'yes' in '$decision'.lower()`
+  lost its `.lower()` tail and returned `False`, both without an error. Any
+  unmatched character (leading, interior or trailing) now raises
+  `ASTEvalError` at parse time with the character and its position; the
+  message gives a specific hint for parentheses, unterminated strings and a
+  bare `$`. **Breaking for expressions that relied on the dropped text:**
+  conditions containing `(`, `)`, `;`, `#`, `-` inside a `$var` name, or an
+  unterminated quote used to parse (with altered meaning) and now fail.
+  Valid expressions are unchanged. Known, pre-existing and not changed here:
+  `and`/`or` are evaluated left to right with no precedence (unlike Python), and
+  `contains` tests that the left operand is contained in the right.
+  `tests/test_tokeniser_strict.py` (TK-01..11); `test_no_builtins_import` now
+  asserts `ASTEvalError` instead of accepting any boolean.
+
 ### Fixed (docs)
 - README: the Suspend / Resume example called `resume_with_program()` with a
   `trace_id=` keyword and a dict `webhook_event`; the real signature is
