@@ -27,4 +27,4 @@ export/
 query_result/*:Zone.Identifier
 
 # Текущие патчи
-patchs/
+patches/
