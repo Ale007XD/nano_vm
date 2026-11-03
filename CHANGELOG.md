@@ -9,6 +9,10 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+---
+
+## [0.8.10] — 2026-11-03
+
 ### Changed
 - `ExecutionVM.__init__` — `llm` is now optional (`LLMAdapter | None = None`,
   default `None`). A VM constructed without an adapter runs tool-only
