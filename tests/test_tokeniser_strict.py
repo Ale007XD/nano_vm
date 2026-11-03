@@ -15,7 +15,7 @@ lost its ``.lower()`` tail (silent False).
   TK-07  quoted-var-plus-method tail raises (the README foot-gun)
   TK-08  the METHOD_CALL guard still takes precedence for $var.method()
   TK-09  valid expressions are unaffected (operators, dotted paths, whitespace)
-  TK-10  characterisation: and/or are left-associative with NO precedence (pre-existing)
+  TK-10  and binds tighter than or (precedence fix; see test_astengine_semantics.py)
   TK-11  error message carries the offending character and its position
 """
 
@@ -84,7 +84,7 @@ def test_tk08_method_call_guard_still_wins() -> None:
         ("$a > 5 or $c >= 3", True),
         ("not $a == 2", True),
         ("'es' in $decision", True),
-        ("'yes' contains $decision", True),  # `contains`: left is contained in right
+        ("$decision contains 'es'", True),  # `contains`: left contains right
         ("  $a   ==   1  ", True),
         ("$s.x.y == 7", True),
         ("'yes' in '$decision'", False),  # valid literal, documented always-False
@@ -94,11 +94,9 @@ def test_tk09_valid_expressions_unaffected(expr: str, expected: bool) -> None:
     assert eval_condition(expr, CTX) is expected
 
 
-def test_tk10_and_or_are_left_associative_without_precedence() -> None:
-    # Pre-existing behaviour, pinned so a future precedence fix is a deliberate
-    # change. Python would give True here (and binds tighter than or); ASTEngine
-    # evaluates left to right: ($a == 1 or $b == 9) and $c == 9 -> False.
-    assert eval_condition("$a == 1 or $b == 9 and $c == 9", CTX) is False
+def test_tk10_and_binds_tighter_than_or() -> None:
+    # Python semantics: $a == 1 or ($b == 9 and $c == 9) -> True.
+    assert eval_condition("$a == 1 or $b == 9 and $c == 9", CTX) is True
 
 
 def test_tk11_message_has_char_and_position() -> None:

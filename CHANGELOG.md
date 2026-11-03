@@ -58,11 +58,24 @@ Versioning follows [Semantic Versioning](https://semver.org/).
   bare `$`. **Breaking for expressions that relied on the dropped text:**
   conditions containing `(`, `)`, `;`, `#`, `-` inside a `$var` name, or an
   unterminated quote used to parse (with altered meaning) and now fail.
-  Valid expressions are unchanged. Known, pre-existing and not changed here:
-  `and`/`or` are evaluated left to right with no precedence (unlike Python), and
-  `contains` tests that the left operand is contained in the right.
+  Valid expressions are unchanged.
   `tests/test_tokeniser_strict.py` (TK-01..11); `test_no_builtins_import` now
   asserts `ASTEvalError` instead of accepting any boolean.
+
+### Fixed (behavior change)
+- ASTEngine: `and`/`or` now follow Python precedence — `not` binds tighter
+  than `and`, which binds tighter than `or`. Previously they were evaluated
+  strictly left to right, so `$a == 1 or $b == 9 and $c == 9` gave `False`
+  (Python: `True`). `not` is now also accepted after `and`/`or`
+  (`$a == 1 and not $b == 2`; previously a parse error). Parentheses remain
+  unsupported. **Breaking for conditions that mix `and` and `or` without
+  relying on precedence being absent** — re-check any such condition.
+  `tests/test_astengine_semantics.py` (AS-01..07), including a truth-table
+  comparison against Python.
+- ASTEngine: `contains` now means what it says — `a contains b` is true when
+  `a` contains `b` (equivalent to `b in a`). Previously it behaved like `in`
+  (left contained in right). **Breaking:** swap the operands of any existing
+  `contains` condition, or rewrite it with `in`.
 
 ### Fixed (docs)
 - README: the Suspend / Resume example called `resume_with_program()` with a

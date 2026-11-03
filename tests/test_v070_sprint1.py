@@ -110,8 +110,8 @@ class TestASTEngineOperators:
     def test_contains(self):
         node = BinaryNode(
             op="contains",
-            left=LitNode(value="yes"),
-            right=LitNode(value="yes approved"),
+            left=LitNode(value="yes approved"),
+            right=LitNode(value="yes"),
         )
         assert self.engine.evaluate(node, {}) is True
 

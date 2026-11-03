@@ -70,7 +70,10 @@ class VarNode:
 class BinaryNode:
     """Binary comparison node.
 
-    Supported operators: ==, !=, >, <, in, not in, contains
+    Supported operators: ==, !=, >, <, >=, <=, in, not in, contains
+
+    ``a in b``       -> a is contained in b
+    ``a contains b`` -> a contains b (i.e. ``b in a``)
     """
 
     op: str
@@ -227,8 +230,8 @@ class ASTEngine:
             if op == "not in":
                 return bool(left not in right)
             if op == "contains":
-                # "contains": checks if left is contained in right
-                return bool(left in right)
+                # "contains": left contains right  <=>  right in left
+                return bool(right in left)
         except TypeError as exc:
             raise ASTEvalError(f"Type error evaluating '{op}': {exc}") from exc
 
@@ -265,7 +268,10 @@ def _unsupported_char(expr: str, pos: int) -> ASTEvalError:
     ch = expr[pos]
     hint = ""
     if ch in "()":
-        hint = " Parentheses grouping is not supported; use a flat and/or/not expression."
+        hint = (
+            " Parentheses grouping is not supported; use a flat and/or/not "
+            "expression (precedence: not > and > or)."
+        )
     elif ch in "'\"":
         hint = " Unterminated string literal."
     elif ch == "$":
@@ -348,20 +354,32 @@ def _parse_binary(tokens: list[tuple[str, str]], pos: int) -> tuple[ConditionExp
     return left, pos
 
 
-def _parse_expr(tokens: list[tuple[str, str]], pos: int) -> tuple[ConditionExpr, int]:
-    """Parse with left-to-right and/or logical combinators."""
-    # NOT prefix
+def _parse_not(tokens: list[tuple[str, str]], pos: int) -> tuple[ConditionExpr, int]:
+    """not_expr := 'not' not_expr | binary"""
     if pos < len(tokens) and tokens[pos][0] == "NOT":
-        operand, pos = _parse_binary(tokens, pos + 1)
-        node: ConditionExpr = NotNode(op="not", operand=operand)
-    else:
-        node, pos = _parse_binary(tokens, pos)
+        operand, pos = _parse_not(tokens, pos + 1)
+        return NotNode(op="not", operand=operand), pos
+    return _parse_binary(tokens, pos)
 
-    while pos < len(tokens) and tokens[pos][0] == "LOGIC":
-        op = tokens[pos][1]
-        right, pos = _parse_binary(tokens, pos + 1)
-        node = LogicalNode(op=op, left=node, right=right)
 
+def _parse_and(tokens: list[tuple[str, str]], pos: int) -> tuple[ConditionExpr, int]:
+    """and_expr := not_expr ('and' not_expr)*"""
+    node, pos = _parse_not(tokens, pos)
+    while pos < len(tokens) and tokens[pos] == ("LOGIC", "and"):
+        right, pos = _parse_not(tokens, pos + 1)
+        node = LogicalNode(op="and", left=node, right=right)
+    return node, pos
+
+
+def _parse_expr(tokens: list[tuple[str, str]], pos: int) -> tuple[ConditionExpr, int]:
+    """Parse with Python precedence: ``not`` > ``and`` > ``or``.
+
+    expr := and_expr ('or' and_expr)*   (left-associative at each level)
+    """
+    node, pos = _parse_and(tokens, pos)
+    while pos < len(tokens) and tokens[pos] == ("LOGIC", "or"):
+        right, pos = _parse_and(tokens, pos + 1)
+        node = LogicalNode(op="or", left=node, right=right)
     return node, pos
 
 

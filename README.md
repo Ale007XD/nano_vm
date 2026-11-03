@@ -385,6 +385,8 @@ Four step types:
 
 **Supported:** `==`, `!=`, `>`, `<`, `in`, `not in`, `and`, `or`, `not`, `contains`, dotted-path `$var.field`.
 
+Precedence: `not` > `and` > `or` (as in Python). `a contains b` is true when `a` contains `b` (`b in a`); `a in b` is the reverse.
+
 **Not supported:** method calls (`.lower()`, `.strip()`), arithmetic, parentheses grouping. Using an unsupported form raises `ASTEvalError` at parse time.
 
 **Never wrap a `$variable` in quotes.** Quotes mean "this is a literal string," not
