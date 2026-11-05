@@ -28,3 +28,9 @@ query_result/*:Zone.Identifier
 
 # Текущие патчи
 patches/
+
+# Для Клауда
+CLAUDE.local.md
+
+# Для ОпенКод
+.briefs/

@@ -1,0 +1,46 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "model": "openrouter/nvidia/nemotron-3.5-super-vl:free",
+  "provider": {
+    "openrouter": {
+      "models": {
+        "nvidia/nemotron-3.5-super-vl:free": {}
+      }
+    }
+  },
+  "permission": {
+    "*": "ask",
+    "read": "allow",
+    "edit": {
+      "*": "allow",
+      "AGENTS.md": "deny",
+      "opencode.json": "deny",
+      ".github/*": "deny",
+      "pyproject.toml": "ask"
+    },
+    "bash": {
+      "*": "ask",
+      "ls *": "allow",
+      "cat *": "allow",
+      "grep *": "allow",
+      "git status*": "allow",
+      "git diff*": "allow",
+      "git log*": "allow",
+      "python3 -m pytest*": "allow",
+      "pytest*": "allow",
+      "ruff check*": "allow",
+      "mypy*": "allow",
+      "tools/gate.sh": "allow",
+      "git add*": "ask",
+      "git commit*": "deny",
+      "git push*": "deny",
+      "git tag*": "deny",
+      "git reset*": "deny",
+      "git checkout*": "deny",
+      "git stash*": "deny",
+      "rm *": "deny",
+      "sudo *": "deny",
+      "pip install*": "ask"
+    }
+  }
+}
