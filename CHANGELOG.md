@@ -7,7 +7,7 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 
 ---
 
-## [Unreleased]
+## [0.8.11] — 2026-11-06
 
 ### Fixed
 - **`trace_hash` is now stable across processes.** The per-step state
