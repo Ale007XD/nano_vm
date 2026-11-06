@@ -81,9 +81,7 @@ def _canon(value: Any, path: str) -> Any:  # noqa: C901
     if isinstance(value, dict):
         if all(isinstance(k, str) for k in value):
             return {k: _canon(v, f"{path}[{k!r}]") for k, v in value.items()}
-        pairs = [
-            [_canon(k, f"{path}<key>"), _canon(v, f"{path}[{k!r}]")] for k, v in value.items()
-        ]
+        pairs = [[_canon(k, f"{path}<key>"), _canon(v, f"{path}[{k!r}]")] for k, v in value.items()]
         return {"__map__": sorted(pairs, key=_dumps)}
     if isinstance(value, list):
         return [_canon(v, f"{path}[{i}]") for i, v in enumerate(value)]
