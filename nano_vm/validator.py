@@ -11,11 +11,12 @@ cycle_detection   : DFS WHITE/GRAY/BLACK — back-edge = cycle
 
 Invariants
 ----------
-- Adjacency built once from Step fields: next_step, then, otherwise
-- Implicit sequential edge (step[i] → step[i+1]) only when step[i] has
-  no explicit next_step and is not is_terminal and is not condition type
-- Condition steps never have implicit sequential edge (they branch explicitly)
-- Terminal steps (is_terminal=True) have no outgoing edges regardless of fields
+- Adjacency is derived from ``nano_vm.flow.successors`` — the same function the
+  VM uses — so validator and runtime cannot disagree about control flow
+- Edges depend on how a step is entered: a plain step falls through to the next
+  array element; an inline CONDITION branch target continues only via an
+  explicit next_step (otherwise the run halts)
+- Terminal steps (is_terminal=True) have no outgoing edges when entered plain
 """
 
 from __future__ import annotations
@@ -23,7 +24,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from enum import Enum
 
-from nano_vm.models import Program, Step, StepType
+from nano_vm.flow import Entry, successors
+from nano_vm.models import Program, Step
 
 # ---------------------------------------------------------------------------
 # ValidationIssue
@@ -114,36 +116,43 @@ class ProgramValidator:
     # ------------------------------------------------------------------
 
     def _build_adjacency(self) -> dict[str, list[str]]:
-        """Build outgoing edge list per step_id.
+        """Build outgoing edge list per step_id from ``nano_vm.flow.successors``.
 
-        Rules:
-        - terminal step → no edges
-        - condition step → [then, otherwise] (whichever are set); no implicit edge
-        - other step with next_step → [next_step]; no implicit sequential edge
-        - other step without next_step → [steps[i+1].id] if i+1 exists
+        The VM and this validator share one successor function, so the graph
+        matches real control flow. A step's successors depend on how it is
+        entered (plain vs. inline branch target), so the walk runs over
+        ``(step_id, entry)`` states from ``steps[0]``; a step's edges are the
+        union over the states in which it is reachable. Steps never reached
+        fall back to their plain-entry edges (they are reported as unreachable).
         """
         steps = self._program.steps
-        index: dict[str, int] = {s.id: i for i, s in enumerate(steps)}
+        index: dict[str, int] = {}
+        for i, s in enumerate(steps):
+            index.setdefault(s.id, i)
         adj: dict[str, list[str]] = {s.id: [] for s in steps}
+        if not steps:
+            return adj
 
-        for step in steps:
-            if step.is_terminal:
-                continue  # no outgoing edges
+        seen: set[tuple[str, Entry]] = set()
+        stack: list[tuple[str, Entry]] = [(steps[0].id, Entry.PLAIN)]
+        while stack:
+            sid, entry = stack.pop()
+            if (sid, entry) in seen or sid not in index:
+                continue
+            seen.add((sid, entry))
+            i = index[sid]
+            for nxt, mode in successors(steps[i], i, steps, entry):
+                if nxt not in adj[sid]:
+                    adj[sid].append(nxt)
+                stack.append((nxt, mode))
 
-            if step.type == StepType.CONDITION:
-                if step.then:
-                    adj[step.id].append(step.then)
-                if step.otherwise:
-                    adj[step.id].append(step.otherwise)
-                continue  # no implicit sequential edge for conditions
-
-            if step.next_step:
-                adj[step.id].append(step.next_step)
-            else:
-                i = index[step.id]
-                if i + 1 < len(steps):
-                    adj[step.id].append(steps[i + 1].id)
-
+        reached = {sid for sid, _ in seen}
+        for i, step in enumerate(steps):
+            if step.id in reached:
+                continue
+            for nxt, _mode in successors(step, i, steps, Entry.PLAIN):
+                if nxt not in adj[step.id]:
+                    adj[step.id].append(nxt)
         return adj
 
     # ------------------------------------------------------------------

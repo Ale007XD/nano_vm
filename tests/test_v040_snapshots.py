@@ -190,8 +190,8 @@ async def test_state_fingerprint_hex_is_not_hash():
     """
     state = StateContext().with_output("k", "v")
     fp_hex = ExecutionVM._state_fingerprint_hex(state)
-    # Recompute manually using same canonical form
-    canonical = "k='v'"
+    # Recompute manually using the canonical JSON form (sorted keys, no spaces)
+    canonical = '{"k":"v"}'
     expected = hashlib.sha256(canonical.encode()).hexdigest()
     assert fp_hex == expected
     # Must not equal hash()-based value (different algorithm)

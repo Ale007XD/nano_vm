@@ -9,7 +9,49 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+- **`trace_hash` is now stable across processes.** The per-step state
+  fingerprint was built from `repr()` of tool outputs, so a `set`, a `frozenset`
+  or an object with the default `repr` produced a different hash in every
+  process (hash seed, memory addresses), and dicts hashed differently by
+  insertion order. Step outputs are now encoded by `nano_vm.canonical`
+  (sorted-key canonical JSON; sets sorted; `1`, `1.0`, `True`, `"1"`, list/tuple
+  and set/frozenset stay distinct). Supported: `None`, `bool`, `int`, `float`,
+  `str`, `bytes`, `list`, `tuple`, `dict`, `set`, `frozenset`, `Decimal`,
+  `datetime`/`date`/`time`, `UUID`, `Enum`, pydantic models, dataclasses.
+  A value with no unambiguous encoding is **refused**: the run ends `FAILED`
+  with `state cannot be hashed canonically: <path>: <type>` instead of
+  producing a meaningless hash.
+- **`ProgramValidator` now matches real control flow.** A step executed inline
+  as the `then`/`otherwise` target of a CONDITION has no implicit sequential
+  edge: it continues only through an explicit `next_step`, otherwise the run
+  halts. The validator used to add the sequential edge, so steps that never
+  execute were reported reachable. Validator and VM now take successors from
+  one shared definition (`nano_vm.flow`).
+- `DeterministicSanitizer` (LLM target) kept the field name when descending
+  into dicts but dropped it for list items, so scalars in a list under a
+  sensitive key (`{"password": ["..."]}`) were not masked. The parent field
+  name is now passed to list items, at any nesting depth.
+
+### Breaking Changes
+- `ExecutionReceipt.trace_hash` / `Trace.state_snapshots` values change for
+  every program (new canonical encoding). Do not compare hashes recorded by an
+  earlier version with new ones.
+- A tool that returns a value without a canonical encoding (arbitrary object,
+  callable) now fails the run; return JSON-compatible data instead.
+- `ProgramValidator.validate()` may report `unreachable_step` (an ERROR) for
+  programs it previously accepted: steps placed after a CONDITION branch
+  target that has no `next_step` are never executed. Add `next_step` to the
+  branch target or remove the dead step.
+
+### Tests
+- `tests/test_canonical_state_hash.py` (CH-01..11, cross-process via
+  `PYTHONHASHSEED`), `tests/test_flow_validator_parity.py` (FL-01..06,
+  including a property test: executed steps == validator-reachable steps over
+  all branch outcomes), `tests/test_sanitizer_nested_fields.py` (SN-01..05).
+
 ---
+
 
 ## [0.8.10] — 2026-11-03
 

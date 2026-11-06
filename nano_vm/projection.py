@@ -282,7 +282,7 @@ class DeterministicSanitizer(AbstractProjectionLayer):
         if isinstance(value, dict):
             return {k: self._sanitize_llm(v, field_name=k) for k, v in value.items()}
         if isinstance(value, list):
-            return [self._sanitize_llm(item) for item in value]
+            return [self._sanitize_llm(item, field_name=field_name) for item in value]
         fname = field_name.lower()
         if fname in self._sensitive_prefixes or any(
             fname.startswith(p) for p in self._sensitive_prefixes

@@ -19,7 +19,9 @@ from typing import Any, Protocol
 
 from .adapters.base import LLMAdapter
 from .ast_engine import eval_condition
+from .canonical import CanonicalizationError, canonical_json
 from .contracts import CapabilityRef
+from .flow import Entry, next_after
 from .models import (
     GdprEraseEvent,
     InterruptType,
@@ -371,7 +373,17 @@ class ExecutionVM:
                         ),
                     )
 
-                trace = trace.add_snapshot(steps_executed - 1, self._state_fingerprint_hex(state))
+                try:
+                    fp_hex = self._state_fingerprint_hex(state)
+                except CanonicalizationError as exc:
+                    # Refuse to hash state that has no canonical encoding: a
+                    # repr()-based hash would differ between processes and make
+                    # trace_hash meaningless. Fail the run with the reason.
+                    return trace.finish(
+                        TraceStatus.FAILED,
+                        error=f"Step '{step.id}': state cannot be hashed canonically: {exc}",
+                    )
+                trace = trace.add_snapshot(steps_executed - 1, fp_hex)
 
                 for sub_result in sub_results:
                     trace = trace.add_step(sub_result)
@@ -453,7 +465,7 @@ class ExecutionVM:
                     # 2. Otherwise: the branch is terminal — return SUCCESS here.
                     #    This is the default (v0.7.3-compatible) semantics and what
                     #    all condition branches that jump to leaf steps must use.
-                    next_step_id: str | None = getattr(target_step, "next_step", None)
+                    next_step_id = next_after(target_step, target_idx, steps, Entry.BRANCH).target
                     if next_step_id:
                         if next_step_id not in step_index:
                             return trace.finish(
@@ -485,7 +497,8 @@ class ExecutionVM:
                 # Both were masked by pre-existing tests (OC-03, CB-08) whose
                 # steps[] array order happened to coincide with the intended
                 # next_step target. See DECISIONS.md 2026-06-28.
-                generic_next_id: str | None = getattr(step, "next_step", None)
+                adv = next_after(step, current_idx, steps, Entry.PLAIN)
+                generic_next_id = None if adv.sequential else adv.target
                 if generic_next_id:
                     if generic_next_id not in step_index:
                         return trace.finish(
@@ -758,7 +771,7 @@ class ExecutionVM:
 
     @staticmethod
     def _state_fingerprint_hex(state: StateContext) -> str:
-        canonical = ",".join(f"{k}={v!r}" for k, v in sorted(state.step_outputs.items()))
+        canonical = canonical_json(state.step_outputs, name="step_outputs")
         return hashlib.sha256(canonical.encode()).hexdigest()
 
     # ------------------------------------------------------------------
