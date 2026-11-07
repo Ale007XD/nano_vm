@@ -13,7 +13,8 @@ Deterministic FSM runtime for LLM pipelines. This file is for coding agents; kee
   mypy 0 errors. `LiteLLMAdapter` stays a lazy import; `litellm<1.98.0` stays pinned.
 - `_execute_loop` is recursive and has two entry points (`run`, `resume_with_program`): any
   change must hold on both and in every recursion frame.
-- ASTEngine: no method calls, no arithmetic, no parentheses; unknown characters raise
+- ASTEngine: no method calls, no arithmetic; parentheses group boolean sub-expressions only
+  (max nesting 32); unknown characters raise
   `ASTEvalError`; precedence `not > and > or`; `a contains b` == `b in a`.
 - Every change ships with a test that is RED on the old code. Never weaken, delete or skip an
   existing test to get green. Never change production code in a task that says "tests only".

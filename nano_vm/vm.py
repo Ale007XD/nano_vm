@@ -37,6 +37,7 @@ from .models import (
     TraceStatus,
 )
 from .telemetry import span_step
+from .validator import ProgramValidator, ValidationReport
 
 
 class VMError(Exception):
@@ -45,6 +46,17 @@ class VMError(Exception):
 
 class ResumeError(VMError):
     """Cannot resume: trace not found or not in SUSPENDED state."""
+
+
+class ProgramValidationError(VMError):
+    """``validate=True`` pre-flight rejected the program before any step ran.
+
+    ``report`` is the ``ValidationReport`` that failed (``report.issues``).
+    """
+
+    def __init__(self, report: ValidationReport) -> None:
+        super().__init__(report.summary())
+        self.report = report
 
 
 # ---------------------------------------------------------------------------
@@ -187,6 +199,20 @@ class ExecutionVM:
         """
         return self._crash_trace
 
+    @staticmethod
+    def _validate_if_requested(program: Program, validate: bool) -> None:
+        """Opt-in pre-flight (G-07): reject an invalid program before any side effect.
+
+        Runs ``ProgramValidator`` once, outside the execution loop (no hot-loop
+        cost). Only ERROR-severity issues reject; warnings pass. Applied on both
+        entry points, ``run()`` and ``resume_with_program()``.
+        """
+        if not validate:
+            return
+        report = ProgramValidator(program).validate()
+        if not report.is_valid():
+            raise ProgramValidationError(report)
+
     def _require_llm_if_needed(self, program: Program) -> None:
         """Fail closed before any step executes (Q2, 2026-09-16 revision):
         a program declaring type=llm steps cannot run on a VM constructed
@@ -222,8 +248,11 @@ class ExecutionVM:
         self,
         program: Program,
         context: dict[str, Any] | None = None,
+        *,
+        validate: bool = False,
     ) -> Trace:
         self._crash_trace = None
+        self._validate_if_requested(program, validate)
         self._require_llm_if_needed(program)
         state = StateContext(data=context or {})
         trace = Trace(program_name=program.name)
@@ -233,8 +262,11 @@ class ExecutionVM:
         self,
         webhook_event: WebhookEvent,
         program: Program,
+        *,
+        validate: bool = False,
     ) -> Trace:
         self._crash_trace = None
+        self._validate_if_requested(program, validate)
         self._require_llm_if_needed(program)
         cursor = await self._cursor_repo.load(webhook_event.trace_id)
         if cursor is None:

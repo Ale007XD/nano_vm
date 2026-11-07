@@ -35,6 +35,7 @@ EXPECTED_ALL = frozenset(
         "ExecutionVM",
         "VMError",
         "ResumeError",
+        "ProgramValidationError",
         "WebhookEvent",
         "CursorRepository",
         "InMemoryCursorRepository",

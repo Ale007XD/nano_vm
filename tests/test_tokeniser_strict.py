@@ -28,16 +28,12 @@ from nano_vm.ast_engine import ASTEvalError, eval_condition, parse_condition
 CTX = {"a": 1, "b": 2, "c": 3, "decision": "yes", "s": {"x": {"y": 7}}}
 
 
-def test_tk01_parentheses_raise() -> None:
-    with pytest.raises(ASTEvalError, match="Parentheses"):
-        parse_condition("($a == 1 or $b == 2) and $c == 3")
-
-
-def test_tk01_parentheses_were_silently_dropped_semantics() -> None:
-    # Without the fix this evaluated as `$a == 1 or ($b == 2 and $c == 4)` -> True,
-    # while the author meant `($a == 1 or $b == 2) and $c == 4` -> False.
-    with pytest.raises(ASTEvalError):
-        eval_condition("($a == 1 or $b == 2) and $c == 4", CTX)
+def test_tk01_parentheses_group_instead_of_being_dropped() -> None:
+    # Historic bug: parentheses were silently dropped by the tokeniser, so this
+    # evaluated as `$a == 1 or ($b == 2 and $c == 4)` -> True. Grouping is now
+    # real: `($a == 1 or $b == 2) and $c == 4` -> False (c is 3).
+    assert eval_condition("($a == 1 or $b == 2) and $c == 4", CTX) is False
+    assert eval_condition("($a == 1 or $b == 2) and $c == 3", CTX) is True
 
 
 def test_tk02_trailing_garbage_raises() -> None:

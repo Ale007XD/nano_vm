@@ -18,7 +18,8 @@ internal process references.
 - `_execute_loop` is recursive (CONDITION -> CONDITION) and has two entry points
   (`run`, `resume_with_program`): any new handler/pre-flight must be applied on
   both entry points and in every recursion frame.
-- `ASTEngine` limits: no method calls, no arithmetic, no parentheses; unknown
+- `ASTEngine` limits: no method calls, no arithmetic; parentheses group boolean
+  sub-expressions only (max nesting 32); unknown
   characters raise `ASTEvalError`; precedence `not > and > or`;
   `a contains b` == `b in a`.
 - Every deliverable ships with tests. A bug fix needs a test that is RED on the old code;

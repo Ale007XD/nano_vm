@@ -17,6 +17,14 @@ Design invariants:
   - Pure function evaluation: no I/O, no global state, no eval().
   - Same (node, ctx) → same result always.
   - Unknown operator → ASTEvalError, not silent fallback.
+
+Grammar (precedence ``not`` > ``and`` > ``or``; parentheses group boolean
+sub-expressions only)::
+
+  expr    := and ('or' and)*
+  and     := not ('and' not)*
+  not     := 'not' not | '(' expr ')' | binary
+  binary  := operand (OP operand)?
 """
 
 from __future__ import annotations
@@ -257,6 +265,8 @@ _TOKEN_PATTERNS = [
     ("STR", r"'[^']*'|\"[^\"]*\""),
     ("NUM", r"-?\d+(?:\.\d+)?"),
     ("BOOL", r"\b(?:True|False|None)\b"),
+    ("LPAREN", r"\("),
+    ("RPAREN", r"\)"),
     ("WS", r"\s+"),
 ]
 
@@ -267,12 +277,7 @@ def _unsupported_char(expr: str, pos: int) -> ASTEvalError:
     """Build the error for a character no token pattern matches."""
     ch = expr[pos]
     hint = ""
-    if ch in "()":
-        hint = (
-            " Parentheses grouping is not supported; use a flat and/or/not "
-            "expression (precedence: not > and > or)."
-        )
-    elif ch in "'\"":
+    if ch in "'\"":
         hint = " Unterminated string literal."
     elif ch == "$":
         hint = " A '$' must be followed by a variable name."
@@ -355,10 +360,20 @@ def _parse_binary(tokens: list[tuple[str, str]], pos: int) -> tuple[ConditionExp
 
 
 def _parse_not(tokens: list[tuple[str, str]], pos: int) -> tuple[ConditionExpr, int]:
-    """not_expr := 'not' not_expr | binary"""
+    """not_expr := 'not' not_expr | '(' expr ')' | binary
+
+    A parenthesised group is a boolean sub-expression: it restarts at the
+    lowest precedence (``or``) and yields the inner node unchanged. It is not
+    an operand, so ``($a) == 1`` is rejected by the caller as trailing input.
+    """
     if pos < len(tokens) and tokens[pos][0] == "NOT":
         operand, pos = _parse_not(tokens, pos + 1)
         return NotNode(op="not", operand=operand), pos
+    if pos < len(tokens) and tokens[pos][0] == "LPAREN":
+        inner, pos = _parse_expr(tokens, pos + 1)
+        if pos >= len(tokens) or tokens[pos][0] != "RPAREN":
+            raise ASTEvalError("Unbalanced parentheses: missing ')'")
+        return inner, pos + 1
     return _parse_binary(tokens, pos)
 
 
@@ -383,6 +398,24 @@ def _parse_expr(tokens: list[tuple[str, str]], pos: int) -> tuple[ConditionExpr,
     return node, pos
 
 
+MAX_PAREN_DEPTH = 32
+
+
+def _check_paren_depth(tokens: list[tuple[str, str]]) -> None:
+    """Reject pathological nesting deterministically, before recursive descent."""
+    depth = 0
+    for kind, _ in tokens:
+        if kind == "LPAREN":
+            depth += 1
+            if depth > MAX_PAREN_DEPTH:
+                raise ASTEvalError(
+                    f"Parentheses nested deeper than {MAX_PAREN_DEPTH} levels "
+                    "in condition expression"
+                )
+        elif kind == "RPAREN":
+            depth -= 1
+
+
 def parse_condition(expr: str) -> ConditionExpr:
     """Parse a DSL condition string into a ConditionExpr node tree.
 
@@ -391,6 +424,7 @@ def parse_condition(expr: str) -> ConditionExpr:
     tokens = _tokenise(expr.strip())
     if not tokens:
         raise ASTEvalError("Empty condition expression")
+    _check_paren_depth(tokens)
     node, pos = _parse_expr(tokens, 0)
     if pos < len(tokens):
         raise ASTEvalError(f"Unexpected token at position {pos}: {tokens[pos]!r}")

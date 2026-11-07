@@ -237,6 +237,17 @@ Checks performed:
 
 `is_valid()` returns `True` only when no `ERROR`-severity issues exist. `WARNING` is informational — simple linear programs without failure terminals are valid.
 
+**Enforcing it at run time.** `ExecutionVM.run()` and `resume_with_program()` do not validate by default. Pass `validate=True` to reject an invalid program before any step runs (no side effects). It raises `ProgramValidationError`, a `VMError` whose `.report` is the `ValidationReport`. Only `ERROR`-severity issues reject. Programs with intentional cycles (bounded by `max_steps`) are rejected too, so leave `validate` off for those.
+
+```python
+from nano_vm import ExecutionVM, ProgramValidationError
+
+try:
+    trace = await vm.run(program, validate=True)
+except ProgramValidationError as exc:
+    print(exc.report.summary())
+```
+
 ---
 
 ## TraceAnalyzer — Post-hoc Execution Analysis
@@ -383,11 +394,11 @@ Four step types:
 > **⚠ ASTEngine replaces `eval()`.** Conditions are parsed into a validated JSON AST
 > and evaluated by a pure, sandboxed interpreter. No Python builtins are accessible.
 
-**Supported:** `==`, `!=`, `>`, `<`, `in`, `not in`, `and`, `or`, `not`, `contains`, dotted-path `$var.field`.
+**Supported:** `==`, `!=`, `>`, `<`, `in`, `not in`, `and`, `or`, `not`, `contains`, dotted-path `$var.field`, and parentheses `( … )` to group boolean sub-expressions (nesting up to 32 levels).
 
 Precedence: `not` > `and` > `or` (as in Python). `a contains b` is true when `a` contains `b` (`b in a`); `a in b` is the reverse.
 
-**Not supported:** method calls (`.lower()`, `.strip()`), arithmetic, parentheses grouping. Using an unsupported form raises `ASTEvalError` at parse time.
+**Not supported:** method calls (`.lower()`, `.strip()`), arithmetic. A parenthesised group is a boolean sub-expression, not an operand: `($a or $b) and $c` works, `($a) == 1` does not. Using an unsupported form raises `ASTEvalError` at parse time.
 
 **Never wrap a `$variable` in quotes.** Quotes mean "this is a literal string," not
 "resolve this reference" — `'$decision'` evaluates to the four characters `$decision`,

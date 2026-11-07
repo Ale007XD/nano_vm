@@ -6,7 +6,7 @@ AS-03  `not` binds tighter than `and`/`or` and is accepted after and/or
 AS-04  same-level chains stay left-associative
 AS-05  `contains`: left contains right (inverse of `in`)
 AS-06  `contains` / `in` are exact mirrors; non-container operand -> ASTEvalError
-AS-07  parentheses are still rejected (grouping not supported)
+AS-07  parentheses group boolean sub-expressions
 """
 
 from __future__ import annotations
@@ -73,6 +73,6 @@ def test_as06_contains_mirrors_in() -> None:
         eval_condition("$n contains 1", {"n": 5})
 
 
-def test_as07_parentheses_still_rejected() -> None:
-    with pytest.raises(ASTEvalError, match="Parentheses"):
-        parse_condition("($a == 1 or $b == 2) and $c == 3")
+def test_as07_parentheses_group_boolean_subexpressions() -> None:
+    assert eval_condition("($a == 1 or $b == 2) and $c == 3", {"a": 0, "b": 2, "c": 3}) is True
+    assert eval_condition("$a == 1 or ($b == 2 and $c == 3)", {"a": 0, "b": 2, "c": 4}) is False

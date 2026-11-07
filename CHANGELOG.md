@@ -7,6 +7,29 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [Unreleased]
+
+### Added
+- **Parentheses in condition expressions.** `( … )` groups boolean sub-expressions:
+  `($a or $b) and $c`, `not ($a and $b)`. Precedence stays `not` > `and` > `or`.
+  A group is not an operand (`($a) == 1` raises `ASTEvalError`); nesting is limited
+  to 32 levels, checked before parsing. Malformed groups (`($a`, `$a)`, `()`) raise
+  `ASTEvalError`. Previously any parenthesis raised.
+- **`validate=True` on `ExecutionVM.run()` and `resume_with_program()`** (keyword-only,
+  default `False`). Runs `ProgramValidator` once before any step executes and raises
+  the new `ProgramValidationError` (a `VMError`, with `.report`) when an `ERROR`-severity
+  issue is found. On resume the check runs before the cursor is loaded, so a rejected
+  resume leaves the suspended trace intact. Opt-in: default behaviour is unchanged.
+- `ProgramValidationError` is exported from `nano_vm`.
+
+### Tests
+- `tests/test_condition_parentheses.py` (truth table against Python over generated
+  expressions with grouping, malformed input, nesting limit, string-literal right-hand
+  side) and `tests/test_run_validate.py`; the tests that pinned "parentheses are rejected"
+  were updated.
+
+---
+
 ## [0.8.11] — 2026-11-06
 
 ### Fixed
