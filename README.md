@@ -305,6 +305,48 @@ for rt in receipt.rejected_transitions:
     print(rt.step_id, rt.reason, rt.timestamp)
 ```
 
+**Escalations and blocked actions.** A step can declare a governance decision, `escalate` (hand the case to a human) or `block` (deliberate denial). The decision is a state of the program graph, so a condition routes to it and the validator sees it. When the step completes with `SUCCESS`, the decision is copied to `StepResult.decision` and counted by the receipt:
+
+```python
+from nano_vm import ExecutionVM, Program, TraceAnalyzer
+
+program = Program.from_dict(
+    {
+        "name": "refund_support",
+        "steps": [
+            {"id": "classify", "type": "tool", "tool": "classify"},
+            {
+                "id": "route",
+                "type": "condition",
+                "condition": "$topic == 'refund'",
+                "then": "escalate",
+                "otherwise": "deny",
+            },
+            {
+                "id": "escalate",
+                "type": "tool",
+                "tool": "notify_human",
+                "decision": {"kind": "escalate", "rule_id": "R-12"},
+                "is_terminal": True,
+            },
+            {
+                "id": "deny",
+                "type": "tool",
+                "tool": "refuse",
+                "decision": "block",
+                "is_terminal": True,
+            },
+        ],
+    }
+)
+
+receipt = TraceAnalyzer(trace).receipt()
+print(receipt.escalations)  # steps with decision=escalate that completed
+print(receipt.blocked_actions)  # steps with decision=block that completed
+```
+
+Only the path that actually ran counts. A failed, skipped or pending step carries no decision. A `block` step is a successful, deliberate denial, so it is counted in `blocked_actions` and is not a `RejectedTransition`. `decision` is not allowed on condition steps or on parallel sub-steps. The decision is not part of the state fingerprint, so it does not change `trace_hash`.
+
 **Contract invariants:**
 
 - `Receipt ⊆ Trace` — the receipt never contains information outside the trace

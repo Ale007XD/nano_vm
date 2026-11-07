@@ -79,6 +79,13 @@ class StepStatus(str, Enum):
     SKIPPED = "skipped"
 
 
+class DecisionKind(str, Enum):
+    """Governance outcome a step can declare. Absence of a decision means 'allow'."""
+
+    BLOCK = "block"
+    ESCALATE = "escalate"
+
+
 class OnError(str, Enum):
     FAIL = "fail"
     SKIP = "skip"
@@ -101,6 +108,30 @@ class TraceStatus(str, Enum):
 # ---------------------------------------------------------------------------
 # Step
 # ---------------------------------------------------------------------------
+
+
+class StepDecision(BaseModel, frozen=True):
+    """Governance outcome declared by a step (gap G-09).
+
+    ``kind`` is ``block`` (the program deliberately denies the action) or
+    ``escalate`` (the program hands the case to a human). It is declared in the
+    program, so a decision is a state of the graph the validator can see, not a
+    side effect hidden in a tool. ``rule_id`` / ``reason`` are free-form
+    metadata for receipts and audit.
+
+    Shorthand: ``decision: escalate`` is the same as ``{kind: escalate}``.
+    """
+
+    kind: DecisionKind
+    rule_id: str | None = None
+    reason: str | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def _coerce_shorthand(cls, data: Any) -> Any:
+        if isinstance(data, str):  # DecisionKind is a str subclass
+            return {"kind": data}
+        return data
 
 
 class Step(BaseModel):
@@ -133,6 +164,11 @@ class Step(BaseModel):
     is_terminal: bool = False  # v0.7.4: if True, FSM halts after this step
     next_step: str | None = None  # v0.7.4: inline branch continuation step id
 
+    # governance decision (G-09): copied to StepResult.decision when the step
+    # completes with status SUCCESS; counted by ExecutionReceipt. Not valid on
+    # condition steps (routing only) or parallel sub-steps.
+    decision: StepDecision | None = None
+
     # llm output validation (v0.8.0)
     # If set, LLM output must be one of these values (exact match after strip).
     # on_error=fail  → VMError raised immediately.
@@ -159,12 +195,22 @@ class Step(BaseModel):
             raise ValueError(
                 f"Step '{self.id}': condition step requires at least one of: then, otherwise"
             )
+        if self.type == StepType.CONDITION and self.decision is not None:
+            raise ValueError(
+                f"Step '{self.id}': decision is not valid on a condition step "
+                "(routing only); declare it on the step the branch leads to"
+            )
         if self.type == StepType.PARALLEL and not self.parallel_steps:
             raise ValueError(
                 f"Step '{self.id}': parallel step requires at least one parallel_steps entry"
             )
         if self.type == StepType.PARALLEL:
             for sub in self.parallel_steps:
+                if sub.decision is not None:
+                    raise ValueError(
+                        f"Step '{self.id}': parallel sub-step '{sub.id}' cannot declare a "
+                        "decision (declare it on the parallel step itself)"
+                    )
                 if sub.type in (StepType.CONDITION, StepType.PARALLEL):
                     raise ValueError(
                         f"Step '{self.id}': parallel sub-step '{sub.id}' "
@@ -262,6 +308,9 @@ class StepResult(BaseModel):
     started_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     finished_at: datetime | None = None
     duration_ms: float | None = None
+    # G-09: copied from Step.decision only when the step completed with SUCCESS.
+    # Not part of the state fingerprint, so it does not affect trace_hash.
+    decision: StepDecision | None = None
 
     def finish(
         self,
@@ -461,9 +510,11 @@ __all__ = [
     "GovernanceEnvelope",
     # local
     "GdprEraseEvent",
+    "DecisionKind",
     "InterruptType",
     "LLMUsage",
     "OnError",
+    "StepDecision",
     "StepType",
     "StepStatus",
     "TraceStatus",

@@ -53,12 +53,14 @@ from .contracts import (
     PolicySnapshot,
 )
 from .models import (
+    DecisionKind,
     InterruptType,
     LLMUsage,
     OnError,
     Program,
     StateContext,
     Step,
+    StepDecision,
     StepMetrics,
     StepResult,
     StepStatus,
@@ -109,6 +111,8 @@ __all__ = [
     "Step",
     "StepType",
     "StepStatus",
+    "StepDecision",
+    "DecisionKind",
     "OnError",
     # State
     "StateContext",

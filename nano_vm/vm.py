@@ -618,6 +618,9 @@ class ExecutionVM:
                     return result, state, sub_results
 
                 result = result.finish(output=output, usage=usage)
+                if step.decision is not None:
+                    # only a step that actually completed carries its decision (G-09)
+                    result = result.model_copy(update={"decision": step.decision})
 
                 if step.output_key:
                     state = state.with_data(step.output_key, output)

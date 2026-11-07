@@ -21,8 +21,19 @@ Versioning follows [Semantic Versioning](https://semver.org/).
   issue is found. On resume the check runs before the cursor is loaded, so a rejected
   resume leaves the suspended trace intact. Opt-in: default behaviour is unchanged.
 - `ProgramValidationError` is exported from `nano_vm`.
+- **Governance decisions on steps; `ExecutionReceipt.escalations` and `blocked_actions` are
+  now real.** `Step.decision` (`escalate` or `block`, optional `rule_id` / `reason`; the
+  shorthand `decision: escalate` works) is copied to the new `StepResult.decision` when the
+  step completes with `SUCCESS`; the receipt counts them. A failed, skipped or pending step
+  carries no decision, and a `block` step is a successful denial, not a `RejectedTransition`.
+  Rejected on condition steps and parallel sub-steps. The decision is not part of the state
+  fingerprint: `trace_hash` is unchanged, and traces serialised before this change still load
+  (`decision` defaults to `None`). Programs without decisions keep both counters at 0.
+- `StepDecision` and `DecisionKind` are exported from `nano_vm`.
 
 ### Tests
+- `tests/test_step_decision.py` (placement rules, VM copy on success only, receipt counts of the
+  executed path, serialisation compatibility).
 - `tests/test_condition_parentheses.py` (truth table against Python over generated
   expressions with grouping, malformed input, nesting limit, string-literal right-hand
   side) and `tests/test_run_validate.py`; the tests that pinned "parentheses are rejected"

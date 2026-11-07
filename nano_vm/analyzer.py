@@ -30,7 +30,7 @@ import hashlib
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 
-from nano_vm.models import StepStatus, Trace, TraceStatus
+from nano_vm.models import DecisionKind, StepStatus, Trace, TraceStatus
 
 # ---------------------------------------------------------------------------
 # Thresholds
@@ -157,6 +157,9 @@ class TraceAnalyzer:
                     )
                 )
 
+        blocked = _count_decisions(trace, DecisionKind.BLOCK)
+        escalated = _count_decisions(trace, DecisionKind.ESCALATE)
+
         receipt = ExecutionReceipt(
             trace_id=trace.trace_id,
             trace_hash=trace_hash,
@@ -165,8 +168,8 @@ class TraceAnalyzer:
             replayable=trace.status not in _NON_REPLAYABLE_STATUSES,
             failed_steps=failed,
             retried_steps=retried,
-            blocked_actions=0,
-            escalations=0,
+            blocked_actions=blocked,
+            escalations=escalated,
             rejected_transitions=tuple(rejected),
             health=self.report(),
         )
@@ -384,7 +387,9 @@ class RejectedTransition:
     Future governance-native rejection events (GovernanceEnvelope.decision)
     may supersede this mapping when available.
 
-    rule_id: None until GovernanceEnvelope.decision is available (deferred).
+    rule_id: always None: a FAILED step carries no decision. Deliberate denials
+    (StepDecision kind=block) are SUCCESS steps and are counted in
+    ExecutionReceipt.blocked_actions, not projected here.
     timestamp: finished_at if set, started_at if set, else empty string.
     """
 
@@ -392,6 +397,14 @@ class RejectedTransition:
     rule_id: str | None
     reason: str
     timestamp: str
+
+
+def _count_decisions(trace: Trace, kind: DecisionKind) -> int:
+    return sum(
+        1
+        for s in trace.steps
+        if s.status == StepStatus.SUCCESS and s.decision is not None and s.decision.kind == kind
+    )
 
 
 @dataclass(frozen=True)
@@ -410,8 +423,9 @@ class ExecutionReceipt:
     replayable           : True when status != RUNNING
     failed_steps         : count of StepResult with status == FAILED (kept for backward compat)
     retried_steps        : count of StepResult with retries > 0 (kept for backward compat)
-    blocked_actions      : 0 — deferred (requires GovernanceEnvelope.decision)
-    escalations          : 0 — deferred (requires GovernanceEnvelope.decision)
+    blocked_actions      : count of StepResult with status == SUCCESS and decision.kind == block
+    escalations          : count of StepResult with status == SUCCESS and decision.kind == escalate
+                           (decisions are declared on Step; not part of trace_hash)
     rejected_transitions : FAILED steps projected as RejectedTransition; deterministic order
                            matches trace.steps iteration order
 
