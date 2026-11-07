@@ -47,6 +47,7 @@ PY
 
 echo "== ruff =="
 ruff check .
+ruff format --check .
 
 echo "== mypy =="
 mypy nano_vm/
