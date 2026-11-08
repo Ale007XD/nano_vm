@@ -7,7 +7,9 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 
 ---
 
-## [Unreleased]
+## [0.8.12] — 2026-11-08
+
+No breaking changes: `validate` is opt-in, `Step.decision` is optional, `trace_hash` values are unchanged.
 
 ### Added
 - **Parentheses in condition expressions.** `( … )` groups boolean sub-expressions:
