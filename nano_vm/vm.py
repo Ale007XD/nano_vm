@@ -93,7 +93,17 @@ class CursorRepository(Protocol):
 
     async def load(self, trace_id: str) -> tuple[str, StateContext, Trace] | None: ...
 
-    async def delete(self, trace_id: str) -> None: ...
+    async def delete(self, trace_id: str) -> bool | None:
+        """Remove the cursor and report whether THIS call removed it.
+
+        Contract (atomic claim): ``True`` = this call deleted the cursor and
+        now owns the resume; ``False`` = the cursor was already gone (another
+        resume claimed it). ``resume_with_program`` raises ``ResumeError`` on
+        ``False``. ``None`` is accepted for legacy repositories and keeps the
+        previous behaviour (no claim check). The check-and-delete MUST be
+        atomic in the backend (single DELETE / compare-and-delete).
+        """
+        ...
 
 
 class InMemoryCursorRepository:
@@ -106,8 +116,9 @@ class InMemoryCursorRepository:
     async def load(self, trace_id: str) -> tuple[str, StateContext, Trace] | None:
         return self._store.get(trace_id)
 
-    async def delete(self, trace_id: str) -> None:
-        self._store.pop(trace_id, None)
+    async def delete(self, trace_id: str) -> bool:
+        # No await between lookup and removal: atomic within one event loop.
+        return self._store.pop(trace_id, None) is not None
 
 
 # ---------------------------------------------------------------------------
@@ -281,7 +292,14 @@ class ExecutionVM:
             )
         state = state.with_data("__webhook__", webhook_event.payload)
         state = state.with_data("__webhook_source__", webhook_event.source)
-        await self._cursor_repo.delete(webhook_event.trace_id)
+        # Atomic claim (G-29): delete() == False means a concurrent resume
+        # already removed the cursor after our load(); do not execute twice.
+        # None (legacy repository) keeps the old, unchecked behaviour.
+        claimed = await self._cursor_repo.delete(webhook_event.trace_id)
+        if claimed is False:
+            raise ResumeError(
+                f"Trace '{webhook_event.trace_id}' already claimed by a concurrent resume."
+            )
         return await self._execute_loop(
             program=program,
             state=state,
