@@ -7,6 +7,19 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [0.8.13] — 2026-11-12
+
+No breaking changes: a repository whose `delete()` returns `None` keeps the previous behaviour.
+
+### Added
+- **Atomic cursor claim on resume.** `CursorRepository.delete()` may now return `bool | None`:
+  `True` means this call removed the cursor, `False` means it was already gone.
+  `resume_with_program()` raises `ResumeError("already claimed")` on `False`, so two
+  concurrent resumes of the same `trace_id` no longer both execute the step after the
+  suspension. `None` (existing repositories) is treated as before. `InMemoryCursorRepository.delete()`
+  returns `bool`. A repository that yields to the event loop between `load` and `delete`,
+  or is shared by several processes, must return `bool` from `delete()` to get this guarantee.
+
 ## [0.8.12] — 2026-11-08
 
 No breaking changes: `validate` is opt-in, `Step.decision` is optional, `trace_hash` values are unchanged.
