@@ -9,12 +9,32 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 
 ## [0.8.14] — 2026-11-13
 
+No breaking changes: the new field is optional, traces serialised before this change still
+load (`fallback` defaults to `None`), and `trace_hash` values are unchanged.
+
 ### Added
-- StepResult.fallback (StepFallback): marks a step whose output was substituted by the VM instead of being produced by the model — allowed_outputs mismatch with on_error=skip (reason="allowed_outputs_mismatch", raw_output_sha256 = SHA-256 of the rejected answer as returned) and on_timeout="fallback" (reason="timeout", no hash). Set only when the step completed with SUCCESS; error and retries are unchanged. Also set on parallel LLM sub-steps.
-- ExecutionReceipt.fallbacks_used: number of completed steps carrying the marker (default 0).
-- FallbackReason, StepFallback in nano_vm.models (not exported from the package root).
+- **Output substitution is now visible.** `on_error=skip` with `allowed_outputs`, and
+  `on_timeout="fallback"`, replace the step output with `allowed_outputs[0]` (or `""` when no
+  list is set). The step still completes with `SUCCESS`; the new `StepResult.fallback`
+  (`StepFallback`) records it: `reason` is `"allowed_outputs_mismatch"` or `"timeout"`, and
+  `raw_output_sha256` is the SHA-256 of the rejected answer exactly as returned (`None` on
+  timeout, where there is no answer; the answer itself is not stored). `error` and `retries`
+  are unchanged. The marker is set only when the step completed with `SUCCESS`, and also on
+  parallel LLM sub-steps.
+- `ExecutionReceipt.fallbacks_used`: number of completed steps carrying the marker (default `0`).
+- `FallbackReason` and `StepFallback` in `nano_vm.models` (not exported from the package root).
+
 ### Notes
-- Not breaking: the field is optional, old traces load (fallback=None), and the marker is not part of the state fingerprint, so trace_hash does not change. Consequence: a substituted "yes" and a genuine "yes" still have the same trace_hash; they differ in StepResult.fallback and fallbacks_used.
+- The marker is not part of the state fingerprint, so `trace_hash` does not change. A
+  substituted `"yes"` and a genuine `"yes"` have the same `trace_hash`; they differ in
+  `StepResult.fallback` and `fallbacks_used`.
+- Steps whose output decides an action should still use `on_error=fail` plus a condition that
+  leads to a failure terminal.
+
+### Tests
+- `tests/test_step_fallback.py` (marker on skip and on timeout, no marker for a genuine answer
+  or a failed or retried step, receipt counter, `trace_hash` unchanged, parallel sub-steps,
+  serialisation compatibility).
 
 ## [0.8.13] — 2026-11-12
 

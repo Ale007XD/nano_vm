@@ -354,7 +354,7 @@ Substitution is visible in the Receipt.
 With `on_error: skip` and `allowed_outputs`, or with `on_timeout: fallback`, the VM replaces the step output with `allowed_outputs[0]` (or `""` when no list is set). The step still finishes with `SUCCESS`, but the substitution is recorded:
 
 ```python
-step = trace.steps
+step = trace.steps[0]
 
 step.output  # "yes"  (substituted)
 step.fallback  # StepFallback(
