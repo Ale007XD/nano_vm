@@ -356,8 +356,8 @@ With `on_error: skip` and `allowed_outputs`, or with `on_timeout: fallback`, the
 ```python
 step = trace.steps
 
-step.output      # "yes"  (substituted)
-step.fallback    # StepFallback(
+step.output  # "yes"  (substituted)
+step.fallback  # StepFallback(
 #     reason=<FallbackReason.ALLOWED_OUTPUTS_MISMATCH>,
 #     raw_output_sha256="..."
 # )
