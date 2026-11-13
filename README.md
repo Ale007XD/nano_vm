@@ -347,6 +347,30 @@ print(receipt.blocked_actions)  # steps with decision=block that completed
 
 Only the path that actually ran counts. A failed, skipped or pending step carries no decision. A `block` step is a successful, deliberate denial, so it is counted in `blocked_actions` and is not a `RejectedTransition`. `decision` is not allowed on condition steps or on parallel sub-steps. The decision is not part of the state fingerprint, so it does not change `trace_hash`.
 
+### Runtime guarantees
+
+Substitution is visible in the Receipt.
+
+With `on_error: skip` and `allowed_outputs`, or with `on_timeout: fallback`, the VM replaces the step output with `allowed_outputs[0]` (or `""` when no list is set). The step still finishes with `SUCCESS`, but the substitution is recorded:
+
+```python
+step = trace.steps
+
+step.output      # "yes"  (substituted)
+step.fallback    # StepFallback(
+#     reason=<FallbackReason.ALLOWED_OUTPUTS_MISMATCH>,
+#     raw_output_sha256="..."
+# )
+
+receipt.fallbacks_used  # 1
+```
+
+`raw_output_sha256` lets you check a stored raw answer against what the VM rejected; the answer itself is not stored.
+
+The marker does not enter the state fingerprint, so `trace_hash` is the same as for a genuine answer. Use `receipt.fallbacks_used` and `StepResult.fallback` to tell them apart.
+
+For decision-critical steps, prefer `on_error: fail` plus a condition leading to a failure terminal.
+
 **Contract invariants:**
 
 - `Receipt ⊆ Trace` — the receipt never contains information outside the trace

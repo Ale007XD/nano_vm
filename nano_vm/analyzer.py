@@ -159,6 +159,9 @@ class TraceAnalyzer:
 
         blocked = _count_decisions(trace, DecisionKind.BLOCK)
         escalated = _count_decisions(trace, DecisionKind.ESCALATE)
+        fallbacks = sum(
+            1 for s in trace.steps if s.status == StepStatus.SUCCESS and s.fallback is not None
+        )
 
         receipt = ExecutionReceipt(
             trace_id=trace.trace_id,
@@ -172,6 +175,7 @@ class TraceAnalyzer:
             escalations=escalated,
             rejected_transitions=tuple(rejected),
             health=self.report(),
+            fallbacks_used=fallbacks,
         )
         self._receipt_cache = receipt
         return receipt
@@ -428,6 +432,9 @@ class ExecutionReceipt:
                            (decisions are declared on Step; not part of trace_hash)
     rejected_transitions : FAILED steps projected as RejectedTransition; deterministic order
                            matches trace.steps iteration order
+    fallbacks_used       : count of StepResult with status == SUCCESS and a StepFallback marker
+                           (output substituted by the VM: allowed_outputs + on_error=skip, or
+                           on_timeout=fallback); not part of trace_hash
 
     Deferred
     --------
@@ -446,6 +453,7 @@ class ExecutionReceipt:
     escalations: int
     rejected_transitions: tuple[RejectedTransition, ...]
     health: TraceHealthReport
+    fallbacks_used: int = 0
 
 
 # ---------------------------------------------------------------------------

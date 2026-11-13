@@ -7,6 +7,15 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [0.8.14] — 2026-11-13
+
+### Added
+- StepResult.fallback (StepFallback): marks a step whose output was substituted by the VM instead of being produced by the model — allowed_outputs mismatch with on_error=skip (reason="allowed_outputs_mismatch", raw_output_sha256 = SHA-256 of the rejected answer as returned) and on_timeout="fallback" (reason="timeout", no hash). Set only when the step completed with SUCCESS; error and retries are unchanged. Also set on parallel LLM sub-steps.
+- ExecutionReceipt.fallbacks_used: number of completed steps carrying the marker (default 0).
+- FallbackReason, StepFallback in nano_vm.models (not exported from the package root).
+### Notes
+- Not breaking: the field is optional, old traces load (fallback=None), and the marker is not part of the state fingerprint, so trace_hash does not change. Consequence: a substituted "yes" and a genuine "yes" still have the same trace_hash; they differ in StepResult.fallback and fallbacks_used.
+
 ## [0.8.13] — 2026-11-12
 
 No breaking changes: a repository whose `delete()` returns `None` keeps the previous behaviour.

@@ -86,6 +86,13 @@ class DecisionKind(str, Enum):
     ESCALATE = "escalate"
 
 
+class FallbackReason(str, Enum):
+    """Why the VM substituted a step output instead of using the model's answer (G-32)."""
+
+    ALLOWED_OUTPUTS_MISMATCH = "allowed_outputs_mismatch"  # on_error=skip
+    TIMEOUT = "timeout"  # on_timeout=fallback
+
+
 class OnError(str, Enum):
     FAIL = "fail"
     SKIP = "skip"
@@ -132,6 +139,19 @@ class StepDecision(BaseModel, frozen=True):
         if isinstance(data, str):  # DecisionKind is a str subclass
             return {"kind": data}
         return data
+
+
+class StepFallback(BaseModel, frozen=True):
+    """Evidence that a step output was substituted by the VM (gap G-32).
+
+    ``reason`` says which mechanism fired. ``raw_output_sha256`` is the SHA-256
+    (hex, UTF-8) of the model's rejected answer exactly as returned (before
+    ``strip``); ``None`` when there was no answer (timeout). The raw text itself
+    is not stored.
+    """
+
+    reason: FallbackReason
+    raw_output_sha256: str | None = None
 
 
 class Step(BaseModel):
@@ -311,6 +331,10 @@ class StepResult(BaseModel):
     # G-09: copied from Step.decision only when the step completed with SUCCESS.
     # Not part of the state fingerprint, so it does not affect trace_hash.
     decision: StepDecision | None = None
+    # G-32: set only when status is SUCCESS and the VM substituted the output
+    # (allowed_outputs + on_error=skip, or on_timeout=fallback). Not part of the
+    # state fingerprint, so it does not affect trace_hash.
+    fallback: StepFallback | None = None
 
     def finish(
         self,
@@ -511,10 +535,12 @@ __all__ = [
     # local
     "GdprEraseEvent",
     "DecisionKind",
+    "FallbackReason",
     "InterruptType",
     "LLMUsage",
     "OnError",
     "StepDecision",
+    "StepFallback",
     "StepType",
     "StepStatus",
     "TraceStatus",

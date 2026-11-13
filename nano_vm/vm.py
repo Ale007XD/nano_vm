@@ -23,6 +23,7 @@ from .canonical import CanonicalizationError, canonical_json
 from .contracts import CapabilityRef
 from .flow import Entry, next_after
 from .models import (
+    FallbackReason,
     GdprEraseEvent,
     InterruptType,
     LLMUsage,
@@ -30,6 +31,7 @@ from .models import (
     Program,
     StateContext,
     Step,
+    StepFallback,
     StepResult,
     StepStatus,
     StepType,
@@ -126,11 +128,15 @@ class InMemoryCursorRepository:
 # ---------------------------------------------------------------------------
 
 
-def _check_allowed_outputs(step: Step, text: str) -> str:
+def _check_allowed_outputs(
+    step: Step, text: str, fallbacks: list[StepFallback] | None = None
+) -> str:
     """Validate LLM output against step.allowed_outputs (v0.8.0).
 
     Returns the (possibly-fallback) output string — always stripped.
     Raises VMError if output not in allowed set and on_error != skip.
+    When the output is substituted (on_error=skip), a StepFallback is appended
+    to *fallbacks* if given (G-32).
     """
     if step.allowed_outputs is None:
         return text
@@ -139,6 +145,13 @@ def _check_allowed_outputs(step: Step, text: str) -> str:
         return stripped
     # Not in allowed set.
     if step.on_error == OnError.SKIP:
+        if fallbacks is not None:
+            fallbacks.append(
+                StepFallback(
+                    reason=FallbackReason.ALLOWED_OUTPUTS_MISMATCH,
+                    raw_output_sha256=hashlib.sha256(text.encode("utf-8")).hexdigest(),
+                )
+            )
         return step.allowed_outputs[0]  # fallback sentinel
     # FAIL or RETRY: raise — retry loop in _execute_with_retry will catch VMError
     # and retry up to max_retries; if exhausted, VMError propagates.
@@ -147,8 +160,13 @@ def _check_allowed_outputs(step: Step, text: str) -> str:
     )
 
 
-async def _llm_call_with_timeout(step: Step, coro: Any) -> Any:
+async def _llm_call_with_timeout(
+    step: Step, coro: Any, fallbacks: list[StepFallback] | None = None
+) -> Any:
     """Wrap an LLM coroutine with optional timeout (v0.8.0).
+
+    On on_timeout="fallback" a StepFallback(reason=timeout) is appended to
+    *fallbacks* if given (G-32).
 
     Returns the raw result from the LLM adapter.
     Raises VMError on timeout according to step.on_timeout:
@@ -161,6 +179,8 @@ async def _llm_call_with_timeout(step: Step, coro: Any) -> Any:
         return await asyncio.wait_for(coro, timeout=step.timeout_seconds)
     except asyncio.TimeoutError:
         if step.on_timeout == "fallback":
+            if fallbacks is not None:
+                fallbacks.append(StepFallback(reason=FallbackReason.TIMEOUT))
             if step.allowed_outputs:
                 return step.allowed_outputs[0]
             return ""
@@ -626,8 +646,9 @@ class ExecutionVM:
 
         while True:
             try:
+                fallbacks: list[StepFallback] = []  # per attempt: marker only for the final one
                 with span_step(step.id, step.type.value, attempt=attempt):
-                    output, usage, sub_results = await self._execute_step(step, state)
+                    output, usage, sub_results = await self._execute_step(step, state, fallbacks)
 
                 if output == "PENDING" and step.type == StepType.TOOL:
                     result = result.model_copy(
@@ -639,6 +660,9 @@ class ExecutionVM:
                 if step.decision is not None:
                     # only a step that actually completed carries its decision (G-09)
                     result = result.model_copy(update={"decision": step.decision})
+                if fallbacks:
+                    # output was substituted by the VM, not produced by the model (G-32)
+                    result = result.model_copy(update={"fallback": fallbacks[-1]})
 
                 if step.output_key:
                     state = state.with_data(step.output_key, output)
@@ -673,9 +697,10 @@ class ExecutionVM:
         self,
         step: Step,
         state: StateContext,
+        fallbacks: list[StepFallback] | None = None,
     ) -> tuple[Any, LLMUsage | None, list[StepResult]]:
         if step.type == StepType.LLM:
-            llm_out, llm_usage = await self._execute_llm(step, state)
+            llm_out, llm_usage = await self._execute_llm(step, state, fallbacks)
             return llm_out, llm_usage, []
         if step.type == StepType.TOOL:
             tool_out = await self._execute_tool(step, state)
@@ -692,7 +717,12 @@ class ExecutionVM:
     # LLM step
     # ------------------------------------------------------------------
 
-    async def _execute_llm(self, step: Step, state: StateContext) -> tuple[str, LLMUsage | None]:
+    async def _execute_llm(
+        self,
+        step: Step,
+        state: StateContext,
+        fallbacks: list[StepFallback] | None = None,
+    ) -> tuple[str, LLMUsage | None]:
         if self._llm is None:
             raise VMError(
                 f"Step '{step.id}' is type=llm, but ExecutionVM was constructed without "
@@ -706,14 +736,14 @@ class ExecutionVM:
             messages.append({"role": "system", "content": self._resolve(step.system, state)})
         messages.append({"role": "user", "content": prompt})
 
-        result = await _llm_call_with_timeout(step, self._llm.complete(messages))
+        result = await _llm_call_with_timeout(step, self._llm.complete(messages), fallbacks)
         if isinstance(result, tuple):
             text, usage_data = result
             usage = LLMUsage(**usage_data) if usage_data else None
         else:
             text = result
             usage = None
-        text = _check_allowed_outputs(step, text)
+        text = _check_allowed_outputs(step, text, fallbacks)
         return text, usage
 
     # ------------------------------------------------------------------
@@ -768,13 +798,16 @@ class ExecutionVM:
 
         async def _run_sub(sub: Step) -> tuple[StepResult, Any]:
             sub_result = StepResult(step_id=sub.id, status=StepStatus.RUNNING)
+            sub_fallbacks: list[StepFallback] = []
             try:
                 if semaphore is not None:
                     async with semaphore:
-                        output, usage = await self._dispatch_leaf(sub, state)
+                        output, usage = await self._dispatch_leaf(sub, state, sub_fallbacks)
                 else:
-                    output, usage = await self._dispatch_leaf(sub, state)
+                    output, usage = await self._dispatch_leaf(sub, state, sub_fallbacks)
                 sub_result = sub_result.finish(output=output, usage=usage)
+                if sub_fallbacks:
+                    sub_result = sub_result.model_copy(update={"fallback": sub_fallbacks[-1]})
                 return sub_result, output
             except Exception as exc:
                 error_msg = f"{type(exc).__name__}: {exc}"
@@ -806,9 +839,14 @@ class ExecutionVM:
 
         return outputs, sub_results
 
-    async def _dispatch_leaf(self, step: Step, state: StateContext) -> tuple[Any, LLMUsage | None]:
+    async def _dispatch_leaf(
+        self,
+        step: Step,
+        state: StateContext,
+        fallbacks: list[StepFallback] | None = None,
+    ) -> tuple[Any, LLMUsage | None]:
         if step.type == StepType.LLM:
-            return await self._execute_llm(step, state)
+            return await self._execute_llm(step, state, fallbacks)
         if step.type == StepType.TOOL:
             output = await self._execute_tool(step, state)
             return output, None
