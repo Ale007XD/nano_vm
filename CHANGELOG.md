@@ -7,6 +7,24 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [Unreleased]
+
+### Changed (behavior change)
+- `timeout_seconds` and a non-default `on_timeout` are now rejected with `ValidationError` on
+  any step that is not an `llm` step (tool, condition, parallel and parallel sub-steps).
+  Previously the fields were accepted and silently ignored: a tool declared with
+  `timeout_seconds=0.1` ran to completion and finished with `SUCCESS`. The message names the
+  step and points to the right place: a tool's timeout belongs inside the tool
+  (`asyncio.wait_for`). Programs that set these fields on non-LLM steps must remove them;
+  their behavior did not depend on them. An explicit `on_timeout: fail` (the default) is still
+  accepted.
+
+### Tests
+- `tests/test_step_timeout_scope.py` (refusal on tool, condition, parallel and parallel
+  sub-steps; llm steps and parallel llm sub-steps unaffected; timeout still enforced).
+
+---
+
 ## [0.8.14] — 2026-11-13
 
 No breaking changes: the new field is optional, traces serialised before this change still

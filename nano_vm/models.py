@@ -244,6 +244,16 @@ class Step(BaseModel):
                 )
             if not self.allowed_outputs:
                 raise ValueError(f"Step '{self.id}': allowed_outputs must not be empty if set")
+        if self.type != StepType.LLM and (
+            self.timeout_seconds is not None or self.on_timeout != "fail"
+        ):
+            # G-20: the VM applies the timeout only to LLM calls; on any other step the
+            # field used to be accepted and silently ignored.
+            raise ValueError(
+                f"Step '{self.id}': timeout_seconds / on_timeout are only valid for llm "
+                f"steps, got type='{self.type}' (a tool's timeout belongs inside the tool, "
+                "e.g. asyncio.wait_for)"
+            )
         return self
 
 

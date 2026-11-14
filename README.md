@@ -436,8 +436,8 @@ Four step types:
 | `is_terminal` | `False` | return `SUCCESS` after this step (leaf nodes) |
 | `next_step` | `None` | jump to named step instead of returning `SUCCESS` |
 | `allowed_outputs` | `None` | LLM-only — accepted output enum; `ValidationError` if empty |
-| `timeout_seconds` | `None` | LLM-only — `asyncio.wait_for` timeout in seconds |
-| `on_timeout` | `'fail'` | `'fail'` · `'fallback'` (→ `allowed_outputs[0]` or `''`) |
+| `timeout_seconds` | `None` | LLM-only — `asyncio.wait_for` timeout in seconds; any other step type is rejected with `ValidationError` (put a tool's timeout inside the tool, e.g. `asyncio.wait_for`) |
+| `on_timeout` | `'fail'` | LLM-only — `'fail'` · `'fallback'` (→ `allowed_outputs[0]` or `''`); a non-default value on another step type is rejected |
 
 **Program budget options:**
 
