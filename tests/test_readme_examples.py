@@ -104,6 +104,7 @@ def _readme_imports() -> list[tuple[str, str]]:
     return sorted(set(pairs))
 
 
+@pytest.mark.timeout(60)  # litellm import parses the tiktoken table (~8 s vs 10 s limit)
 @pytest.mark.parametrize(("module", "name"), _readme_imports())
 def test_rm02_readme_import_resolves(module: str, name: str) -> None:
     if (module, name) == ("nano_vm.adapters", "LiteLLMAdapter"):
