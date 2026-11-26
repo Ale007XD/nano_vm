@@ -168,6 +168,9 @@ class Step(BaseModel):
     # tool step
     tool: str | None = None
     args: dict[str, Any] = Field(default_factory=dict)
+    # G-31: explicit declaration that the tool safely handles retries
+    # (e.g. via $__execution_id__ / $__step_id__ idempotency keys).
+    idempotent: bool = False
 
     # condition step
     condition: str | None = None
@@ -236,6 +239,14 @@ class Step(BaseModel):
                         f"Step '{self.id}': parallel sub-step '{sub.id}' "
                         f"cannot be of type '{sub.type}' (only llm/tool allowed)"
                     )
+                if sub.on_error == OnError.RETRY:
+                    # G-31: parallel sub-steps do not run through _run_step()'s retry loop;
+                    # accepting on_error='retry' here used to silently ignore it.
+                    raise ValueError(
+                        f"Step '{self.id}': parallel sub-step '{sub.id}' cannot use "
+                        "on_error='retry': retry on parallel sub-steps is not supported "
+                        "(sub-steps are not retried; per-branch retry is not implemented)"
+                    )
         if self.allowed_outputs is not None:
             if self.type != StepType.LLM:
                 raise ValueError(
@@ -253,6 +264,11 @@ class Step(BaseModel):
                 f"Step '{self.id}': timeout_seconds / on_timeout are only valid for llm "
                 f"steps, got type='{self.type}' (a tool's timeout belongs inside the tool, "
                 "e.g. asyncio.wait_for)"
+            )
+        if self.type != StepType.TOOL and self.idempotent:
+            # G-31: idempotency declaration applies to tool steps only.
+            raise ValueError(
+                f"Step '{self.id}': idempotent is only valid for tool steps, got type='{self.type}'"
             )
         return self
 

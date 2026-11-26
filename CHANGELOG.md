@@ -9,7 +9,40 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+- **Read-only execution context variables** available via `$` substitution without changing
+  tool signatures (no implicit kwargs): `$__execution_id__` (`trace_id`, preserved across
+  suspend/resume; propagated via `contextvars.ContextVar` so concurrent `vm.run()` calls on
+  the same `ExecutionVM` stay isolated and `_run_step(self, step, state)` keeps its subclass
+  signature), `$__step_id__` (current step id, or sub-step id inside `parallel`), and
+  `$__attempt__` (1-based attempt counter, incremented on `on_error="retry"`; OTel span
+  attribute `nano_vm.attempt` remains 0-based). Calling `_run_step()` directly outside an
+  active execution loop (or with an empty `trace_id`) raises `VMError`. Values cannot be
+  shadowed by initial context or step outputs, are not persisted into cursor state, and are
+  excluded from `state_snapshots` / `ExecutionReceipt.trace_hash` (`trace_hash` continues not
+  to distinguish retried vs. non-retried runs with identical final outputs). Note:
+  `$__execution_id__:$__step_id__` deduplicates retries within a single run only; cross-run
+  business deduplication requires a caller-supplied domain key.
+- `Step.idempotent: bool = False` — optional author declaration on `tool` steps that the tool
+  safely handles retries (the VM does not verify tool deduplication). Setting
+  `idempotent=True` on any non-tool step (`llm`, `condition`, `parallel`, or parallel LLM
+  sub-step) raises `ValidationError`; an explicit default `idempotent=False` is accepted.
+- `ProgramValidator` check `non_idempotent_tool_retry` (`WARNING`): flags `tool` steps using
+  `on_error="retry"` without `idempotent=True`. Non-breaking (`is_valid()` stays `True`).
+
 ### Changed (behavior change)
+- **Retry on `parallel` sub-steps is now rejected with `ValidationError`** (both `tool` and
+  `llm` sub-steps in `parallel_steps`). Previously `on_error="retry"` on a parallel sub-step
+  was accepted and silently ignored at runtime (the sub-step ran once and the parallel step
+  finished `FAILED`). Programs declaring `on_error="retry"` on a parallel sub-step now fail
+  to load at model validation time; `on_error` `fail`/`skip` and `max_retries` without `retry`
+  are unaffected.
+- **Retry on `parallel` steps is now a validator ERROR** (`IssueKind.RETRY_ON_PARALLEL`):
+  `ProgramValidator.validate()` marks `on_error="retry"` on a `parallel` step as `ERROR`
+  (because retrying a parallel block re-executes all branches, including those with side
+  effects), so `is_valid()` returns `False` and `ExecutionVM.run(..., validate=True)` /
+  `resume_with_program(..., validate=True)` reject the program with `ProgramValidationError`.
+  Programs executed without `validate=True` keep their previous runtime behavior.
 - `timeout_seconds` and a non-default `on_timeout` are now rejected with `ValidationError` on
   any step that is not an `llm` step (tool, condition, parallel and parallel sub-steps).
   Previously the fields were accepted and silently ignored: a tool declared with
@@ -20,6 +53,15 @@ Versioning follows [Semantic Versioning](https://semver.org/).
   accepted.
 
 ### Tests
+- `tests/test_g31_retry_safety.py` (validator `retry_on_parallel` ERROR and `validate=True`
+  rejection; `$__execution_id__` / `$__step_id__` / `$__attempt__` interpolation, retry
+  increment, no implicit kwargs, read-only precedence, `trace_hash` invariance, suspend/resume,
+  parallel sub-steps, concurrent `vm.run()` isolation on one VM instance, `ContextVar` reset on
+  normal/recursive/error/cancel exit, direct `_run_step` guard, cursor state non-leakage,
+  `Step.idempotent` scope/explicit-False/roundtrip, `non_idempotent_tool_retry` WARNING,
+  README example execution, rejection of `on_error="retry"` on parallel sub-steps, shadowing
+  guard against `step_outputs` keys, in-task cancellation `ContextVar` reset, and unvalidated
+  parallel retry characterization).
 - `tests/test_step_timeout_scope.py` (refusal on tool, condition, parallel and parallel
   sub-steps; llm steps and parallel llm sub-steps unaffected; timeout still enforced).
 

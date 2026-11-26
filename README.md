@@ -233,6 +233,8 @@ Checks performed:
 | `missing_targets` | ERROR | branch targets that reference non-existent steps |
 | `unreachable_steps` | ERROR | steps unreachable from any execution path |
 | `cycle_detection` | ERROR | cycles that would cause infinite loops |
+| `retry_on_parallel` | ERROR | `on_error="retry"` on a `parallel` step (re-executes all branches on failure) |
+| `non_idempotent_tool_retry` | WARNING | `tool` step with `on_error="retry"` and without `idempotent=True` |
 | `no_failure_terminal` | WARNING | no reachable terminal step with a failure outcome |
 
 `is_valid()` returns `True` only when no `ERROR`-severity issues exist. `WARNING` is informational — simple linear programs without failure terminals are valid.
@@ -430,9 +432,10 @@ Four step types:
 
 | Field | Default | Description |
 | :--- | :--- | :--- |
-| `on_error` | `fail` | `fail` · `skip` · `retry` |
+| `on_error` | `fail` | `fail` · `skip` · `retry` (`retry` is not supported on `parallel` sub-steps — raises `ValidationError`) |
 | `max_retries` | `3` | total attempts; backoff: 1s, 2s, 4s… cap 30s |
 | `max_concurrency` | `None` | parallel blocks only |
+| `idempotent` | `False` | tool-only — author's declaration that the tool safely handles retries (not verified by the VM); `idempotent=True` on other step types raises `ValidationError` |
 | `is_terminal` | `False` | return `SUCCESS` after this step (leaf nodes) |
 | `next_step` | `None` | jump to named step instead of returning `SUCCESS` |
 | `allowed_outputs` | `None` | LLM-only — accepted output enum; `ValidationError` if empty |
@@ -454,6 +457,43 @@ Four step types:
 | `$key` | value from initial context (typed — int/dict/list preserved) |
 | `$step_id.output` | output of a previous step |
 | `$step_id.output.field` | field within a step's dict output |
+| `$__execution_id__` | read-only `trace_id` of the current run (preserved across suspend/resume) |
+| `$__step_id__` | read-only `id` of the current step (or sub-step inside `parallel`) |
+| `$__attempt__` | read-only 1-based attempt number (`1`, `2`, … on `on_error="retry"`) |
+
+Read-only runtime variables (`$__execution_id__`, `$__step_id__`, `$__attempt__`) are passed only where referenced via `$` (no implicit kwargs), cannot be overridden by initial context or step outputs, and are excluded from `state_snapshots` / `trace_hash`. Use them to build per-run idempotency keys for retried tools:
+
+```python
+from nano_vm import Program
+
+program = Program.from_dict(
+    {
+        "name": "idempotent_charge",
+        "steps": [
+            {
+                "id": "charge",
+                "type": "tool",
+                "tool": "charge_card",
+                "args": {
+                    "idempotency_key": "$__execution_id__:$__step_id__",
+                    "attempt": "$__attempt__",
+                },
+                "idempotent": True,
+                "on_error": "retry",
+                "max_retries": 3,
+            }
+        ],
+    }
+)
+```
+
+Retry-safety notes:
+
+- **Scope of `$__execution_id__:$__step_id__`**: deduplicates retries *within a single run* (same `trace_id`). A separate `vm.run()` generates a new `trace_id` and is not deduplicated against earlier runs — for cross-run business-operation deduplication, derive the key from caller-supplied domain data (such as an order or request id).
+- **`idempotent=True` is a declaration**: it tells `ProgramValidator` that the program author has made the tool safe to retry; the VM does not verify that the tool actually deduplicates side effects.
+- **Attempt numbering**: `$__attempt__` is 1-based (`1`, `2`, …); the `nano_vm.attempt` attribute on OpenTelemetry spans remains 0-based (`0`, `1`, …).
+- **`trace_hash` stability**: runtime context variables do not enter `state_snapshots`, so `trace_hash` does not distinguish a run that retried from a run without retries when the final step outputs are identical.
+- **`retry_on_parallel` enforcement**: `on_error="retry"` on a `parallel` step is an `ERROR` in `ProgramValidator` (enforced when running with `validate=True`); without `validate=True`, runtime behavior is unchanged and all branches re-execute on retry.
 
 ### Condition expressions
 

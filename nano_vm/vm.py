@@ -10,6 +10,7 @@ v0.7.0: ASTEngine в _execute_condition (eval() удалён), erase()
 from __future__ import annotations
 
 import asyncio
+import contextvars
 import hashlib
 import inspect
 import re
@@ -126,6 +127,21 @@ class InMemoryCursorRepository:
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+# Active execution trace_id bound for the duration of _execute_loop (G-31).
+# ContextVar keeps concurrent run() calls on the same ExecutionVM isolated and
+# preserves the original _run_step(self, step, state) subclass hook signature.
+_CURRENT_TRACE_ID: contextvars.ContextVar[str | None] = contextvars.ContextVar(
+    "nano_vm_current_trace_id",
+    default=None,
+)
+
+# Read-only execution context keys exposed via $var substitution (G-31).
+# Injected per step attempt into an ephemeral StateContext copy; never written
+# to state.step_outputs and therefore excluded from state_snapshots / trace_hash.
+_RUNTIME_CONTEXT_KEYS: frozenset[str] = frozenset(
+    {"__execution_id__", "__step_id__", "__attempt__"}
+)
 
 
 def _check_allowed_outputs(
@@ -365,6 +381,7 @@ class ExecutionVM:
         start_step_id: str | None,
         resume_after: bool = False,
     ) -> Trace:
+        trace_token = _CURRENT_TRACE_ID.set(trace.trace_id)
         try:
             step_index = {s.id: i for i, s in enumerate(program.steps)}
             steps = program.steps
@@ -614,6 +631,8 @@ class ExecutionVM:
                     ),
                 )
             raise
+        finally:
+            _CURRENT_TRACE_ID.reset(trace_token)
 
     # ------------------------------------------------------------------
     # suspend / interrupt
@@ -636,19 +655,58 @@ class ExecutionVM:
     # Step execution
     # ------------------------------------------------------------------
 
+    @staticmethod
+    def _with_runtime_context(
+        state: StateContext,
+        *,
+        trace_id: str,
+        step_id: str,
+        attempt: int,
+    ) -> StateContext:
+        """Build an ephemeral StateContext carrying read-only execution metadata.
+
+        Values live in ``data`` only (never ``step_outputs``), so they do not
+        affect ``state_snapshots`` or ``ExecutionReceipt.trace_hash``.
+        """
+        return state.model_copy(
+            update={
+                "data": {
+                    **state.data,
+                    "__execution_id__": trace_id,
+                    "__step_id__": step_id,
+                    "__attempt__": attempt,
+                }
+            }
+        )
+
     async def _run_step(
         self,
         step: Step,
         state: StateContext,
     ) -> tuple[StepResult, StateContext, list[StepResult]]:
+        trace_id = _CURRENT_TRACE_ID.get()
+        if not trace_id:
+            raise VMError(
+                f"Step '{step.id}': execution trace_id is not set in context "
+                "(invoke via ExecutionVM.run() or resume_with_program())"
+            )
+
         result = StepResult(step_id=step.id, status=StepStatus.RUNNING)
         attempt = 0
 
         while True:
             try:
                 fallbacks: list[StepFallback] = []  # per attempt: marker only for the final one
+                exec_state = self._with_runtime_context(
+                    state,
+                    trace_id=trace_id,
+                    step_id=step.id,
+                    attempt=attempt + 1,
+                )
                 with span_step(step.id, step.type.value, attempt=attempt):
-                    output, usage, sub_results = await self._execute_step(step, state, fallbacks)
+                    output, usage, sub_results = await self._execute_step(
+                        step, exec_state, fallbacks
+                    )
 
                 if output == "PENDING" and step.type == StepType.TOOL:
                     result = result.model_copy(
@@ -799,12 +857,15 @@ class ExecutionVM:
         async def _run_sub(sub: Step) -> tuple[StepResult, Any]:
             sub_result = StepResult(step_id=sub.id, status=StepStatus.RUNNING)
             sub_fallbacks: list[StepFallback] = []
+            # Each parallel branch sees its own step id in $__step_id__ while
+            # inheriting __execution_id__ and __attempt__ from the enclosing step.
+            sub_state = state.with_data("__step_id__", sub.id)
             try:
                 if semaphore is not None:
                     async with semaphore:
-                        output, usage = await self._dispatch_leaf(sub, state, sub_fallbacks)
+                        output, usage = await self._dispatch_leaf(sub, sub_state, sub_fallbacks)
                 else:
-                    output, usage = await self._dispatch_leaf(sub, state, sub_fallbacks)
+                    output, usage = await self._dispatch_leaf(sub, sub_state, sub_fallbacks)
                 sub_result = sub_result.finish(output=output, usage=usage)
                 if sub_fallbacks:
                     sub_result = sub_result.model_copy(update={"fallback": sub_fallbacks[-1]})
@@ -879,6 +940,9 @@ class ExecutionVM:
             """Resolve dotted expression; return _MISSING if not found."""
             parts = expr.split(".")
             root = parts[0]
+            # Read-only runtime context keys cannot be shadowed by step_outputs.
+            if len(parts) == 1 and root in _RUNTIME_CONTEXT_KEYS:
+                return state.data.get(root, _MISSING)
             if root in state.step_outputs:
                 node: Any = state.step_outputs[root]
                 for seg in parts[1:]:

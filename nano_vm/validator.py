@@ -25,7 +25,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 
 from nano_vm.flow import Entry, successors
-from nano_vm.models import Program, Step
+from nano_vm.models import OnError, Program, Step, StepType
 
 # ---------------------------------------------------------------------------
 # ValidationIssue
@@ -37,6 +37,8 @@ class IssueKind(str, Enum):
     UNREACHABLE_STEP = "unreachable_step"
     CYCLE_DETECTED = "cycle_detected"
     NO_FAILURE_TERMINAL = "no_failure_terminal"
+    RETRY_ON_PARALLEL = "retry_on_parallel"
+    NON_IDEMPOTENT_TOOL_RETRY = "non_idempotent_tool_retry"
 
 
 class IssueSeverity(str, Enum):
@@ -108,6 +110,8 @@ class ProgramValidator:
         issues.extend(self._check_missing_targets())
         issues.extend(self._check_unreachable_steps())
         issues.extend(self._check_cycles())
+        issues.extend(self._check_retry_on_parallel())
+        issues.extend(self._check_non_idempotent_tool_retry())
         issues.extend(self._check_failure_terminal())
         return ValidationReport(program_name=self._program.name, issues=issues)
 
@@ -215,6 +219,59 @@ class ProgramValidator:
                         kind=IssueKind.UNREACHABLE_STEP,
                         step_id=step.id,
                         detail=f"step '{step.id}' is not reachable from entry '{entry}'",
+                    )
+                )
+        return issues
+
+    # ------------------------------------------------------------------
+    # Check: G-31 — retry on parallel step (error)
+    # ------------------------------------------------------------------
+
+    def _check_retry_on_parallel(self) -> list[ValidationIssue]:
+        """Reject on_error=retry on parallel steps.
+
+        Retrying a parallel step re-executes all branches, including branches
+        that already succeeded with side effects.
+        """
+        issues: list[ValidationIssue] = []
+        for step in self._program.steps:
+            if step.type == StepType.PARALLEL and step.on_error == OnError.RETRY:
+                issues.append(
+                    ValidationIssue(
+                        kind=IssueKind.RETRY_ON_PARALLEL,
+                        step_id=step.id,
+                        detail=(
+                            "on_error='retry' on a parallel step re-executes all branches "
+                            "on failure; use on_error='fail' or 'skip'"
+                        ),
+                        severity=IssueSeverity.ERROR,
+                    )
+                )
+        return issues
+
+    # ------------------------------------------------------------------
+    # Check: G-31 — retry on non-idempotent tool step (warning)
+    # ------------------------------------------------------------------
+
+    def _check_non_idempotent_tool_retry(self) -> list[ValidationIssue]:
+        """Warn when a tool step uses on_error=retry without idempotent=True."""
+        issues: list[ValidationIssue] = []
+        for step in self._program.steps:
+            if (
+                step.type == StepType.TOOL
+                and step.on_error == OnError.RETRY
+                and not step.idempotent
+            ):
+                issues.append(
+                    ValidationIssue(
+                        kind=IssueKind.NON_IDEMPOTENT_TOOL_RETRY,
+                        step_id=step.id,
+                        detail=(
+                            "tool step uses on_error='retry' without idempotent=True; "
+                            "declare idempotent=True once the tool safely handles retries "
+                            "(e.g. using $__execution_id__ / $__step_id__)"
+                        ),
+                        severity=IssueSeverity.WARNING,
                     )
                 )
         return issues
